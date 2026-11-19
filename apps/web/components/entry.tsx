@@ -20,9 +20,9 @@ type Step = 'sign-in' | 'sign-up' | 'confirm' | 'forgot' | 'recover' | 'new-pass
 const steps = {
   'sign-in': ['Sign in to SecTalk', 'Use the email address and password for your account.', 'Sign in'],
   'sign-up': ['Create your account', 'Choose a password. We’ll email you a code to verify your address.', 'Create account'],
-  confirm: ['Verify your email', 'Enter the verification code sent to', 'Verify email'],
+  confirm: ['Verify your email', 'Enter the signup code for', 'Verify email'],
   forgot: ['Reset your password', 'Enter your account email to receive a recovery code.', 'Send recovery code'],
-  recover: ['Verify your recovery code', 'Enter the recovery code sent to', 'Verify code'],
+  recover: ['Verify your recovery code', 'Enter the recovery code for', 'Verify code'],
   'new-password': ['Set a new password', 'Use a password you haven’t used for this account before.', 'Update password'],
 } as const
 
@@ -145,7 +145,9 @@ export function Entry({ recovering }: { recovering: boolean }) {
         : await db.auth.resetPasswordForEmail(address, { redirectTo: window.location.origin })
       if (result.error) throw result.error
       setCode('')
-      setInfo('If the address is eligible, a new code is on its way.')
+      setInfo(current === 'confirm'
+        ? 'If this signup is still awaiting verification, check your email for a new message.'
+        : 'If the account can be recovered, check your email for a new message.')
     } catch (error) {
       setAlert(authMessage(error as { code?: string; status?: number }, current === 'confirm' ? 'sign-up' : 'forgot'))
     } finally {
@@ -203,6 +205,9 @@ export function Entry({ recovering }: { recovering: boolean }) {
             <button type="button" disabled={busy} onClick={() => void backToSignIn()}><ArrowLeft size={14} /> Back to sign in</button>
             {codeRequired && <button type="button" onClick={resend} disabled={busy}>Resend code</button>}
           </div>}
+          {current === 'confirm' && <p className="form-message">
+            Already verified this email? Sign in or <button className="text-button" type="button" disabled={busy} onClick={() => go('forgot')}>reset your password</button>.
+          </p>}
         </form>
         <div className="auth-footnote"><Fingerprint size={16} /> {current === 'sign-up' || codeRequired ? 'Email verification protects account access.' : 'Only approved contacts can message or call you.'}</div>
       </section>
