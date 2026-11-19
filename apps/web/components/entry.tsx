@@ -27,7 +27,8 @@ const steps = {
 } as const
 
 function authMessage(error: { code?: string; status?: number }, step: Step) {
-  if (error.status === 429 || error.code === 'over_email_send_rate_limit') return 'Too many requests. Wait a minute and try again.'
+  if (error.code === 'over_email_send_rate_limit') return 'SecTalk has reached its email sending limit. No new email was sent. Try again later.'
+  if (error.status === 429) return 'Too many requests. Wait a minute and try again.'
   if (error.code === 'weak_password') return 'Choose a stronger password with at least 12 characters.'
   if (step === 'sign-in') return 'Check your email and password, then try again.'
   if (step === 'confirm' || step === 'recover') return 'This code is invalid or expired. Request a new code and try again.'
