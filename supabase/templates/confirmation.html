@@ -5,7 +5,7 @@
       <p style="color:#15548b;font-size:13px;font-weight:700;letter-spacing:.08em">SECTALK BY EAGLE SECURITY</p>
       <h1 style="margin:12px 0">Verify your email</h1>
       <p>Confirm your email address to finish creating your SecTalk account.</p>
-      <p style="margin:24px 0"><a href="{{ .SiteURL }}/auth/confirm#token_hash={{ .TokenHash }}" style="display:inline-block;padding:14px 20px;background:#12599a;color:#fff;border-radius:8px;text-decoration:none;font-weight:700">Verify email address</a></p>
+      <p style="margin:24px 0"><a href="{{ if and .RedirectTo (ne .RedirectTo .SiteURL) }}{{ .RedirectTo }}{{ else }}{{ .SiteURL }}/auth/confirm{{ end }}#token_hash={{ .TokenHash }}" style="display:inline-block;padding:14px 20px;background:#12599a;color:#fff;border-radius:8px;text-decoration:none;font-weight:700">Verify email address</a></p>
       <p>After verification, you can sign in with your email and password. If you didn’t create a SecTalk account, you can ignore this message.</p>
     </main>
   </body>

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
-  ArrowLeft, Ban, Check, ChevronRight, CircleHelp, Copy, Flag, Inbox as InboxIcon, LogOut, ShieldAlert,
-  MessageCircle, Phone, Plus, Search, Send, Shield, ShieldCheck, UserRound, Video, X,
+  ArrowLeft, Ban, Bell, BellOff, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Inbox as InboxIcon, LogOut, ShieldAlert,
+  MessageCircle, Phone, Pin, Plus, Search, Send, Shield, ShieldCheck, UserRound, Users, Video, X,
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
 import { useCalling } from '../lib/calling'
@@ -11,11 +11,15 @@ import { riskIndicators } from '../lib/safety.mjs'
 import { CallPanel } from './call-panel'
 import { Brand } from './entry'
 import { ReportDialog, Safety } from './safety'
+import { Workspaces } from './workspaces'
+import { Billing } from './billing'
 
 export function Avatar({ name, tint = 'green' }: { name: string; tint?: string }) {
   const initials = name.trim().split(/\s+/).slice(0, 2).map(word => [...word][0]).join('').toUpperCase()
   return <span className={'avatar ' + tint} aria-hidden="true">{initials || '?'}</span>
 }
+
+type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id: string | null; latest_at: string | null }
 
 export function Inbox({ user }: { user: string }) {
   const [profile, setProfile] = useState<Profile | null | undefined>()
@@ -24,7 +28,8 @@ export function Inbox({ user }: { user: string }) {
   const [blocks, setBlocks] = useState<string[]>([])
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile'>('inbox')
+  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing'>(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests'>('chats')
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
@@ -34,9 +39,26 @@ export function Inbox({ user }: { user: string }) {
   const [online, setOnline] = useState(false)
   const [broadcastOnline, setBroadcastOnline] = useState(false)
   const [working, setWorking] = useState(false)
+  const [inboxStatus, setInboxStatus] = useState<Record<string, InboxStatus>>({})
+  const activeChat = useRef<string | null>(null)
+  const announced = useRef(new Map<string, string>())
   const readVersion = useRef(0)
   const [hints] = useState(() => new EventTarget())
   const call = useCalling(user, setNotice, hints)
+  useEffect(() => { activeChat.current = tab === 'inbox' ? selected : null }, [tab, selected])
+  const refreshInboxStatus = useCallback(async (changedChat?: string) => {
+    const { data, error } = await db!.rpc('st_v2_inbox_status')
+    if (error) return
+    setInboxStatus(Object.fromEntries((data as InboxStatus[]).map(row => [row.chat_id,row])))
+    if (changedChat) {
+      const row = (data as InboxStatus[]).find(item => item.chat_id === changedChat)
+      if (row?.unread && !row.muted && row.latest_id && row.latest_at && activeChat.current !== changedChat
+        && Date.now() - Date.parse(row.latest_at) < 12000 && announced.current.get(changedChat) !== row.latest_id) {
+        announced.current.set(changedChat,row.latest_id)
+        setNotice('New direct message in your inbox.')
+      }
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     const version = ++readVersion.current
@@ -64,14 +86,21 @@ export function Inbox({ user }: { user: string }) {
 
   useEffect(() => {
     void refresh()
+    const syncStatus = () => void refreshInboxStatus()
+    syncStatus()
+    hints.addEventListener('read_local', syncStatus)
     const account = db!.channel('st:account:' + user, { config: { private: true } })
       .on('broadcast', { event: 'inbox' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') {
           hints.dispatchEvent(new MessageEvent('inbox', { data: payload.chat_id }))
           void refresh()
+          void refreshInboxStatus(payload.chat_id)
         }
       })
       .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
+      .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
+        if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))
+      })
       .on('broadcast', { event: 'signal' }, ({ payload }) => {
         if (typeof payload?.call_id === 'string') hints.dispatchEvent(new MessageEvent('signal', { data: payload.call_id }))
       })
@@ -80,6 +109,7 @@ export function Inbox({ user }: { user: string }) {
         if (status === 'SUBSCRIBED') {
           hints.dispatchEvent(new Event('ready'))
           void refresh()
+          syncStatus()
         }
       })
     const channel = liveChannel('inbox:' + user, () => { setOnline(true); void refresh() })
@@ -96,13 +126,14 @@ export function Inbox({ user }: { user: string }) {
     })
     return () => {
       ++readVersion.current
+      hints.removeEventListener('read_local', syncStatus)
       removeReconnect()
       window.clearInterval(timer)
       subscription.data.subscription.unsubscribe()
       void db!.removeChannel(account)
       void db!.removeChannel(channel)
     }
-  }, [user, refresh, hints])
+  }, [user, refresh, hints, refreshInboxStatus])
 
   const chat = chats.find(item => item.id === selected)
   const peer = chat ? profiles[peerId(chat, user)] : undefined
@@ -144,8 +175,9 @@ export function Inbox({ user }: { user: string }) {
       <Brand compact />
       <button className={tab === 'inbox' ? 'active' : ''} aria-current={tab === 'inbox' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>Inbox</span></button>
       <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>Calls</span></button>
+      <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>Spaces</span></button>
       <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>Safety</span></button>
-      <div className="rail-end"><button className={tab === 'profile' ? 'active' : ''} aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}><UserRound size={20} /><span>Profile</span></button>
+      <div className="rail-end"><button className={tab === 'billing' ? 'active' : ''} aria-current={tab === 'billing' ? 'page' : undefined} onClick={() => setTab('billing')}><CreditCard size={19} /><span>Billing</span></button><button className={tab === 'profile' ? 'active' : ''} aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}><UserRound size={20} /><span>Profile</span></button>
         <button onClick={async () => { await call.end(); void db!.auth.signOut({ scope: 'local' }) }}><LogOut size={19} /><span>Sign out</span></button></div>
     </nav>
     <aside className="inbox-list">
@@ -162,7 +194,9 @@ export function Inbox({ user }: { user: string }) {
           const person = profiles[peerId(item, user)]
           return <button key={item.id} className={'chat-item ' + (item.id === selected ? 'selected' : '')} onClick={() => select(item.id)}>
             <Avatar name={person?.name || 'Contact'} tint={item.status === 'pending' ? 'peach' : 'green'} />
-            <span><strong>{person?.name || 'Contact'}</strong><small>{blocks.includes(peerId(item, user)) ? 'Blocked' : person ? '@' + person.handle : 'Contact'}</small></span><ChevronRight size={15} />
+            <span><strong>{person?.name || 'Contact'}</strong><small>{blocks.includes(peerId(item, user)) ? 'Blocked' : person ? '@' + person.handle : 'Contact'}</small></span>
+            {inboxStatus[item.id]?.muted && <BellOff size={13} aria-label="Muted"/>}
+            {inboxStatus[item.id]?.unread ? <span className="status-dot" aria-label="Unread messages"/> : <ChevronRight size={15} />}
           </button>
         })}
       </div>
@@ -174,6 +208,8 @@ export function Inbox({ user }: { user: string }) {
         catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
       }}><Copy size={15} /> Copy handle</button></div><ProfileForm profile={profile} onSave={refresh} /></section> :
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} /> :
+      tab === 'workspaces' ? <Workspaces user={user} /> :
+      tab === 'billing' ? <Billing user={user} /> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
         <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} />
@@ -286,17 +322,35 @@ function ProfileForm({ profile, onSave }: { profile: Profile | null; onSave: () 
   </form>
 }
 
+type Reaction = { message_id: string; user_id: string; reaction: string }
+type ChatActivity = { muted: boolean; read_at: string | null; read_id: string | null; typing_until: string | null }
+const reactionOptions = [
+  { emoji: '👍', label: 'Thumbs up' }, { emoji: '❤️', label: 'Heart' },
+  { emoji: '✅', label: 'Check mark' }, { emoji: '👀', label: 'Eyes' },
+]
+
 function Thread({ chat, self, hints, blocked, onReport, inform }: {
   chat: Chat; self: string; hints: EventTarget; blocked: boolean; onReport: (message: Message) => void; inform: (notice: string) => void
 }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [loaded, setLoaded] = useState(false)
+  const [activity, setActivity] = useState<ChatActivity | null>(null)
+  const [reactions, setReactions] = useState<Reaction[]>([])
+  const [pin, setPin] = useState<Message | null>(null)
+  const [showSearch, setShowSearch] = useState(false)
+  const [results, setResults] = useState<Message[] | null>(null)
+  const [editing, setEditing] = useState<Message | null>(null)
+  const [replying, setReplying] = useState<Message | null>(null)
+  const [history, setHistory] = useState<{ id: number; body: string; created_at: string }[] | null>(null)
+  const [clock, setClock] = useState(0)
+  const typingLast = useRef(0)
+  const readLast = useRef('')
   const [older, setOlder] = useState(false)
   const [busy, setBusy] = useState(false)
   const feed = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
-  const pending = useRef<{ id: string; body: string } | null>(null)
+  const pending = useRef<{ id: string; body: string; reply: string | null } | null>(null)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const merge = useCallback((rows: Message[]) => {
     setMessages(previous => [...new Map([...previous, ...rows].map(row => [row.id, row])).values()]
@@ -315,72 +369,181 @@ function Thread({ chat, self, hints, blocked, onReport, inform }: {
 
   const loadLatest = useRef(load)
   useEffect(() => { loadLatest.current = load }, [load])
+  const loadActivity = useCallback(async () => {
+    const [status, reactions, pinned] = await Promise.all([
+      db!.rpc('st_v2_chat_status', { p_chat: chat.id }),
+      db!.from('st_v2_reactions').select('message_id,user_id,reaction').eq('chat_id', chat.id).limit(1000),
+      db!.from('st_v2_pins').select('message_id').eq('chat_id', chat.id).maybeSingle(),
+    ])
+    if (!status.error) setActivity(status.data)
+    if (!reactions.error) setReactions(reactions.data)
+    if (pinned.error) return
+    if (pinned.data) {
+      const { data } = await db!.from('st_messages').select('*').eq('id', pinned.data.message_id).maybeSingle()
+      setPin(data as Message | null)
+    } else setPin(null)
+  }, [chat.id])
   useEffect(() => {
     void loadLatest.current()
-    const sync = () => void loadLatest.current()
+    const sync = () => { void loadLatest.current(); void loadActivity() }
     const onHint = (event: Event) => { if ((event as MessageEvent).data === chat.id) sync() }
+    const onActivity = (event: Event) => { if ((event as MessageEvent).data === chat.id) sync() }
     const channel = liveChannel('thread:' + chat.id, sync)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'st_messages', filter: 'chat_id=eq.' + chat.id }, payload => merge([payload.new as Message]))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'st_messages', filter: 'chat_id=eq.' + chat.id }, payload => {
+        if (payload.eventType !== 'DELETE') merge([payload.new as Message])
+      })
       .subscribe(status => { if (status === 'SUBSCRIBED') void loadLatest.current() })
     const timer = window.setInterval(sync, 3500)
     const removeReconnect = onReconnect(sync)
     hints.addEventListener('inbox', onHint)
     hints.addEventListener('ready', sync)
+    hints.addEventListener('chat_activity', onActivity)
     return () => {
       hints.removeEventListener('inbox', onHint)
       hints.removeEventListener('ready', sync)
+      hints.removeEventListener('chat_activity', onActivity)
       removeReconnect()
       window.clearInterval(timer)
       void db!.removeChannel(channel)
     }
-  }, [chat.id, hints, merge])
+  }, [chat.id, hints, merge, loadActivity])
+  useEffect(() => {
+    if (!activity?.typing_until) return
+    setClock(Date.now())
+    const timer = window.setTimeout(() => setClock(Date.now()), Math.max(0, Date.parse(activity.typing_until) - Date.now()) + 30)
+    return () => window.clearTimeout(timer)
+  }, [activity?.typing_until])
+  const latestInbound = messages.findLast(message => message.sender !== self)?.id
+  const markRead = useCallback(() => {
+    if (blocked || !latestInbound || document.visibilityState !== 'visible' || !nearBottom.current ||
+      readLast.current === latestInbound || results !== null) return
+    readLast.current = latestInbound
+    void db!.rpc('st_v2_read', { p_chat: chat.id, p_message: latestInbound }).then(({ error }) => {
+      if (error && readLast.current === latestInbound) readLast.current = ''
+      if (!error) hints.dispatchEvent(new Event('read_local'))
+    })
+  }, [blocked, chat.id, hints, latestInbound, results])
+  useEffect(() => {
+    markRead()
+    return onReconnect(markRead)
+  }, [markRead])
   useEffect(() => {
     const node = feed.current
     if (node && nearBottom.current) node.scrollTop = node.scrollHeight
   }, [messages])
 
+  async function update(name: string, input: Record<string, unknown>) {
+    const { error } = await db!.rpc(name, input)
+    if (error) { inform(formatError(error, 'Could not update the conversation.')); return false }
+    await Promise.all([load(), loadActivity()])
+    if (name === 'st_v2_mute') hints.dispatchEvent(new Event('read_local'))
+    return true
+  }
+
+  function changeDraft(value: string) {
+    setDraft(value)
+    const now = Date.now()
+    if (!blocked && value.trim() && now - typingLast.current > 2200) {
+      typingLast.current = now
+      void db!.rpc('st_v2_typing', { p_chat: chat.id, p_active: true })
+    }
+  }
+
   async function send(event: FormEvent) {
     event.preventDefault()
     const body = draft.trim()
     if (!body || busy || blocked) return
-    const id = pending.current?.body === body ? pending.current.id : crypto.randomUUID()
-    pending.current = { id, body }
+    const reply = replying?.id ?? null
+    const id = pending.current?.body === body && pending.current.reply === reply ? pending.current.id : crypto.randomUUID()
+    pending.current = { id, body, reply }
     setBusy(true)
-    const { error } = await db!.rpc('st_send', { p_chat: chat.id, p_id: id, p_body: body })
+    const { error } = await db!.rpc(reply ? 'st_v2_send_reply' : 'st_send', { p_chat: chat.id, p_id: id, p_body: body, ...(reply ? { p_reply: reply } : {}) })
     if (error) inform(formatError(error, 'Could not send. Your draft is still here.'))
     else {
       pending.current = null
+      setReplying(current => current?.id === reply ? null : current)
       nearBottom.current = true
       setDraft(previous => previous.trim() === body ? '' : previous)
+      void db!.rpc('st_v2_typing', { p_chat: chat.id, p_active: false })
       void load()
     }
     setBusy(false)
   }
 
   return <>
+    <div className="thread-toolbar">
+      <button type="button" className="secondary" aria-expanded={showSearch} onClick={() => { setShowSearch(!showSearch); setResults(null) }}><Search size={15}/> Search messages</button>
+      <button type="button" className="secondary" aria-pressed={Boolean(activity?.muted)}
+        onClick={() => void update('st_v2_mute', { p_chat: chat.id, p_muted: !activity?.muted })}>
+        {activity?.muted ? <BellOff size={15}/> : <Bell size={15}/>} {activity?.muted ? 'Muted' : 'Mute'}
+      </button>
+    </div>
+    {showSearch && <form className="thread-toolbar" onSubmit={async event => {
+      event.preventDefault()
+      const query = String(new FormData(event.currentTarget).get('query')).trim()
+      const { data, error } = await db!.rpc('st_v2_search_messages', { p_chat: chat.id, p_query: query })
+      if (error) inform('Could not search this conversation.')
+      else setResults((data as Message[]).reverse())
+    }}><input name="query" aria-label="Search term" placeholder="Search within this chat" required minLength={2} maxLength={150}/>
+      <button className="primary">Search</button>{results && <button className="secondary" type="button" onClick={() => setResults(null)}>Clear</button>}</form>}
+    {pin && <div className="thread-pin"><Pin size={16}/><span title={pin.body}>{pin.body}</span>{!blocked && <button type="button" className="text-button" onClick={() => void update('st_v2_pin', { p_chat: chat.id, p_message: null })}>Unpin</button>}</div>}
     <div ref={feed} className="feed" role="log" aria-label="Messages" onScroll={() => {
       const node = feed.current
       if (node) nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100
+      markRead()
     }}>
-      {older && <button type="button" className="secondary older" disabled={loadingOlder} onClick={async () => {
+      {results === null && older && <button type="button" className="secondary older" disabled={loadingOlder} onClick={async () => {
         setLoadingOlder(true)
         nearBottom.current = false
         await load(messages[0])
         setLoadingOlder(false)
       }}>Load earlier messages</button>}
-      {loaded && !messages.length && <div className="empty-thread"><div className="card-icon"><MessageCircle size={24}/></div><h2>Say hello</h2><p>This is the start of your conversation.</p></div>}
-      {messages.map(message => {
+      {results?.length === 0 && <p>No messages match that search.</p>}
+      {results === null && loaded && !messages.length && <div className="empty-thread"><div className="card-icon"><MessageCircle size={24}/></div><h2>Say hello</h2><p>This is the start of your conversation.</p></div>}
+      {(results ?? messages).map(message => {
         const own = message.sender === self
+        const read = own && activity?.read_at && (message.created_at < activity.read_at || message.created_at === activity.read_at && message.id <= (activity.read_id ?? ''))
+        const selectedReactions = reactions.filter(reaction => reaction.message_id === message.id)
         return <div className={'message ' + (own ? 'own' : '')} key={message.id}>
+          {message.reply_to && <blockquote className="reply-preview">{messages.find(row => row.id === message.reply_to)?.body || 'Reply to an earlier message'}</blockquote>}
           <div className="bubble">{message.body}</div>
           {!own && riskIndicators(message.body).map(flag => <p key={flag} className="risk"><ShieldAlert size={14} />{flag}</p>)}
-          <div className="message-meta"><time dateTime={message.created_at}>{formatTime(message.created_at)}</time>{own ? <Check size={13} aria-label="Sent" /> :
-            <button className="small-icon" title="Report message" aria-label="Report message" onClick={() => onReport(message)}><Flag size={13} /></button>}</div>
+          {selectedReactions.length > 0 && <div className="reaction-row">{reactionOptions.filter(option => selectedReactions.some(row => row.reaction === option.emoji)).map(option => <span className="pill" key={option.emoji}>{option.emoji} {selectedReactions.filter(row => row.reaction === option.emoji).length}</span>)}</div>}
+          <div className="message-meta"><time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
+            {message.edited_at && <button type="button" className="text-button" onClick={async () => {
+              const { data, error } = await db!.from('st_v2_message_edits').select('id,body,created_at').eq('message_id', message.id).order('id', { ascending: false }).limit(25)
+              if (error) inform('Could not load edit history.')
+              else setHistory(data)
+            }}>Edited</button>}
+            {own ? read ? <CheckCheck size={15} aria-label="Read" /> : <Check size={13} aria-label="Sent" /> :
+              <button className="small-icon" title="Report message" aria-label="Report message" onClick={() => onReport(message)}><Flag size={13} /></button>}
+            {!blocked && <details className="message-menu">
+              <summary aria-label="Message actions">•••</summary>
+              <div className="message-menu-panel">
+                <div className="reaction-row">{reactionOptions.map(option => {
+                  const active = selectedReactions.some(row => row.user_id === self && row.reaction === option.emoji)
+                  return <button type="button" className="small-icon" key={option.emoji} aria-label={option.label} aria-pressed={active}
+                    onClick={() => void update('st_v2_react', { p_message: message.id, p_reaction: option.emoji, p_enabled: !active })}>{option.emoji}</button>
+                })}</div>
+                <button type="button" className="text-button" onClick={() => void update('st_v2_pin', { p_chat: chat.id, p_message: message.id })}>Pin message</button>
+                <button type="button" className="text-button" onClick={() => setReplying(message)}>Reply</button>
+                {own && Date.now() - Date.parse(message.created_at) < 86400000 && <button type="button" className="text-button" onClick={() => setEditing(message)}>Edit message</button>}
+              </div>
+            </details>}
+          </div>
         </div>
       })}
     </div>
+    {activity?.typing_until && Date.parse(activity.typing_until) > clock && <p className="thread-typing" role="status">Contact is typing…</p>}
+    {editing && <Dialog title="Edit message" close={() => setEditing(null)}><form onSubmit={async event => {
+      event.preventDefault()
+      const body = new FormData(event.currentTarget).get('body')
+      if (await update('st_v2_edit_message', { p_message: editing.id, p_body: body })) { setEditing(null); setResults(null) }
+    }}><label>Message<textarea name="body" required maxLength={4000} defaultValue={editing.body}/></label><button className="primary">Save changes</button></form></Dialog>}
+    {history && <Dialog title="Edit history" close={() => setHistory(null)}>{history.map(edit => <article className="release-board-item" key={edit.id}><time dateTime={edit.created_at}>{new Date(edit.created_at).toLocaleString()}</time><p>{edit.body}</p></article>)}</Dialog>}
+    {replying && <div className="thread-pin"><span>Replying to {replying.body}</span><button type="button" className="icon" aria-label="Cancel reply" onClick={() => setReplying(null)}><X size={16}/></button></div>}
     <form className="composer" onSubmit={send}>
-      <textarea aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} required rows={1} maxLength={4000} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={event => {
+      <textarea aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} required rows={1} maxLength={4000} value={draft} onChange={e => changeDraft(e.target.value)} onKeyDown={event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
       }} />
       <button className="primary square" title="Send message" aria-label="Send message" disabled={busy || !draft.trim() || blocked}><Send size={19} /></button>

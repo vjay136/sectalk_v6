@@ -94,7 +94,7 @@ export function Entry({ recovering }: { recovering: boolean }) {
           break
         }
         case 'sign-up': {
-          const { error } = await db.auth.signUp({ email: address, password, options: { emailRedirectTo: window.location.origin } })
+          const { error } = await db.auth.signUp({ email: address, password, options: { emailRedirectTo: window.location.origin + '/auth/confirm' } })
           if (error) throw error
           go('confirm')
           break
@@ -139,7 +139,7 @@ export function Entry({ recovering }: { recovering: boolean }) {
     try {
       const address = email.trim()
       const result = current === 'confirm'
-        ? await db.auth.resend({ type: 'signup', email: address, options: { emailRedirectTo: window.location.origin } })
+        ? await db.auth.resend({ type: 'signup', email: address, options: { emailRedirectTo: window.location.origin + '/auth/confirm' } })
         : await db.auth.resetPasswordForEmail(address, { redirectTo: window.location.origin })
       if (result.error) throw result.error
       setCode('')

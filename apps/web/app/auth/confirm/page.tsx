@@ -24,9 +24,13 @@ export default function ConfirmEmailPage() {
     started.current = true
     const target = new URL(window.location.href)
     setSignInUrl(target.origin + '/#account')
-    const tokenHash = new URLSearchParams(target.hash.slice(1)).get('token_hash')
+    const fragment = new URLSearchParams(target.hash.slice(1))
+    const tokenHash = fragment.get('token_hash')
+    const accessToken = fragment.get('access_token')
+    const refreshToken = fragment.get('refresh_token')
+    const legacy = fragment.get('type') === 'signup' && accessToken && refreshToken
     if (target.hash) window.history.replaceState(null, '', target.pathname)
-    if (!tokenHash || !/^[a-zA-Z0-9_-]{32,128}$/.test(tokenHash)) {
+    if (!legacy && (!tokenHash || !/^[a-zA-Z0-9_-]{32,128}$/.test(tokenHash))) {
       setState('invalid')
       return
     }
@@ -34,7 +38,9 @@ export default function ConfirmEmailPage() {
     if (!client) { setState('unavailable'); return }
     async function verify() {
       try {
-        const { data, error } = await client!.auth.verifyOtp({ token_hash: tokenHash!, type: 'email' })
+        const { data, error } = legacy
+          ? await client!.auth.setSession({ access_token: accessToken!, refresh_token: refreshToken! })
+          : await client!.auth.verifyOtp({ token_hash: tokenHash!, type: 'email' })
         if (error) {
           setState([400, 401, 403, 422].includes(error.status ?? 0) ? 'invalid' : 'unavailable')
           return

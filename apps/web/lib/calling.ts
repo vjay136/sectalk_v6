@@ -19,7 +19,7 @@ async function media(video: boolean) {
   if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === 'undefined') {
     throw new Error('Calls require a supported browser and a secure connection.')
   }
-  return navigator.mediaDevices.getUserMedia({ audio: true, video })
+  return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video })
 }
 
 export function useCalling(user: string, notice: (message: string) => void, hints: EventTarget) {
@@ -29,7 +29,11 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   const [remote, setRemote] = useState<MediaStream | null>(null)
   const [connection, setConnection] = useState('connecting')
   const [busy, setBusy] = useState(false)
+  const [screen, setScreen] = useState<MediaStream | null>(null)
+  const [sharingBusy, setSharingBusy] = useState(false)
   const stream = useRef<MediaStream | null>(null)
+  const displayStream = useRef<MediaStream | null>(null)
+  const activePeer = useRef<RTCPeerConnection | null>(null)
   const current = useRef<Call | null>(null)
   const owned = useRef<string | null>(null)
   const stopped = useRef(new Set<string>())
@@ -38,6 +42,9 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   const mounted = useRef(true)
 
   const cleanupMedia = useCallback(() => {
+    displayStream.current?.getTracks().forEach(track => track.stop())
+    displayStream.current = null
+    setScreen(null)
     stream.current?.getTracks().forEach(track => track.stop())
     stream.current = null
     setLocal(null)
@@ -111,6 +118,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       window.clearInterval(timer)
       void db!.removeChannel(channel)
       stream.current?.getTracks().forEach(track => track.stop())
+      displayStream.current?.getTracks().forEach(track => track.stop())
       const id = owned.current
       if (id) void db!.rpc('st_call_status', { p_call: id, p_accept: false })
     }
@@ -279,6 +287,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
         if (disposed) return
         const peer = new RTCPeerConnection(config)
         pc = peer
+        activePeer.current = peer
         local!.getTracks().forEach(track => peer.addTrack(track, local!))
         peer.ontrack = event => { if (!disposed && event.streams[0]) setRemote(event.streams[0]) }
         peer.onicecandidate = event => {
@@ -329,9 +338,49 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       window.clearInterval(polling)
       removeChannel?.()
       removeHint?.()
+      if (activePeer.current === pc) activePeer.current = null
       pc?.close()
     }
   }, [activeId, isCaller, local, user, end, notice, hints])
 
-  return { call, local, remote, connection, busy, start, answer, end, historyVersion }
+  async function stopSharing() {
+    const capture = displayStream.current
+    if (!capture) return
+    displayStream.current = null
+    capture.getTracks().forEach(track => track.stop())
+    setScreen(null)
+    const peer = activePeer.current
+    const track = capture.getVideoTracks()[0]
+    const sender = peer?.getSenders().find(item => item.track === track)
+    if (sender) await sender.replaceTrack(stream.current?.getVideoTracks()[0] ?? null).catch(() => {
+      notice('Screen sharing stopped. Toggle your camera or reconnect if video does not resume.')
+    })
+  }
+
+  async function shareScreen() {
+    const peer = activePeer.current
+    const camera = stream.current?.getVideoTracks()[0]
+    const sender = peer?.getSenders().find(item => item.track === camera)
+    if (sharingBusy || displayStream.current || !peer || peer.connectionState !== 'connected' || !camera || !sender) return
+    if (!navigator.mediaDevices?.getDisplayMedia) { notice('This browser does not support screen sharing.'); return }
+    setSharingBusy(true)
+    let capture: MediaStream | undefined
+    try {
+      capture = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+      const track = capture.getVideoTracks()[0]
+      if (!track || activePeer.current !== peer || !current.current) { capture.getTracks().forEach(item => item.stop()); return }
+      await sender.replaceTrack(track)
+      if (activePeer.current !== peer || !current.current) { capture.getTracks().forEach(item => item.stop()); return }
+      displayStream.current = capture
+      track.addEventListener('ended', () => { void stopSharing() }, { once: true })
+      setScreen(capture)
+    } catch {
+      capture?.getTracks().forEach(track => track.stop())
+      notice('Screen sharing did not start. Check your browser permissions or try again.')
+    } finally {
+      setSharingBusy(false)
+    }
+  }
+
+  return { call, local, remote, connection, busy, start, answer, end, historyVersion, screen, sharingBusy, shareScreen, stopSharing }
 }

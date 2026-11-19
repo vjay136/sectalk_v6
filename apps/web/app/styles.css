@@ -290,6 +290,62 @@ body { background: var(--bg); }
 .confirmation-icon.verified { background: #163e38; color: #8ae8be; border-color: #2c6358; }
 .confirmation-icon.invalid, .confirmation-icon.unavailable { background: #46341e; color: #ffd3a9; border-color: #705234; }
 .confirmation-url { color: var(--muted); font: .78rem/1.4 "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
+
+.release-panel { padding: 17px; margin-top: 12px; }
+.release-panel h2 { font-size: 1.08rem; }
+.release-panel > .release-tabs { margin-top: -10px; }
+.release-section { display: grid; gap: 12px; padding-top: 13px; }
+.release-flex { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.release-flex > label { min-width: min(100%, 210px); }
+.release-create { border: 1px solid var(--line); border-radius: 10px; padding: 10px 13px; background: #101d30; }
+.release-create > summary { cursor: pointer; font-weight: 650; color: var(--accent); line-height: 1.45; }
+.release-create > form { margin-top: 12px; }
+.release-form { display: grid; align-items: start; gap: 8px; }
+.release-form > button { justify-self: start; }
+.release-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-top: 7px; padding-bottom: 7px; }
+.release-row > strong { max-width: 100%; overflow-wrap: anywhere; }
+.release-row > time, .release-post time { color: var(--muted); font-size: .78rem; }
+.release-tabs { flex-wrap: wrap; }
+.release-tabs button { display: inline-flex; align-items: center; gap: 6px; }
+.release-channel-feed { min-height: 110px; max-height: 430px; overflow: auto; display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+.release-post { padding: 9px 12px; border-radius: 9px; background: var(--raised); width: fit-content; max-width: 85%; }
+.release-post.release-own { background: #193d5e; justify-self: end; }
+.release-post p, .release-board-item p { overflow-wrap: anywhere; white-space: pre-wrap; }
+.release-board-item { border: 1px solid var(--line); background: #101d30; border-radius: 10px; padding: 10px; }
+.release-board-item p > svg { vertical-align: middle; }
+.release-board-item > button { margin-top: 7px; }
+.billing-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.billing-summary h2 { margin-top: 8px; font-size: 1.55rem; }
+.billing-interval { margin-top: 14px; }
+.billing-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,220px),1fr)); gap: 12px; }
+.billing-card { display: flex; flex-direction: column; gap: 8px; }
+.billing-card .primary { margin-top: auto; }
+.billing-current { border-color: #477ca6; }
+.billing-card li { color: var(--muted); line-height: 1.5; }
+.billing-card ul { margin: 0 0 6px; padding-inline-start: 19px; }
+.release-info { margin-block: 10px; padding: 10px 13px; background: var(--accent-soft); border-radius: 8px; }
+.thread-toolbar, .thread-pin { display: flex; align-items: center; gap: 8px; padding: 6px clamp(8px,2vw,25px); border-bottom: 1px solid var(--line); }
+.thread-toolbar:first-of-type { flex-wrap: wrap; }
+.thread-toolbar input { min-width: 0; flex: 1; }
+.thread-toolbar button { min-height: 34px; }
+.thread-pin { color: var(--accent); font-size: .84rem; }
+.thread-pin > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-typing { padding-inline: 22px; font-size: .78rem; }
+.reply-preview { margin: 0 0 3px; padding: 5px 8px; border-left: 2px solid var(--accent); font-size: .76rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reaction-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.reaction-row button[aria-pressed=true] { background: #284e71; }
+.message-menu { display: inline-block; }
+.message-menu summary { cursor: pointer; list-style: none; padding: 2px 4px; }
+.message-menu-panel { display: grid; justify-items: start; border: 1px solid var(--line); background: #101d30; padding: 5px 8px; border-radius: 8px; }
+.full-panel .inbox-list { display: none; }
+.full-panel .content-page { grid-column: 2 / -1; }
+@media (max-width: 700px) {
+  .full-panel .content-page { grid-column: 1; }
+  .workspace .rail { justify-content: flex-start; gap: 0; overflow-x: auto; }
+  .rail .rail-end { gap: 0; }
+  .rail > button, .rail-end > button { min-width: 45px; width: clamp(45px,14vw,67px); flex: none; }
+  .rail button span { font-size: .61rem; }
+}
 @media (max-width: 730px) {
   .access-layout { grid-template-columns: 1fr; gap: 24px; padding-block: 27px; }
   .threat-visual { display: none; }
