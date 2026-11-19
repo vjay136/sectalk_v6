@@ -4,6 +4,35 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL
 const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 export const db = url && key ? createClient(url, key) : null
 
+export function recoveryClient() {
+  return url && key ? createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      storageKey: 'sectalk-transient-recovery',
+    },
+  }) : null
+}
+
+export function liveChannel(topic: string, catchUp: () => void) {
+  return db!.channel(topic + ':' + crypto.randomUUID(), {
+    config: { broadcast: { replication_ready: true } },
+  }).on('system', {}, payload => {
+    if (payload.extension === 'system' && payload.status === 'ok') catchUp()
+  })
+}
+
+export function onReconnect(catchUp: () => void) {
+  const visible = () => { if (document.visibilityState === 'visible') catchUp() }
+  window.addEventListener('online', catchUp)
+  document.addEventListener('visibilitychange', visible)
+  return () => {
+    window.removeEventListener('online', catchUp)
+    document.removeEventListener('visibilitychange', visible)
+  }
+}
+
 export type Profile = { id: string; handle: string; name: string }
 export type Chat = {
   id: string; member_a: string; member_b: string; requester: string
@@ -12,7 +41,7 @@ export type Chat = {
 export type Message = { id: string; chat_id: string; sender: string; body: string; created_at: string }
 export type Call = {
   id: string; chat_id: string; caller: string; callee: string; video: boolean
-  status: 'ringing' | 'active' | 'ended'; expires_at: string
+  status: 'ringing' | 'active' | 'ended'; expires_at: string; created_at: string
 }
 
 export const categories = {

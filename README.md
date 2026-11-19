@@ -1,6 +1,6 @@
 # SecTalk by Eagle Security
 
-SecTalk is a web messaging service built around consent to contact. Users sign in with email codes, approve new contacts, and then exchange live messages or start one-to-one audio and video calls. They can block contact, report abuse or fraud, and choose whether to share a specific message with safety staff. Authorized staff use authenticator MFA to review evidence and record moderation decisions.
+SecTalk is a web messaging service built around consent to contact. Users create a password, verify their email with a code, and then sign in with email and password. They can approve contacts, exchange live messages, make one-to-one audio and video calls, and choose whether to share a specific message with safety staff. Authorized staff use authenticator MFA to review evidence and record moderation decisions.
 
 ## Run locally
 
@@ -8,11 +8,13 @@ Requires Node.js 22 or 24 and npm.
 
 1. Run `npm ci`.
 2. Copy [the environment template](apps/web/.env.example) to `apps/web/.env.local`. Set the project URL and publishable key.
-3. Apply [the Supabase migration](supabase/migrations/202611200001_sectalk.sql) to the target project using the Supabase SQL Editor or your migration workflow.
-4. Set the Supabase Auth **Magic Link** template to send the code from [this HTML template](supabase/templates/magic_link.html). Enable email signup. Configure custom SMTP for public email delivery. Set the Site URL and allowed redirects for your deployment.
+3. Apply [the base schema](supabase/migrations/202611200001_sectalk.sql) and [private Realtime notifications](supabase/migrations/202611200002_sectalk_private_live_notifications.sql) in that order using the Supabase SQL Editor or your migration workflow.
+4. In Supabase Auth, enable email signup and **Confirm email**. Under **Email Templates**, paste [confirmation.html](supabase/templates/confirmation.html) into **Confirm signup** and [recovery.html](supabase/templates/recovery.html) into **Reset password**. Each template uses `{{ .Token }}` to send the numeric code. Configure custom SMTP for public email delivery. Set the Site URL and allowed redirects for your deployment.
 5. Run `npm run dev` and visit `http://localhost:3000`.
 
 The browser uses the Supabase publishable key and the signed-in user's JWT. Neither Vercel nor the browser requires a Supabase secret key. A replacement Supabase project needs its own schema migration, OTP template, SMTP settings and environment variables. Database state and login sessions stay with the old project. Revoke the previously shared Supabase secret key or delete the disposable project when it is no longer needed.
+
+Existing accounts created with passwordless sign-in can use **Forgot password** to set their first password. The Magic Link template applies to passwordless sign-in only. Supabase hosts auth templates independently from Vercel and the database migration.
 
 ## Staff access
 
@@ -37,6 +39,6 @@ Calls use Supabase for signaling and WebRTC for media. With no TURN configured, 
 - `npm test` checks local scam and URL warning rules.
 - `npm run typecheck && npm run build` checks the TypeScript and production build.
 - `/api/health` checks environment presence. Use the SQL verification script in a database SQL Editor to test consent, permissions and moderation. It rolls back its fixtures.
-- Use two different accounts in isolated browser profiles to verify OTP, request acceptance, live messages, incoming call notifications, mute and hang-up, two-way video, reconnection, block enforcement and report submission. Test on separate networks with relay enabled. Open the staff console with an independent staff account to verify role and MFA gates.
+- Use two different accounts in isolated browser profiles to verify signup codes, password login, recovery codes, request acceptance, live messages, incoming call notifications, mute and hang-up, two-way video, reconnection, block enforcement and report submission. Test on separate networks with relay enabled. Open the staff console with an independent staff account to verify role and MFA gates.
 
 See [features.md](features.md) for the architecture and delivery scope.

@@ -1,10 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { db, formatError, type Call } from './data'
+import { db, formatError, liveChannel, onReconnect, type Call } from './data'
 
 type Signal = {
-  id: string; sender: string; kind: 'offer' | 'answer' | 'ice'; payload: RTCSessionDescriptionInit | RTCIceCandidateInit
+  id: string; sender: string; kind: 'offer' | 'answer' | 'ice'; created_at: string
+  payload: RTCSessionDescriptionInit | RTCIceCandidateInit
 }
 
 async function callConfiguration(): Promise<RTCConfiguration> {
@@ -21,8 +22,9 @@ async function media(video: boolean) {
   return navigator.mediaDevices.getUserMedia({ audio: true, video })
 }
 
-export function useCalling(user: string, notice: (message: string) => void) {
+export function useCalling(user: string, notice: (message: string) => void, hints: EventTarget) {
   const [call, setCall] = useState<Call | null>(null)
+  const [historyVersion, setHistoryVersion] = useState(0)
   const [local, setLocal] = useState<MediaStream | null>(null)
   const [remote, setRemote] = useState<MediaStream | null>(null)
   const [connection, setConnection] = useState('connecting')
@@ -43,27 +45,31 @@ export function useCalling(user: string, notice: (message: string) => void) {
     setConnection('connecting')
   }, [])
 
-  const refresh = useCallback(async () => {
-    const read = ++lastRead.current
-    const { data, error } = await db!.from('st_calls').select('*')
-      .or('caller.eq.' + user + ',callee.eq.' + user)
-      .in('status', ['ringing', 'active']).gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false }).limit(1)
-    if (error || lastRead.current !== read || !mounted.current) return
-    const next = (data?.[0] ?? null) as Call | null
-    const visible = next && !stopped.current.has(next.id) &&
+  const applyCall = useCallback((next: Call | null) => {
+    const visible = next && next.status !== 'ended' && Date.parse(next.expires_at) > Date.now() &&
+      !stopped.current.has(next.id) &&
       (owned.current === next.id || (next.callee === user && next.status === 'ringing')) ? next : null
     if (!visible && owned.current) {
       owned.current = null
       cleanupMedia()
     }
     current.current = visible
-    setCall(visible)
+    setCall(previous => previous?.id === visible?.id && previous?.status === visible?.status ? previous : visible)
   }, [user, cleanupMedia])
+
+  const refresh = useCallback(async () => {
+    const version = lastRead.current
+    const { data, error } = await db!.from('st_calls').select('*')
+      .or('caller.eq.' + user + ',callee.eq.' + user)
+      .in('status', ['ringing', 'active']).gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false }).limit(1)
+    if (!error && lastRead.current === version && mounted.current) applyCall((data?.[0] ?? null) as Call | null)
+  }, [user, applyCall])
 
   const end = useCallback(async () => {
     const active = current.current
     if (!active) return
+    ++lastRead.current
     stopped.current.add(active.id)
     owned.current = null
     current.current = null
@@ -75,21 +81,40 @@ export function useCalling(user: string, notice: (message: string) => void) {
 
   useEffect(() => {
     mounted.current = true
-    const channel = db!.channel('call-inbox:' + user)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'st_calls', filter: 'caller=eq.' + user }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'st_calls', filter: 'callee=eq.' + user }, refresh)
+    function change(payload: { new: Call | Record<string, never> }) {
+      const next = payload.new as Call
+      if (!next.id) return
+      setHistoryVersion(value => value + 1)
+      const expected = current.current?.id || owned.current
+      if (!expected || expected === next.id) {
+        if (current.current?.status === 'active' && next.status === 'ringing') return
+        ++lastRead.current
+        applyCall(next)
+      }
+    }
+    const channel = liveChannel('call-inbox:' + user, refresh)
+      .on<Call>('postgres_changes', { event: '*', schema: 'public', table: 'st_calls', filter: 'caller=eq.' + user }, change)
+      .on<Call>('postgres_changes', { event: '*', schema: 'public', table: 'st_calls', filter: 'callee=eq.' + user }, change)
       .subscribe(status => { if (status === 'SUBSCRIBED') void refresh() })
     void refresh()
     const timer = window.setInterval(refresh, 2500)
+    const removeReconnect = onReconnect(refresh)
+    const onHint = () => { setHistoryVersion(value => value + 1); void refresh() }
+    hints.addEventListener('call', onHint)
+    hints.addEventListener('ready', onHint)
     return () => {
       mounted.current = false
+      ++lastRead.current
+      hints.removeEventListener('call', onHint)
+      hints.removeEventListener('ready', onHint)
+      removeReconnect()
       window.clearInterval(timer)
       void db!.removeChannel(channel)
       stream.current?.getTracks().forEach(track => track.stop())
       const id = owned.current
       if (id) void db!.rpc('st_call_status', { p_call: id, p_accept: false })
     }
-  }, [user, refresh])
+  }, [user, refresh, applyCall, hints])
 
   async function start(chatId: string, video: boolean) {
     if (started.current || current.current) return
@@ -106,6 +131,7 @@ export function useCalling(user: string, notice: (message: string) => void) {
         return
       }
       owned.current = data
+      ++lastRead.current
       setLocal(source)
       await refresh()
     } catch (error) {
@@ -136,6 +162,7 @@ export function useCalling(user: string, notice: (message: string) => void) {
         await db!.rpc('st_call_status', { p_call: incoming.id, p_accept: false })
         return
       }
+      ++lastRead.current
       setLocal(source)
       await refresh()
     } catch (error) {
@@ -158,9 +185,13 @@ export function useCalling(user: string, notice: (message: string) => void) {
     let timeout: number | undefined
     let polling: number | undefined
     let removeChannel: (() => void) | undefined
+    let removeHint: (() => void) | undefined
     let processing = false
+    let needsSnapshot = true
     const seen = new Set<string>()
-    const pending: RTCIceCandidateInit[] = []
+    const arriving = new Map<string, Signal>()
+    let pending: RTCIceCandidateInit[] = []
+    let remoteUfrags = new Set<string>()
 
     function fail(message: string) {
       if (disposed) return
@@ -180,28 +211,59 @@ export function useCalling(user: string, notice: (message: string) => void) {
       await transmit('offer', description)
     }
 
-    async function readSignals(peer: RTCPeerConnection) {
-      if (disposed || processing) return
+    async function readSignals(peer: RTCPeerConnection, signal?: Signal) {
+      if (disposed) return
+      if (signal) {
+        if (signal.sender === user || seen.has(signal.id)) return
+        arriving.set(signal.id, signal)
+      } else {
+        needsSnapshot = true
+      }
+      if (processing) return
       processing = true
       try {
-        const { data, error } = await db!.from('st_signals').select('id,sender,kind,payload')
-          .eq('call_id', activeId).neq('sender', user).order('created_at').order('id').limit(750)
-        if (disposed || error) return
-        for (const signal of (data ?? []) as Signal[]) {
-          if (disposed) return
-          if (seen.has(signal.id)) continue
-          seen.add(signal.id)
-          if (signal.kind === 'ice') {
-            if (peer.remoteDescription) await peer.addIceCandidate(signal.payload as RTCIceCandidateInit).catch(() => undefined)
-            else pending.push(signal.payload as RTCIceCandidateInit)
-            continue
+        while (!disposed && (needsSnapshot || arriving.size)) {
+          const readHistory = needsSnapshot
+          needsSnapshot = false
+          if (readHistory) {
+            const { data } = await db!.from('st_signals').select('id,sender,kind,payload,created_at')
+              .eq('call_id', activeId).neq('sender', user).order('created_at').order('id').limit(750)
+            for (const row of (data ?? []) as Signal[]) {
+              if (!seen.has(row.id)) arriving.set(row.id, row)
+            }
           }
-          await peer.setRemoteDescription(signal.payload as RTCSessionDescriptionInit)
-          for (const candidate of pending.splice(0)) await peer.addIceCandidate(candidate).catch(() => undefined)
-          if (signal.kind === 'offer') {
-            const description = await peer.createAnswer()
-            await peer.setLocalDescription(description)
-            await transmit('answer', description)
+          const batch = [...arriving.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+          arriving.clear()
+          for (const row of batch) {
+            if (disposed) return
+            if (seen.has(row.id)) continue
+            seen.add(row.id)
+            if (row.kind === 'ice') {
+              const candidate = row.payload as RTCIceCandidateInit
+              if (peer.remoteDescription && (!candidate.usernameFragment || remoteUfrags.has(candidate.usernameFragment))) {
+                await peer.addIceCandidate(candidate).catch(() => undefined)
+              } else {
+                pending = [...pending.slice(-149), candidate]
+              }
+              continue
+            }
+            const description = row.payload as RTCSessionDescriptionInit
+            await peer.setRemoteDescription(description)
+            remoteUfrags = new Set([...description.sdp?.matchAll(/^a=ice-ufrag:([^\r\n]+)/gm) ?? []].map(match => match[1]))
+            const remaining: RTCIceCandidateInit[] = []
+            for (const candidate of pending) {
+              if (!candidate.usernameFragment || remoteUfrags.has(candidate.usernameFragment)) {
+                await peer.addIceCandidate(candidate).catch(() => undefined)
+              } else {
+                remaining.push(candidate)
+              }
+            }
+            pending = remaining
+            if (row.kind === 'offer') {
+              const answer = await peer.createAnswer()
+              await peer.setLocalDescription(answer)
+              await transmit('answer', answer)
+            }
           }
         }
       } catch {
@@ -238,11 +300,19 @@ export function useCalling(user: string, notice: (message: string) => void) {
             }, 2500)
           }
         }
-        const channel = db!.channel('signals:' + activeId)
-          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'st_signals', filter: 'call_id=eq.' + activeId },
-            () => void readSignals(peer))
+        const channel = liveChannel('signals:' + activeId, () => void readSignals(peer))
+          .on<Signal>('postgres_changes', { event: 'INSERT', schema: 'public', table: 'st_signals', filter: 'call_id=eq.' + activeId },
+            payload => void readSignals(peer, payload.new))
           .subscribe(status => { if (status === 'SUBSCRIBED') void readSignals(peer) })
         removeChannel = () => { void db!.removeChannel(channel) }
+        const catchUp = () => void readSignals(peer)
+        const onHint = (event: Event) => { if ((event as MessageEvent).data === activeId) catchUp() }
+        hints.addEventListener('signal', onHint)
+        hints.addEventListener('ready', catchUp)
+        removeHint = () => {
+          hints.removeEventListener('signal', onHint)
+          hints.removeEventListener('ready', catchUp)
+        }
         polling = window.setInterval(() => void readSignals(peer), 1200)
         timeout = window.setTimeout(() => fail('Connection timed out. Try again or switch networks.'), 30000)
         if (isCaller) await offer(peer)
@@ -258,9 +328,10 @@ export function useCalling(user: string, notice: (message: string) => void) {
       window.clearTimeout(timeout)
       window.clearInterval(polling)
       removeChannel?.()
+      removeHint?.()
       pc?.close()
     }
-  }, [activeId, isCaller, local, user, end, notice])
+  }, [activeId, isCaller, local, user, end, notice, hints])
 
-  return { call, local, remote, connection, busy, start, answer, end }
+  return { call, local, remote, connection, busy, start, answer, end, historyVersion }
 }

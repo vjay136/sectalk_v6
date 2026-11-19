@@ -6,12 +6,12 @@ Eagle Security builds SecTalk for people who need control over who can contact t
 
 ## Information architecture and UX
 
-The public page introduces consent, messaging and calls and leads to email verification. The authenticated workspace has Inbox, Requests, Safety and Profile. Desktop uses a rail, contact list and workspace panel. Mobile uses a bottom navigation and a single active pane. The visual system uses a dark neutral palette with green for primary actions, amber for warnings and red for harmful or destructive actions. Interaction uses visible keyboard focus, labeled controls, native modal focus management and reduced-motion support. The briefs also call for light and high-contrast themes, accessible route-level navigation, a command palette, pricing, security, compliance, help and legal pages. Those need design and validation in later releases.
+The public page introduces consent, messaging and calls, and provides signup, password sign-in and recovery. The authenticated workspace has labeled Inbox, Calls, Safety and Profile navigation, with contact requests inside Inbox. Desktop uses a rail, contact list and workspace panel. Mobile uses bottom navigation and a single active pane. The visual system pairs the Eagle Security artwork with navy, cyan for primary actions, amber for warnings and red for destructive actions. Interaction uses visible keyboard focus, labeled controls, native modal focus management and reduced-motion support. The briefs also call for light and high-contrast themes, accessible route-level navigation, a command palette, pricing, security, compliance, help and legal pages. Those need design and validation in later releases.
 
 ## Messaging, presence and search
 
 - Use the exact handle for a contact request. Recipients can accept, decline, report or block. The database enforces acceptance before sending and blocks new messages in either direction.
-- Messages are text only. Render as text and keep links non-interactive. Server timestamps and UUIDs provide ordering and idempotency. Fetch latest and earlier pages with a stable cursor. Supabase Realtime delivers new messages and the active conversation re-fetches on subscription recovery.
+- Messages are text only. Render as text and keep links non-interactive. Server timestamps and UUIDs provide ordering and idempotency. Fetch latest and earlier pages with a stable cursor. Private Supabase Broadcast sends refresh hints to each participant's account topic. Postgres Changes also deliver authorized rows. The client catches up on subscription readiness, reconnection, and tab visibility, with polling as a fallback.
 - The messaging UI distinguishes delivery to the server from reading by the recipient. This release provides a send confirmation, contact search and connection status. Delivery receipts, read receipts, offline outbox persistence, per-contact presence, message search, edits, deletions, mentions and reactions are planned.
 - Search indexes must observe membership and deletion. For E2EE conversations, index only authorized metadata on the server and build body search locally.
 
@@ -31,7 +31,7 @@ Local deterministic indicators flag potentially risky payment requests, credenti
 
 ## Security and governance
 
-Use passwordless email OTP with a custom SMTP provider. Staff actions require an authorized account and an AAL2 JWT. RLS gates reads and narrowly scoped RPCs gate writes. Supabase can access stored message content by design. The initial release uses TLS and database access controls, with browser WebRTC transport encryption for media. Full message E2EE needs a reviewed protocol, device verification, multi-device key backup and rotation, and explicit evidence sharing. Passkeys, device trust, session policy, SSO and scoped organization RBAC remain future work. Browser storage holds the authenticated session. Production security work includes a nonce-based CSP, replay and abuse tests, account recovery, appeal policy and a privacy/retention review.
+Use email and password with numeric email codes for signup verification and password recovery, backed by custom SMTP. Staff actions require an authorized account and an AAL2 JWT. RLS gates reads and narrowly scoped RPCs gate writes. Supabase can access stored message content by design. The initial release uses TLS and database access controls, with browser WebRTC transport encryption for media. Full message E2EE needs a reviewed protocol, device verification, multi-device key backup and rotation, and explicit evidence sharing. Passkeys, device trust, session policy, SSO and scoped organization RBAC remain future work. Browser storage holds the authenticated session. Production security work includes a nonce-based CSP, replay and abuse tests, appeal policy and a privacy/retention review.
 
 ## Data model and API contracts
 
@@ -39,7 +39,7 @@ The canonical DDL is in the timestamped Supabase migration. Public tables use th
 
 | Interface | Contract |
 | --- | --- |
-| Email OTP | Supabase Auth `signInWithOtp` then `verifyOtp` with type `email` |
+| Account access | Supabase Auth `signUp` and `verifyOtp` with type `email`, `signInWithPassword`, and recovery with `resetPasswordForEmail` and `verifyOtp` with type `recovery` |
 | Contacts | `st_request`, `st_respond`, `st_set_block` |
 | Messages | `st_send` with client UUID and text, participant-only reads and Realtime events |
 | Calls | `st_place_call`, `st_call_status`, `st_signal`; authenticated `GET /api/ice` |

@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
-  ArrowLeft, Ban, Check, ChevronRight, CircleHelp, Flag, Inbox as InboxIcon, LogOut, ShieldAlert,
+  ArrowLeft, Ban, Check, ChevronRight, CircleHelp, Copy, Flag, Inbox as InboxIcon, LogOut, ShieldAlert,
   MessageCircle, Phone, Plus, Search, Send, Shield, ShieldCheck, UserRound, Video, X,
 } from 'lucide-react'
-import { db, formatError, formatTime, peerId, type Chat, type Message, type Profile } from '../lib/data'
+import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
 import { useCalling } from '../lib/calling'
 import { riskIndicators } from '../lib/safety.mjs'
 import { CallPanel } from './call-panel'
@@ -24,7 +24,7 @@ export function Inbox({ user }: { user: string }) {
   const [blocks, setBlocks] = useState<string[]>([])
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<'inbox' | 'safety' | 'profile'>('inbox')
+  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile'>('inbox')
   const [mode, setMode] = useState<'chats' | 'requests'>('chats')
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
@@ -32,9 +32,11 @@ export function Inbox({ user }: { user: string }) {
   const [report, setReport] = useState<{ chat: string; message: Message | null } | null>(null)
   const [blockCheck, setBlockCheck] = useState(false)
   const [online, setOnline] = useState(false)
+  const [broadcastOnline, setBroadcastOnline] = useState(false)
   const [working, setWorking] = useState(false)
   const readVersion = useRef(0)
-  const call = useCalling(user, setNotice)
+  const [hints] = useState(() => new EventTarget())
+  const call = useCalling(user, setNotice, hints)
 
   const refresh = useCallback(async () => {
     const version = ++readVersion.current
@@ -62,24 +64,45 @@ export function Inbox({ user }: { user: string }) {
 
   useEffect(() => {
     void refresh()
-    const channel = db!.channel('inbox:' + user)
+    const account = db!.channel('st:account:' + user, { config: { private: true } })
+      .on('broadcast', { event: 'inbox' }, ({ payload }) => {
+        if (typeof payload?.chat_id === 'string') {
+          hints.dispatchEvent(new MessageEvent('inbox', { data: payload.chat_id }))
+          void refresh()
+        }
+      })
+      .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
+      .on('broadcast', { event: 'signal' }, ({ payload }) => {
+        if (typeof payload?.call_id === 'string') hints.dispatchEvent(new MessageEvent('signal', { data: payload.call_id }))
+      })
+      .subscribe(status => {
+        setBroadcastOnline(status === 'SUBSCRIBED')
+        if (status === 'SUBSCRIBED') {
+          hints.dispatchEvent(new Event('ready'))
+          void refresh()
+        }
+      })
+    const channel = liveChannel('inbox:' + user, () => { setOnline(true); void refresh() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'st_chats', filter: 'member_a=eq.' + user }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'st_chats', filter: 'member_b=eq.' + user }, refresh)
       .subscribe(status => {
-        setOnline(status === 'SUBSCRIBED')
         if (status === 'SUBSCRIBED') void refresh()
+        else setOnline(false)
       })
     const timer = window.setInterval(refresh, 16000)
+    const removeReconnect = onReconnect(refresh)
     const subscription = db!.auth.onAuthStateChange(event => {
       if (event === 'MFA_CHALLENGE_VERIFIED' || event === 'TOKEN_REFRESHED') window.setTimeout(refresh, 0)
     })
     return () => {
       ++readVersion.current
+      removeReconnect()
       window.clearInterval(timer)
       subscription.data.subscription.unsubscribe()
+      void db!.removeChannel(account)
       void db!.removeChannel(channel)
     }
-  }, [user, refresh])
+  }, [user, refresh, hints])
 
   const chat = chats.find(item => item.id === selected)
   const peer = chat ? profiles[peerId(chat, user)] : undefined
@@ -118,11 +141,12 @@ export function Inbox({ user }: { user: string }) {
 
   return <main className={'workspace ' + (selected && tab === 'inbox' ? 'thread-open' : '') + (tab !== 'inbox' ? ' full-panel' : '')}>
     <nav className="rail" aria-label="Workspace">
-      <div className="rail-logo"><ShieldCheck size={23} /></div>
-      <button className={tab === 'inbox' ? 'active' : ''} onClick={() => setTab('inbox')} aria-label="Inbox" title="Inbox"><MessageCircle size={21} /></button>
-      <button className={tab === 'safety' ? 'active' : ''} onClick={() => setTab('safety')} aria-label="Safety center" title="Safety center"><Shield size={21} /></button>
-      <div className="rail-end"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')} aria-label="Profile" title="Profile"><UserRound size={20} /></button>
-        <button aria-label="Sign out" title="Sign out" onClick={async () => { await call.end(); void db!.auth.signOut({ scope: 'local' }) }}><LogOut size={20} /></button></div>
+      <Brand compact />
+      <button className={tab === 'inbox' ? 'active' : ''} aria-current={tab === 'inbox' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>Inbox</span></button>
+      <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>Calls</span></button>
+      <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>Safety</span></button>
+      <div className="rail-end"><button className={tab === 'profile' ? 'active' : ''} aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}><UserRound size={20} /><span>Profile</span></button>
+        <button onClick={async () => { await call.end(); void db!.auth.signOut({ scope: 'local' }) }}><LogOut size={19} /><span>Sign out</span></button></div>
     </nav>
     <aside className="inbox-list">
       <header><Brand /><div className="inbox-heading"><h1>Inbox</h1><button className="primary square" onClick={() => setNewContact(true)} title="New contact" aria-label="New contact"><Plus size={21} /></button></div>
@@ -142,10 +166,15 @@ export function Inbox({ user }: { user: string }) {
           </button>
         })}
       </div>
-      <div className="list-footer"><Avatar name={profile.name} /><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online ? '' : 'offline')} title={online ? 'Live updates connected' : 'Syncing'} /></div>
+      <div className="list-footer"><Avatar name={profile.name} /><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
     </aside>
-    {tab === 'profile' ? <section className="content-page"><h1>Profile</h1><ProfileForm profile={profile} onSave={refresh} /></section> :
+    {tab === 'profile' ? <section className="content-page"><h1>Profile</h1>
+      <div className="profile-handle"><code>@{profile.handle}</code><button className="secondary" onClick={async () => {
+        try { await navigator.clipboard.writeText(profile.handle); setNotice('Handle copied.') }
+        catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
+      }}><Copy size={15} /> Copy handle</button></div><ProfileForm profile={profile} onSave={refresh} /></section> :
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} /> :
+      tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
         <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} />
           <div><h2>{peer?.name || 'Contact'}</h2><p>{blocked ? 'Blocked' : chat.status === 'accepted' ? 'Accepted contact' : 'Contact request'}</p></div>
@@ -159,7 +188,7 @@ export function Inbox({ user }: { user: string }) {
           </div>
         </header>
         {blockCheck && <div className="inline-warning"><span>{blocked ? 'Allow this contact to reach you again?' : 'Block new messages and calls from this contact?'}</span><button className="danger" disabled={working} onClick={() => void run('st_set_block', { p_chat: chat.id, p_block: !blocked }, () => { setBlockCheck(false); setNotice(blocked ? 'Contact unblocked.' : 'Contact blocked.') })}>{blocked ? 'Unblock' : 'Block'}</button><button className="secondary" onClick={() => setBlockCheck(false)}>Cancel</button></div>}
-        {chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} blocked={blocked} inform={setNotice} onReport={message => setReport({ chat: chat.id, message })} /> :
+        {chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} hints={hints} blocked={blocked} inform={setNotice} onReport={message => setReport({ chat: chat.id, message })} /> :
           <div className="empty-thread"><div className="card-icon"><ShieldCheck size={26} /></div>
             <h2>{chat.status === 'declined' ? 'Request declined' : chat.requester === user ? 'Request sent' : 'New contact request'}</h2>
             <p>{chat.status === 'declined' ? 'This conversation is closed.' : chat.requester === user ? 'You can chat and call once this contact accepts.' : 'Accept to allow this person to message or call you.'}</p>
@@ -168,7 +197,7 @@ export function Inbox({ user }: { user: string }) {
               <button className="secondary" disabled={working} onClick={() => void run('st_respond', { p_chat: chat.id, p_accept: false })}>Decline</button>
             </div>}
           </div>}
-      </section> : <section className="thread"><header className="thread-header default-header"><h2>Messages</h2><span className="pill"><span className={'status-dot ' + (online ? '' : 'offline')} />{online ? 'Live updates' : 'Syncing'}</span></header>
+      </section> : <section className="thread"><header className="thread-header default-header"><h2>Messages</h2><span className="pill"><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} />{online || broadcastOnline ? 'Live updates' : 'Syncing'}</span></header>
         <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>Your conversations</h2><p>Choose a chat or add a contact to start talking.</p><button className="primary" onClick={() => setNewContact(true)}><Plus size={17} /> New contact</button></div>
       </section>}
     {notice && <div className="toast" role="status"><CircleHelp size={18} /><span>{notice}</span><button className="icon" aria-label="Dismiss notice" onClick={() => setNotice('')}><X size={17}/></button></div>}
@@ -180,6 +209,48 @@ export function Inbox({ user }: { user: string }) {
     {report && <ReportDialog chat={report.chat} message={report.message} close={() => setReport(null)} inform={setNotice} />}
     {call.call && <CallPanel key={call.call.id} state={call} self={user} name={profiles[callerId]?.name || 'Contact'} />}
   </main>
+}
+
+function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
+  user: string; chats: Chat[]; profiles: Record<string, Profile>; blocks: string[];
+  state: ReturnType<typeof useCalling>; openChat: (id: string) => void; openInbox: () => void
+}) {
+  const [rows, setRows] = useState<Call[] | null>(null)
+  const [error, setError] = useState(false)
+  const reload = useCallback(async () => {
+    const { data, error } = await db!.from('st_calls').select('*')
+      .or('caller.eq.' + user + ',callee.eq.' + user).order('created_at', { ascending: false }).limit(40)
+    setError(!!error)
+    if (data) setRows(data as Call[])
+  }, [user])
+  useEffect(() => { void reload() }, [reload, state.historyVersion])
+
+  return <section className="content-page">
+    <header className="content-title"><div className="card-icon"><Phone size={22} /></div><div><h1>Calls</h1><p>Start a call from an approved conversation or return a recent call.</p></div></header>
+    <div className="panel">
+      <div className="panel-header"><h2>Recent calls</h2><button className="secondary" onClick={openInbox}>Open inbox <ChevronRight size={16} /></button></div>
+      {error && <div className="list-empty"><p role="alert">Could not load call history.</p><button className="secondary" onClick={reload}>Try again</button></div>}
+      {!error && rows === null && <div className="list-empty" role="status">Loading calls…</div>}
+      {!error && rows?.length === 0 && <div className="list-empty"><Phone size={22} /><strong>No calls yet</strong><p>Open a chat and choose Audio or Video.</p></div>}
+      {rows?.map(row => {
+        const incoming = row.callee === user
+        const peer = incoming ? row.caller : row.callee
+        const name = profiles[peer]?.name || 'Contact'
+        const reachable = chats.some(chat => chat.id === row.chat_id && chat.status === 'accepted') && !blocks.includes(peer)
+        const status = row.status === 'active' && Date.parse(row.expires_at) > Date.now() ? 'In progress'
+          : row.status === 'ringing' ? Date.parse(row.expires_at) > Date.now() ? 'Ringing' : incoming ? 'Missed' : 'No answer' : 'Ended'
+        return <div className="report-row" key={row.id}>
+          <Avatar name={name} />
+          <div><strong>{name}</strong><small>{incoming ? 'Incoming' : 'Outgoing'} {row.video ? 'video' : 'audio'} · {new Date(row.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</small><span className="call-state">{status}</span></div>
+          {reachable && <span className="call-history-controls">
+            <button className="icon" aria-label={'Open conversation with ' + name} title="Open conversation" onClick={() => openChat(row.chat_id)}><MessageCircle size={17} /></button>
+            <button className="icon" aria-label={'Start audio call with ' + name} title="Audio call" disabled={state.busy || !!state.call} onClick={() => void state.start(row.chat_id, false)}><Phone size={17} /></button>
+            <button className="icon" aria-label={'Start video call with ' + name} title="Video call" disabled={state.busy || !!state.call} onClick={() => void state.start(row.chat_id, true)}><Video size={17} /></button>
+          </span>}
+        </div>
+      })}
+    </div>
+  </section>
 }
 
 export function Dialog({ title, close, children }: { title: string; close: () => void; children: React.ReactNode }) {
@@ -215,8 +286,8 @@ function ProfileForm({ profile, onSave }: { profile: Profile | null; onSave: () 
   </form>
 }
 
-function Thread({ chat, self, blocked, onReport, inform }: {
-  chat: Chat; self: string; blocked: boolean; onReport: (message: Message) => void; inform: (notice: string) => void
+function Thread({ chat, self, hints, blocked, onReport, inform }: {
+  chat: Chat; self: string; hints: EventTarget; blocked: boolean; onReport: (message: Message) => void; inform: (notice: string) => void
 }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
@@ -246,12 +317,23 @@ function Thread({ chat, self, blocked, onReport, inform }: {
   useEffect(() => { loadLatest.current = load }, [load])
   useEffect(() => {
     void loadLatest.current()
-    const channel = db!.channel('thread:' + chat.id)
+    const sync = () => void loadLatest.current()
+    const onHint = (event: Event) => { if ((event as MessageEvent).data === chat.id) sync() }
+    const channel = liveChannel('thread:' + chat.id, sync)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'st_messages', filter: 'chat_id=eq.' + chat.id }, payload => merge([payload.new as Message]))
       .subscribe(status => { if (status === 'SUBSCRIBED') void loadLatest.current() })
-    const timer = window.setInterval(() => void loadLatest.current(), 10000)
-    return () => { window.clearInterval(timer); void db!.removeChannel(channel) }
-  }, [chat.id, merge])
+    const timer = window.setInterval(sync, 3500)
+    const removeReconnect = onReconnect(sync)
+    hints.addEventListener('inbox', onHint)
+    hints.addEventListener('ready', sync)
+    return () => {
+      hints.removeEventListener('inbox', onHint)
+      hints.removeEventListener('ready', sync)
+      removeReconnect()
+      window.clearInterval(timer)
+      void db!.removeChannel(channel)
+    }
+  }, [chat.id, hints, merge])
   useEffect(() => {
     const node = feed.current
     if (node && nearBottom.current) node.scrollTop = node.scrollHeight
