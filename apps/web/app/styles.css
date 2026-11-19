@@ -280,6 +280,16 @@ body { background: var(--bg); }
 .call-state { font-size: .74rem; color: var(--muted); }
 .call-panel { border-color: #49749c; }
 .panel-header h2 > svg, .content-title svg { color: var(--accent); }
+.confirmation-page {
+  background: radial-gradient(ellipse at 50% 36%, #17365a 0, transparent 55%), var(--bg);
+}
+.confirmation-card { max-width: 490px; justify-items: center; text-align: center; gap: 18px; }
+.confirmation-card h1 { font-size: clamp(1.55rem, 5vw, 2.25rem); letter-spacing: -.045em; }
+.confirmation-card .primary { justify-content: center; }
+.confirmation-icon { width: 59px; height: 59px; border-radius: 16px; }
+.confirmation-icon.verified { background: #163e38; color: #8ae8be; border-color: #2c6358; }
+.confirmation-icon.invalid, .confirmation-icon.unavailable { background: #46341e; color: #ffd3a9; border-color: #705234; }
+.confirmation-url { color: var(--muted); font: .78rem/1.4 "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
 @media (max-width: 730px) {
   .access-layout { grid-template-columns: 1fr; gap: 24px; padding-block: 27px; }
   .threat-visual { display: none; }

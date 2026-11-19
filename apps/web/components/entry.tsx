@@ -6,7 +6,7 @@ import {
   ArrowLeft, ArrowRight, AudioLines, Check, Fingerprint, Flag, KeyRound,
   LockKeyhole, Mail, Phone, Send, Shield, ShieldCheck, Video,
 } from 'lucide-react'
-import { db, recoveryClient } from '../lib/data'
+import { db, transientAuthClient } from '../lib/data'
 
 export function Brand({ compact = false }: { compact?: boolean }) {
   return <div className={'brand' + (compact ? ' compact-brand' : '')}>
@@ -19,8 +19,8 @@ type Step = 'sign-in' | 'sign-up' | 'confirm' | 'forgot' | 'recover' | 'new-pass
 
 const steps = {
   'sign-in': ['Sign in to SecTalk', 'Use the email address and password for your account.', 'Sign in'],
-  'sign-up': ['Create your account', 'Choose a password. We’ll email you a code to verify your address.', 'Create account'],
-  confirm: ['Verify your email', 'Enter the signup code for', 'Verify email'],
+  'sign-up': ['Create your account', 'Choose a password. We’ll email you a link to verify your address.', 'Create account'],
+  confirm: ['Check your email', 'Open the SecTalk verification link for', 'Back to sign in'],
   forgot: ['Reset your password', 'Enter your account email to receive a recovery code.', 'Send recovery code'],
   recover: ['Verify your recovery code', 'Enter the recovery code for', 'Verify code'],
   'new-password': ['Set a new password', 'Use a password you haven’t used for this account before.', 'Update password'],
@@ -31,7 +31,7 @@ function authMessage(error: { code?: string; status?: number }, step: Step) {
   if (error.status === 429) return 'Too many requests. Wait a minute and try again.'
   if (error.code === 'weak_password') return 'Choose a stronger password with at least 12 characters.'
   if (step === 'sign-in') return 'Check your email and password, then try again.'
-  if (step === 'confirm' || step === 'recover') return 'This code is invalid or expired. Request a new code and try again.'
+  if (step === 'recover') return 'This code is invalid or expired. Request a new code and try again.'
   if (step === 'new-password') return error.code === 'same_password' ? 'Choose a password different from your current password.' : 'Your password could not be updated. If the recovery session expired, request a new code.'
   return 'We couldn’t send a verification email. Check the address and try again.'
 }
@@ -45,13 +45,14 @@ export function Entry({ recovering }: { recovering: boolean }) {
   const [busy, setBusy] = useState(false)
   const [alert, setAlert] = useState('')
   const [info, setInfo] = useState('')
-  const recovery = useRef<ReturnType<typeof recoveryClient>>(null)
+  const recovery = useRef<ReturnType<typeof transientAuthClient>>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const current = recovering ? 'new-password' : step
   const [title, description, action] = steps[current]
   const passwordRequired = current === 'sign-in' || current === 'sign-up' || current === 'new-password'
   const newPassword = current === 'new-password' || current === 'sign-up'
-  const codeRequired = current === 'confirm' || current === 'recover'
+  const codeRequired = current === 'recover'
+  const checkEmail = current === 'confirm' || codeRequired
   const showEmail = current === 'sign-in' || current === 'sign-up' || current === 'forgot'
 
   function go(next: Step, message = '') {
@@ -70,6 +71,7 @@ export function Entry({ recovering }: { recovering: boolean }) {
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (busy) return
+    if (current === 'confirm') { await backToSignIn(); return }
     setAlert('')
     setInfo('')
     if (!db) { setAlert('Sign-in is unavailable until SecTalk is configured.'); return }
@@ -85,7 +87,7 @@ export function Entry({ recovering }: { recovering: boolean }) {
         case 'sign-in': {
           const { error } = await db.auth.signInWithPassword({ email: address, password })
           if (error?.code === 'email_not_confirmed') {
-            go('confirm', 'Use your original signup code or request another one.')
+            go('confirm', 'Use your original signup link or request a new one.')
             return
           }
           if (error) throw error
@@ -97,11 +99,6 @@ export function Entry({ recovering }: { recovering: boolean }) {
           go('confirm')
           break
         }
-        case 'confirm': {
-          const { error } = await db.auth.verifyOtp({ email: address, token: code, type: 'email' })
-          if (error) throw error
-          break
-        }
         case 'forgot': {
           const { error } = await db.auth.resetPasswordForEmail(address, { redirectTo: window.location.origin })
           if (error) throw error
@@ -109,7 +106,7 @@ export function Entry({ recovering }: { recovering: boolean }) {
           break
         }
         case 'recover': {
-          const client = recoveryClient()
+          const client = transientAuthClient()
           const result = await client!.auth.verifyOtp({ email: address, token: code, type: 'recovery' })
           if (result.error) throw result.error
           recovery.current = client
@@ -189,10 +186,10 @@ export function Entry({ recovering }: { recovering: boolean }) {
             <button type="button" disabled={busy} aria-pressed={current === 'sign-in'} onClick={() => go('sign-in')}>Sign in</button>
             <button type="button" disabled={busy} aria-pressed={current === 'sign-up'} onClick={() => go('sign-up')}>Create account</button>
           </div>}
-          <div className="card-icon">{codeRequired ? <Mail size={21} /> : current === 'new-password' ? <KeyRound size={21} /> : <LockKeyhole size={21} />}</div>
+          <div className="card-icon">{checkEmail ? <Mail size={21} /> : current === 'new-password' ? <KeyRound size={21} /> : <LockKeyhole size={21} />}</div>
           <div className="auth-intro">
             <h2 ref={heading} tabIndex={-1}>{title}</h2>
-            <p>{description}{codeRequired && <> <strong>{email}</strong>.</>}</p>
+            <p>{description}{checkEmail && <> <strong>{email}</strong>.</>}</p>
           </div>
           {showEmail && <label>Email address<div className="input-icon"><Mail size={16} /><input type="email" autoComplete="email" maxLength={254} required placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)} /></div></label>}
           {passwordRequired && <label>Password<div className="input-icon"><KeyRound size={16} /><input key={current} type="password" autoComplete={newPassword ? 'new-password' : 'current-password'} minLength={newPassword ? 12 : undefined} maxLength={256} required placeholder={newPassword ? 'At least 12 characters' : 'Your password'} value={password} onChange={event => setPassword(event.target.value)} /></div></label>}
@@ -203,14 +200,14 @@ export function Entry({ recovering }: { recovering: boolean }) {
           {info && <p className="form-message success" role="status">{info}</p>}
           <button className="primary submit-auth" disabled={busy}>{busy ? 'Please wait…' : action} <ArrowRight size={18} /></button>
           {current !== 'sign-in' && current !== 'sign-up' && <div className="form-links">
-            <button type="button" disabled={busy} onClick={() => void backToSignIn()}><ArrowLeft size={14} /> Back to sign in</button>
-            {codeRequired && <button type="button" onClick={resend} disabled={busy}>Resend code</button>}
+            {current !== 'confirm' && <button type="button" disabled={busy} onClick={() => void backToSignIn()}><ArrowLeft size={14} /> Back to sign in</button>}
+            {checkEmail && <button type="button" onClick={resend} disabled={busy}>{current === 'confirm' ? 'Resend verification link' : 'Resend code'}</button>}
           </div>}
           {current === 'confirm' && <p className="form-message">
             Already verified this email? Sign in or <button className="text-button" type="button" disabled={busy} onClick={() => go('forgot')}>reset your password</button>.
           </p>}
         </form>
-        <div className="auth-footnote"><Fingerprint size={16} /> {current === 'sign-up' || codeRequired ? 'Email verification protects account access.' : 'Only approved contacts can message or call you.'}</div>
+        <div className="auth-footnote"><Fingerprint size={16} /> {current === 'sign-up' || checkEmail ? 'Email verification protects account access.' : 'Only approved contacts can message or call you.'}</div>
       </section>
     </section>
     <section id="safety" className="benefits">

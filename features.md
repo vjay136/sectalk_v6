@@ -31,7 +31,7 @@ Local deterministic indicators flag potentially risky payment requests, credenti
 
 ## Security and governance
 
-Use email and password with numeric email codes for signup verification and password recovery, backed by custom SMTP. Staff actions require an authorized account and an AAL2 JWT. RLS gates reads and narrowly scoped RPCs gate writes. Supabase can access stored message content by design. The initial release uses TLS and database access controls, with browser WebRTC transport encryption for media. Full message E2EE needs a reviewed protocol, device verification, multi-device key backup and rotation, and explicit evidence sharing. Passkeys, device trust, session policy, SSO and scoped organization RBAC remain future work. Browser storage holds the authenticated session. Production security work includes a nonce-based CSP, replay and abuse tests, appeal policy and a privacy/retention review.
+Use email and password with a confirmation link for signup and a numeric code for password recovery, backed by custom SMTP. The confirmation page verifies the Supabase token and directs the user to sign in. Staff actions require an authorized account and an AAL2 JWT. RLS gates reads and narrowly scoped RPCs gate writes. Supabase can access stored message content by design. The initial release uses TLS and database access controls, with browser WebRTC transport encryption for media. Full message E2EE needs a reviewed protocol, device verification, multi-device key backup and rotation, and explicit evidence sharing. Passkeys, device trust, session policy, SSO and scoped organization RBAC remain future work. Browser storage holds the authenticated session. Production security work includes a nonce-based CSP, replay and abuse tests, appeal policy and a privacy/retention review.
 
 ## Data model and API contracts
 
@@ -60,7 +60,7 @@ Billing is planned across Free, Basic, Professional, Business and Enterprise. Va
 
 Vercel handles web routing and Next.js functions. Supabase manages Auth, Postgres and Realtime. TURN is a separate managed media relay. Introduce queues, cache, scoped search services, workers and load-balancing by measured bottleneck. Keep preview and production credentials scoped and separate. Run builds, typed checks, policy tests, multi-browser and multi-network call tests, accessibility checks, and load tests before release. Plan backup restoration tests, incident response and database/app rollback together.
 
-1. **Initial build** — email OTP, direct Realtime messaging, one-to-one calls, consent, reporting, blocking and staff review.
+1. **Initial build** — email verification, password recovery codes, direct Realtime messaging, one-to-one calls, consent, reporting, blocking and staff review.
 2. **Pilot readiness** — custom SMTP, TURN, live two-account verification, monitoring, capacity limits, retention and abuse handling.
 3. **Collaboration** — groups and tenant roles, files, search, tasks, notifications, E2EE and group calls.
 4. **Enterprise** — billing, SSO, device trust, workspace governance, analytics, audited security controls and compliance review.
