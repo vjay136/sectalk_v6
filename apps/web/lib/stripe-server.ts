@@ -31,12 +31,6 @@ export function legacyOfferForPrice(price: string) {
   return null
 }
 
-export async function readCatalog() {
-  const result = await catalogReader?.rpc('st_v6_plan_catalog')
-  if (!result?.data || result.error) throw new Error('Catalog unavailable')
-  return result.data as PlanVersion[]
-}
-
 export async function catalogPriceId(plan: PaidPlan, cadence: Cadence, currency: BillingCurrency, version: number) {
   if (!billingWriter) return null
   const { data, error } = await billingWriter.rpc('st_v6_checkout_plan_price', {
@@ -48,8 +42,9 @@ export async function catalogPriceId(plan: PaidPlan, cadence: Cadence, currency:
 }
 
 export async function configuredCatalog() {
-  const catalog = await readCatalog()
-  return catalog.map(version => ({
+  const result = await catalogReader?.rpc('st_v7_public_plan_entitlements')
+  if (!result?.data || result.error) throw new Error('Catalog unavailable')
+  return (result.data as PlanVersion[]).map(version => ({
     ...version,
     prices: [...version.prices, ...(version.version === 1 && stripe && paidPlans.some(plan => plan === version.plan)
       ? (['monthly', 'annual'] as const).flatMap(cadence =>

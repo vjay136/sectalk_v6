@@ -19,6 +19,7 @@ import { RoomCalls } from './room-calls'
 import { RoomPermissionSettings, useRoomPermissions } from './room-permissions'
 import {useSensitiveAction} from './sensitive-action'
 import { useDlpPublishWarning } from './dlp-publish-warning'
+import { MessageFormatting, RichMessage } from './rich-message'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
@@ -447,7 +448,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         {post.kind==='announcement'&&<span className="pill">Announcement</span>}
         {post.forwarded&&!post.removed_at&&<span className="pill">Forwarded</span>}
         {post.edited_at&&!post.removed_at&&<span className="pill">Edited</span>}</div>
-      <p className={post.removed_at?'meeting-agenda revoked-message':'meeting-agenda'}>{post.body}</p>
+      <p className={post.removed_at?'meeting-agenda revoked-message':'meeting-agenda'}>{post.removed_at ? post.body : <RichMessage key={post.edited_at||post.created_at} value={post.body} account={user} mode='managed'/>}</p>
       {!post.removed_at&&post.sender===user&&readCount>0&&<span className="pill">Read by {readCount}</span>}
       {!post.removed_at&&<RoomPostReactions room={room.id} post={post.id} policy={reactionPolicy}
         reactions={reactions.items[post.id]} canAdd={Boolean(canPostByRoom&&permissions.state?.react)} canRemove={canModify} onChange={reactions.refresh}/>}
@@ -483,6 +484,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   }
 
   return <section className="panel release-panel" aria-label={room.name} ref={receiptFeed}>
+    <MessageFormatting account={user} mode='managed'/>
     {confirmation}
     {dlpPrompt}
     {forwarding&&<ForwardMessageDialog key={forwarding} source={{kind:'room',conversation:room.id,message:forwarding}}

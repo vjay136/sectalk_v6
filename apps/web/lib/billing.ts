@@ -5,7 +5,11 @@ export type Cadence = 'monthly' | 'annual'
 export const billingCurrencies = ['USD', 'EUR', 'GBP', 'INR', 'CAD', 'AUD', 'JPY'] as const
 export type BillingCurrency = typeof billingCurrencies[number]
 export type PlanOffer = { currency: BillingCurrency; cadence: Cadence; amount: number | null }
-export type PlanVersion = { plan: Plan; version: number; title: string; description: string; prices: PlanOffer[] }
+export type PlanEntitlements = {
+  plan: Plan; version: number; workspace_limit: number; seat_limit: number; group_limit: number
+  file_bytes: number; storage_bytes: number; task_creation: boolean; recurring_meetings: boolean; integration_api: boolean
+}
+export type PlanVersion = { plan: Plan; version: number; title: string; description: string; prices: PlanOffer[]; entitlements?: PlanEntitlements }
 
 export function isBillingCurrency(value: unknown): value is BillingCurrency {
   return billingCurrencies.some(currency => currency === value)

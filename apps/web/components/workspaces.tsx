@@ -17,11 +17,14 @@ import { WorkspaceAdminOverview } from './workspace-admin-overview'
 import { WorkspaceFiles } from './workspace-files'
 import { WorkspaceIntegrations } from './workspace-integrations'
 import { WorkspaceFeatures } from './workspace-features'
+import { WorkspaceFileEgress } from './workspace-file-egress'
+import { WorkspaceTrial } from './workspace-trial'
 import { ComplianceExports } from './compliance-exports'
 import { WorkspacePeople } from './workspace-people'
 import { WorkspaceAISettings } from './workspace-ai-settings'
 import { WorkspaceDlp } from './workspace-dlp'
 import { useDlpPublishWarning } from './dlp-publish-warning'
+import { MessageFormatting, RichMessage } from './rich-message'
 import {useSensitiveAction} from './sensitive-action'
 
 const ImpersonationWatch = dynamic(() => import('./impersonation-watch').then(module => module.ImpersonationWatch), {
@@ -154,7 +157,8 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
 }
 
 function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;user:string;view:WorkspaceView;initialRoom?:string }) {
-  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'files' | 'activity' | 'impersonation' | 'governance' | 'overview' | 'integrations' | 'features' | 'ai' | 'dlp' | 'compliance-exports'>('people')
+  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'files' | 'activity' | 'impersonation' | 'governance' | 'overview' | 'integrations' | 'features' | 'ai' | 'dlp' | 'compliance-exports' | 'file-egress' | 'trial'>(()=>
+    typeof window!=='undefined'&&new URLSearchParams(window.location.search).get('trial')==='return'?'trial':'people')
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
@@ -169,7 +173,7 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
   const role = activeMembers.find(member => member.user_id === user)?.role
   const manager = role === 'owner' || role === 'admin'
   const visibleTab = (!manager && ['activity','impersonation','governance','overview','features','ai','dlp','compliance-exports'].includes(tab)) ||
-    (tab==='integrations'&&role!=='owner') ? 'people' : tab
+    ((tab==='integrations'||tab==='file-egress'||tab==='trial')&&role!=='owner') ? 'people' : tab
   const load = useCallback(async () => {
     const [channelResult, memberResult, presencePolicy] = await Promise.all([
       db!.from('st_v2_channels').select('id,name,owner,visibility,archived').eq('workspace_id', space.id).order('name'),
@@ -210,7 +214,7 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
       ...(manager ? [['overview','Overview'] as const,['features','Features'] as const] : []),
       ['channels', <><Hash size={15}/> Channels</>], ['board', <><ListChecks size={15}/> Board</>],
       ['people', <><Users size={15}/> People</>], ['teams','Groups & teams'], ['files','Files'],
-      ...(role==='owner' ? [['integrations','Integrations'] as const] : []),
+      ...(role==='owner' ? [['integrations','Integrations'] as const,['file-egress','File policy'] as const,['trial','Trial'] as const] : []),
       ...(manager ? [['activity','Activity'] as const,['impersonation','Impersonation watch'] as const,
         ['governance','Governance'] as const,['ai','AI settings'] as const,['dlp','Data loss controls'] as const,
         ['compliance-exports','Compliance exports'] as const] : []),
@@ -240,6 +244,8 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
     {view==='workspaces' && tab==='board' && <Board space={space.id} manager={manager} />}
     {view==='workspaces' && tab==='files' && <WorkspaceFiles workspace={space.id} owner={role==='owner'} />}
     {view==='workspaces' && visibleTab==='integrations' && <WorkspaceIntegrations key={space.id} workspace={space.id}/>}
+    {view==='workspaces' && visibleTab==='file-egress' && <WorkspaceFileEgress key={space.id} workspace={space.id}/>}
+    {view==='workspaces' && visibleTab==='trial' && <WorkspaceTrial key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='ai' && manager && <WorkspaceAISettings key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='dlp' && manager && <WorkspaceDlp key={space.id} workspace={space.id}/>}
     {view==='workspaces' && tab==='impersonation' && manager && <ImpersonationWatch workspace={space.id}
@@ -414,8 +420,9 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
     <div className="release-channel-feed" role="log" aria-label="Channel messages">
       {older && <button className="secondary" onClick={() => void fetchPosts(posts[0])}>Earlier messages</button>}
       {!posts.length && <p><MessageCircle size={16}/> Start the conversation.</p>}
-      {posts.map(post => <article className={'release-post' + (post.sender === user ? ' release-own' : '')} key={post.id}><header><strong>{profiles[post.sender]?.name || 'Workspace member'}</strong> <time dateTime={post.created_at}>{formatTime(post.created_at)}</time></header><p>{post.body}</p></article>)}
+      {posts.map(post => <article className={'release-post' + (post.sender === user ? ' release-own' : '')} key={post.id}><header><strong>{profiles[post.sender]?.name || 'Workspace member'}</strong> <time dateTime={post.created_at}>{formatTime(post.created_at)}</time></header><p><RichMessage value={post.body} account={user} mode='managed'/></p></article>)}
     </div>
+    <MessageFormatting account={user} mode='managed'/>
     {!archived&&<QuickForm label="Post to channel" button="Send message" send={async fields => {
       const body = String(fields.get('body')).trim()
       if (!body) return

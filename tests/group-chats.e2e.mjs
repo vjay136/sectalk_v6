@@ -115,6 +115,30 @@ try {
   assert.notEqual(before.device, beforeSecond.device)
   assert.notEqual(before.envelopes[0].sealed, beforeSecond.envelopes[0].sealed)
   assert.ok(!JSON.stringify(before).includes(first) && before.messages[0].signature.length === 86)
+  if (process.env.SECTALK_GROUP_RICH_TEXT === '1') {
+    const watch = []
+    const link = 'https://approved-a.example.invalid/start?encrypted-local-only=unique'
+    const formatted = '**Encrypted bold** [Encrypted docs](' + link + ')'
+    b.on('request', request => {
+      if (request.url().includes('url-inspection') || request.url().includes('approved-a.example.invalid') ||
+          (request.postData() || '').includes('encrypted-local-only')) watch.push(request.url())
+    })
+    const settings = b.locator('details.rich-message-formatting')
+    await settings.locator('summary').click()
+    await settings.getByLabel('Enable link previews on this device').check()
+    await a.getByLabel('Group message', { exact: true }).fill(formatted)
+    await a.getByRole('button', { name: 'Send encrypted message', exact: true }).click()
+    const entry = b.getByRole('list', { name: 'Group messages' }).getByRole('listitem').filter({ hasText: 'Encrypted bold' })
+    await entry.locator('strong').filter({ hasText: 'Encrypted bold' }).waitFor()
+    await entry.getByText('Link domain approved-a.example.invalid', { exact: true }).waitFor()
+    assert.equal(await entry.locator('a[href]').count(), 0, 'encrypted previews do not expose an anchor that can prefetch')
+    assert.equal(await entry.getByRole('button', { name: /Encrypted docs/ }).count(), 1)
+    assert.ok(!JSON.stringify(data(await group(bc, 'read'))).includes('encrypted-local-only'))
+    await settings.getByLabel('Enable link previews on this device').uncheck()
+    assert.equal(await entry.getByText('Link domain approved-a.example.invalid', { exact: true }).count(), 0)
+    assert.deepEqual(watch, [])
+    console.log('Encrypted group rendered Markdown and generated the domain preview locally with zero URL disclosure.')
+  }
   assert.equal((await group(cc, 'read')).error?.code, '42501')
   assert.equal((await group(peer.client, 'read')).error?.code, '42501')
   async function search(page, query, count) {

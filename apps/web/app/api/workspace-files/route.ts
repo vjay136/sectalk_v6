@@ -4,6 +4,7 @@ import { readAttachmentUpload, readUploadFilename } from '../../../lib/attachmen
 import { allowedFileType, attachmentDocumentFormat, officeFormatPattern } from '../../../lib/file-type-policy'
 import { attachmentInspectionLabel, inspectAttachment } from '../../../lib/attachment-inspection'
 import { scanAttachment } from '../../../lib/attachment-scan-server'
+import { checkFileEgress } from '../../../lib/file-egress'
 import { digestWorkspaceBytes, workspaceFileBucket, workspaceFileFingerprint, workspaceFileMaximum, workspaceFilePath } from '../../../lib/workspace-file-storage'
 
 export const runtime = 'nodejs'
@@ -38,6 +39,10 @@ async function handle(request: Request) {
   const object = workspaceFilePath(workspace, file)
   if (request.method === 'POST' && action !== null) {
     if (action !== 'view' && action !== 'share') return fileFailure(400, 'Choose a valid workspace file action.')
+    if (action === 'share') {
+      const denied = await checkFileEgress(auth.client, 'workspace', workspace, file, 'share')
+      if (denied) return denied
+    }
     const result = await record(action)
     if (result.error) return fileFailure(503, 'Workspace file access could not be recorded.')
     if (!result.data) return forbidden()
@@ -49,6 +54,8 @@ async function handle(request: Request) {
     return result.data ? new Response(null, { status: 204, headers: fileHeaders }) : forbidden()
   }
   if (request.method === 'GET') {
+    const denied = await checkFileEgress(auth.client, 'workspace', workspace, file, 'download')
+    if (denied) return denied
     const metadata = await command('get')
     if (metadata.error) return fileFailure(503, 'Workspace files are unavailable.')
     if (!metadata.data) return forbidden()
@@ -61,6 +68,8 @@ async function handle(request: Request) {
       (current.data.fingerprint && current.data.fingerprint !== workspaceFileFingerprint(workspace, digestWorkspaceBytes(bytes)))) {
       return forbidden()
     }
+    const changed = await checkFileEgress(auth.client, 'workspace', workspace, file, 'download')
+    if (changed) return changed
     const logged = await record('download')
     if (logged.error) return fileFailure(503, 'Workspace file access could not be recorded.')
     if (!logged.data) return forbidden()

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { ArrowRight, CreditCard } from 'lucide-react'
-import { type BillingCurrency, type Cadence, type PaidPlan, type Plan, type PlanVersion, formatBillingAmount, isBillingCurrency, isPaidPlan, plans } from '../lib/billing'
+import { type BillingCurrency, type Cadence, type PaidPlan, type Plan, type PlanEntitlements, type PlanVersion, formatBillingAmount, isBillingCurrency, isPaidPlan, plans } from '../lib/billing'
 import { db } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import {useSensitiveAction} from './sensitive-action'
@@ -22,6 +22,7 @@ export function Billing({ user }: { user: string }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [subscriptionTitle, setSubscriptionTitle] = useState<string | null>(null)
+  const [entitlements, setEntitlements] = useState<PlanEntitlements | null>(null)
   const [cadence, setCadence] = useState<Cadence>('monthly')
   const [currency, setCurrency] = useState<BillingCurrency>('USD')
   const [view, setView] = useState<'subscription'|'plans'>('subscription')
@@ -46,11 +47,13 @@ export function Billing({ user }: { user: string }) {
       db!.from('st_v2_subscriptions').select('plan,status,period_end,cancel_at_period_end,customer_id,catalog_version,billing_currency,billing_cadence,billing_amount')
         .eq('user_id', user).maybeSingle(),
       db!.rpc('st_v6_my_plan_title'),
-    ]).then(([subscription, title]) => {
+      db!.rpc('st_v7_my_entitlements'),
+    ]).then(([subscription, title, limits]) => {
       if (controller.signal.aborted) return
-      if (subscription.error || title.error) setError('Could not load your subscription.')
+      if (subscription.error || title.error || limits.error) setError('Could not load your subscription.')
       if (!subscription.error) setSubscription(subscription.data as Subscription | null)
       if (!title.error) setSubscriptionTitle(title.data)
+      if (!limits.error) setEntitlements(limits.data as PlanEntitlements | null)
     })
     reload()
     const poll = window.setInterval(reload, 10000)
@@ -79,10 +82,10 @@ export function Billing({ user }: { user: string }) {
 
   const status = subscription ? labels[subscription.status] ?? subscription.status : ''
   const periodEnd = subscription?.period_end ? Date.parse(subscription.period_end) : 0
-  const currentPlan = subscription && (
+  const currentPlan = entitlements?.plan ?? (subscription && (
     ['active','trialing'].includes(subscription.status) && periodEnd > Date.now()
     || subscription.status === 'past_due' && periodEnd + 72 * 3600000 > Date.now()
-  ) ? subscription.plan : 'free'
+  ) ? subscription.plan : 'free')
   const activeVersion = catalog?.plans.find(plan => plan.plan === currentPlan)
   const currencies = [...new Set(catalog?.plans.flatMap(plan => plan.prices.map(price => price.currency)) ?? [])]
   const grandfathered = catalog && currentPlan !== 'free' && subscription && (!activeVersion || activeVersion.version > subscription.catalog_version)
@@ -96,7 +99,8 @@ export function Billing({ user }: { user: string }) {
         {currentPlan !== 'free' && subscription && <p>Terms version {subscription.catalog_version}{grandfathered ? ' · Grandfathered' : ''}</p>}
         {currentPlan !== 'free' && subscription?.billing_amount != null && subscription.billing_currency &&
           <p>{formatBillingAmount(subscription.billing_amount, subscription.billing_currency)} per {subscription.billing_cadence === 'annual' ? 'year' : 'month'}</p>}
-        {subscription?.period_end && <p>Period ends <time dateTime={subscription.period_end}>{new Date(subscription.period_end).toLocaleDateString()}</time></p>}</div>
+        {subscription?.period_end && <p>Period ends <time dateTime={subscription.period_end}>{new Date(subscription.period_end).toLocaleDateString()}</time></p>}
+        {entitlements && <PlanLimits limits={entitlements} />}</div>
       {subscription?.customer_id && <button className="secondary" disabled={busy} onClick={() => void authorize('billing',()=>start('portal'))}>Manage billing <ArrowRight size={15}/></button>}
     </div>}
     {notice && <p role="status" className="release-info">{notice}</p>}
@@ -113,17 +117,29 @@ export function Billing({ user }: { user: string }) {
     <div className="billing-grid">
       {catalog?.plans.map(plan => {
         const id = plan.plan
-        const limits = plans.find(option => option.id === id)
+        const limits = plan.entitlements
         const price = plan.prices.find(option => option.cadence === cadence && option.currency === currency)
         const available = Boolean(price && catalog.checkoutAvailable)
         return <article key={id} className={'panel release-panel billing-card' + (currentPlan === id ? ' billing-current' : '')}>
           <h2>{plan.title}</h2><p>{plan.description}</p>
           {price?.amount != null && <p>{formatBillingAmount(price.amount, price.currency)} per {cadence === 'annual' ? 'year' : 'month'}</p>}
-          {limits && <ul><li>{limits.workspaces} {limits.workspaces === 1 ? 'workspace' : 'workspaces'}</li><li>Up to {limits.members} members per workspace</li></ul>}
+          {limits && <PlanLimits limits={limits} />}
           {isPaidPlan(id) && <button disabled={busy || !available || currentPlan !== 'free'} className="primary" onClick={() => void authorize('billing',()=>start('checkout', id, plan.version))}>{currentPlan === id ? 'Current plan' : available ? 'Continue to checkout' : 'Checkout unavailable'}</button>}
           {id === 'enterprise' && <span className="pill">Contract billing</span>}
         </article>
       })}
     </div></>}
   </section>
+}
+
+function PlanLimits({ limits }: { limits: PlanEntitlements }) {
+  const fileUnit=limits.file_bytes<1048576?1024:1048576
+  const fileSize=new Intl.NumberFormat(undefined,{maximumFractionDigits:1}).format(limits.file_bytes/fileUnit)
+  return <ul aria-label="Plan limits">
+    <li>{limits.workspace_limit} {limits.workspace_limit === 1 ? 'workspace' : 'workspaces'}</li>
+    <li>Up to {limits.seat_limit} members per workspace</li>
+    <li>Up to {limits.group_limit} members per encrypted chat group</li>
+    {limits.file_bytes > 0 && <li>Up to {fileSize} {fileUnit===1024?'KiB':'MiB'} per direct attachment</li>}
+    {limits.integration_api && <li>Workspace API access</li>}
+  </ul>
 }

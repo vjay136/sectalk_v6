@@ -14,6 +14,8 @@ import { RiskFeedback } from './risk-feedback'
 import { TenantOperations } from './tenant-operations'
 import { AccountAdministration, useAccountOperator } from './account-administration'
 import { GlobalAbuseBlocklists, useAbuseBlocklistAccess } from './global-abuse-blocklists'
+import { DetectionRules, useDetectionRuleAccess } from './detection-rules'
+import { ThreatTriage, useThreatTriageAccess } from './threat-triage'
 import { useAnalyticsStream } from '../lib/live-analytics'
 import { ThreatTrends } from './threat-trends'
 import { OperationalMetrics } from './operational-metrics'
@@ -28,6 +30,7 @@ import { CaseBehaviorPanel } from './case-behavior-panel'
 import { MyRoomReports, RoomReportQueue } from './room-reports'
 import { StaffMfa } from './staff-mfa'
 import { EmergencyNotices } from './emergency-notices'
+import { UrlInspection } from './url-inspection'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
@@ -103,7 +106,9 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 export function Safety({ staff, refresh, hints }: { staff: string; refresh: () => Promise<void>; hints: EventTarget }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports' | 'account-admin' | 'abuse-blocklists'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports' | 'account-admin' | 'abuse-blocklists' | 'detection-rules' | 'url-inspection' | 'threat-triage'>('mine')
+  const threatTriage = useThreatTriageAccess()
+  const detectionRules = useDetectionRuleAccess()
   const accountOperator = useAccountOperator()
   const abuseBlocks = useAbuseBlocklistAccess()
   const [roomReviewAccess,setRoomReviewAccess]=useState('none')
@@ -219,13 +224,15 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
     ||(view==='release'&&!releaseAccess)||(view==='tenants'&&tenantStatus==='none')||(view==='delivery-queue'&&queueAccess==='none')
     ||(view==='holds'&&!holdAccess)||(view==='quarantine'&&!scanAccess)||(view==='incidents'&&!incidentAccess)
     ||(view==='workspace-reports'&&roomReviewAccess==='none')||(view==='account-admin'&&accountOperator.access==='none')
-    ||(view==='abuse-blocklists'&&abuseBlocks.access==='none')?'mine':view
+    ||(view==='abuse-blocklists'&&abuseBlocks.access==='none')
+    ||(view==='detection-rules'&&detectionRules.access==='none')
+    ||(view==='threat-triage'&&threatTriage.access.status==='none')?'mine':view
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
     <SectionTabs label="Safety center sections" value={visibleView} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
       ...(staff==='verified'?[['overview','Security overview'] as const]:[]),
-      ['mine','My reports'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
+      ['mine','My reports'],['url-inspection','URL inspection'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
       ...(roomReviewAccess!=='none'?[['workspace-reports','Workspace report review'] as const]:[]),
       ...(staff==='verified'?[['latency','Delivery metrics'] as const,['usage','Usage metrics'] as const,
         ['feedback','Warning feedback'] as const,['trends','Threat trends'] as const,['operations','Operational metrics'] as const]:[]),
@@ -233,18 +240,23 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
       ...(tenantStatus!=='none'?[['tenants','Tenant operations'] as const]:[]),
       ...(accountOperator.access !== 'none' ? [['account-admin','Account administration'] as const] : []),
       ...(abuseBlocks.access !== 'none' ? [['abuse-blocklists','Global abuse blocklists'] as const] : []),
+      ...(detectionRules.access !== 'none' ? [['detection-rules','Detection rules'] as const] : []),
+      ...(threatTriage.access.status !== 'none' ? [['threat-triage','Threat triage'] as const] : []),
       ...(holdAccess?[['holds','Attachment holds'] as const]:[]),
       ...(scanAccess?[['quarantine','Attachment quarantine'] as const]:[]),
       ...(queueAccess!=='none'?[['delivery-queue','Queue operations'] as const]:[]),
       ...(incidentAccess?[['incidents','Incidents'] as const]:[]),
     ]}/>
-    {visibleView==='overview'?<SecurityCenterOverview/>:
+    {visibleView==='url-inspection'?<UrlInspection/>:
+      visibleView==='overview'?<SecurityCenterOverview/>:
       visibleView==='latency'?<DeliveryLatency revision={analyticsRevision}/>:visibleView==='usage'?<UsageMetrics revision={analyticsRevision}/>:visibleView==='release'?<ReleaseControls/>:
       visibleView==='feedback'?<RiskFeedback/>:
       visibleView==='trends'?<ThreatTrends/>:
       visibleView==='operations'?<OperationalMetrics/>:
       visibleView==='account-admin'?<AccountAdministration {...accountOperator}/>:
       visibleView==='abuse-blocklists'?<GlobalAbuseBlocklists {...abuseBlocks}/>:
+      visibleView==='detection-rules'?<DetectionRules {...detectionRules}/>:
+      visibleView==='threat-triage'?<ThreatTriage {...threatTriage}/>:
       visibleView==='holds'?<DirectAttachmentHolds targets={holdTargets}/>:
       visibleView==='quarantine'?<AttachmentQuarantine/>:
       visibleView==='incidents'?<SecurityIncidents report={incidentReport} onLinked={()=>setIncidentReport(null)}/>:

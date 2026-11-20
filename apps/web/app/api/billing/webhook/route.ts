@@ -18,6 +18,24 @@ async function handlePost(request: Request) {
   } catch {
     return new Response('Invalid signature', { status: 400 })
   }
+  if(event.type==='checkout.session.completed'){
+    const session=event.data.object
+    const reservation=session.metadata?.sectalk_workspace_trial
+    if(session.mode!=='setup'||session.status!=='complete'||typeof session.setup_intent!=='string'||
+      !reservation||reservation!==session.client_reference_id||!/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(reservation)){
+      return new Response(null,{status:204})
+    }
+    try{
+      const setup=await stripe.setupIntents.retrieve(session.setup_intent)
+      if(setup.status!=='succeeded'||!setup.payment_method||!setup.payment_method_types.includes('card')){
+        return new Response('Card confirmation not complete',{status:422})
+      }
+      const result=await billingWriter.rpc('st_v7_complete_trial_checkout',{
+        p_reservation:reservation,p_provider_session:session.id,p_completed_at:new Date(event.created*1000).toISOString(),
+      })
+      return result.error?new Response('Workspace trial update failed',{status:503}):new Response(null,{status:204})
+    }catch{return new Response('Card confirmation could not be verified',{status:503})}
+  }
   if (event.type !== 'customer.subscription.created' && event.type !== 'customer.subscription.updated' && event.type !== 'customer.subscription.deleted') {
     return new Response(null, { status: 204 })
   }

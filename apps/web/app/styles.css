@@ -460,3 +460,12 @@ body { background: var(--bg); }
 }
 
 .risk-hint { color: var(--muted); }
+
+.rich-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.rich-message a, .rich-message-link { color: inherit; text-decoration: underline; text-underline-offset: .15em; }
+.rich-message code { background: var(--raised); color: var(--ink); border-radius: .25em; padding-inline: .2em; }
+.rich-message-formatting { margin: .5rem 0; }
+.rich-message-formatting summary { cursor: pointer; }
+.rich-message-formatting label { display: inline-flex; align-items: baseline; gap: .45rem; }
+.rich-message-preview { display: block; margin-top: .35rem; white-space: normal; }
+.rich-message-preview [role="status"] { display: block; }

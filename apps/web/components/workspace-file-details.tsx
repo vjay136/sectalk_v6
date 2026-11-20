@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { downloadName, formatChatFileBytes, saveDownload } from '../lib/chat-files'
 import { workspaceFileRequest } from '../lib/workspace-files-client'
+import { FileEgressExplanation } from './workspace-file-egress'
 
 type Details = { filename: string; size_bytes: number }
 
@@ -60,6 +61,7 @@ export function WorkspaceFileDetails({ workspace, file, close }: { workspace: st
       <p>{formatChatFileBytes(details.size_bytes)}</p>
       <button className="secondary" type="button" disabled={busy} onClick={() => void useFile(false)}>Download workspace file</button>
       <button className="secondary" type="button" disabled={busy} onClick={() => void useFile(true)}>Copy workspace link</button>
+      <FileEgressExplanation scope={workspace} file={file}/>
       {link && <><label>Workspace file link<input value={link} readOnly onFocus={event => event.currentTarget.select()}/></label>
         <p role="status">{copied ? 'Workspace link copied.' : 'Select the link to copy it.'} Active workspace membership is required.</p></>}
     </>}

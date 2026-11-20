@@ -9,7 +9,7 @@ Requires Node.js 22 or 24 and npm.
 1. Run `npm ci`.
 2. Copy [the environment template](apps/web/.env.example) to `apps/web/.env.local`. Set the project URL and publishable key.
 3. Apply the SQL files in [supabase/migrations](supabase/migrations/) in filename order using the Supabase SQL Editor or your migration workflow.
-4. In Supabase Auth, enable email signup and **Confirm email**, configure custom SMTP, and set Site URL to the deployment origin without a trailing slash. Under **Email Templates**, paste [confirmation.html](supabase/templates/confirmation.html) into **Confirm signup** and [recovery.html](supabase/templates/recovery.html) into **Reset password**. The signup link opens `/auth/confirm` for email verification and displays the sign-in URL. The reset email provides a numeric code.
+4. Set `SECTALK_APP_URL` to your local app origin for local testing or the public HTTPS origin for a deployment. In Supabase Auth, enable email signup and **Confirm email**, configure custom SMTP, set Site URL to the same origin, and allow its exact `/auth/confirm` URL. Under **Email Templates**, paste [confirmation.html](supabase/templates/confirmation.html) into **Confirm signup** and [recovery.html](supabase/templates/recovery.html) into **Reset password**. The signup link opens `/auth/confirm` for email verification and displays the sign-in URL. The reset email provides a numeric code.
 5. Run `npm run dev` and visit `http://localhost:3000`.
 
 The browser uses the Supabase publishable key and the signed-in user's JWT. Neither Vercel nor the browser requires a Supabase secret key. A replacement Supabase project needs its own schema migration, OTP template, SMTP settings and environment variables. Database state and login sessions stay with the old project. Revoke the previously shared Supabase secret key or delete the disposable project when it is no longer needed.
@@ -78,3 +78,6 @@ For signed workspace audit exports, configure `SECTALK_AUDIT_SIGNING_PRIVATE_KEY
 - Use two different accounts in isolated browser profiles to verify signup links, password login, recovery codes, request acceptance, live messages, incoming call notifications, mute and hang-up, two-way video, reconnection, block enforcement and report submission. Test on separate networks with relay enabled. Open the staff console with an independent staff account to verify role and MFA gates.
 
 See [MASTER-PROMPT.md](MASTER-PROMPT.md) for the consolidated product specification and [RELEASE-v5.md](RELEASE-v5.md) for the current release scope.
+## Workspace trials
+
+Set `SECTALK_WORKSPACE_TRIALS=optional` to offer card-free 14-day Professional and Business workspace trials. Set it to `required` to verify a card with Stripe Checkout in setup mode. The required mode uses the configured Stripe credentials and the signed `checkout.session.completed` event on `/api/billing/webhook`. Stripe confirms the card without starting a paid subscription. The workspace's trial entitlement expires after 14 days and the previously applicable limits resume.

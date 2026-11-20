@@ -6,6 +6,7 @@ import type { ManifestEntry } from '../lib/contact-key-verification'
 import { db } from '../lib/data'
 import { encryptedMessageWarning } from '../lib/encrypted-message-warning'
 import { GroupMessageReport } from './group-message-report'
+import { MessageFormatting, RichMessage } from './rich-message'
 import { EncryptedGroupSearch } from './encrypted-group-search'
 import { clearGroupIndex, pruneGroupIndex, rememberGroupMessages } from '../lib/encrypted-group-search'
 import { decryptGroupMessage, encryptGroupMessage, groupLocalDevice, openGroupKey, rotateGroupKey,
@@ -186,11 +187,13 @@ export function GroupChat({ user, contacts, openDeviceSettings }: { user: string
         const received = message.actor !== user && message.text !== null
         const warning = received && message.text ? encryptedMessageWarning(message.text) : null
         return <li key={message.id}><strong>{nameFor(message.actor)}</strong>
-          <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text ?? 'Encrypted message could not be verified.'}</p>
+          <p>{message.text === null ? 'Encrypted message could not be verified.' :
+            <RichMessage value={message.text} account={user} mode='encrypted' allowLinks={!warning}/>}</p>
           {warning && <p className="warning">{warning} Checked on this device.</p>}
           {received && message.text && <GroupMessageReport group={view.group.id} message={message.id} text={message.text} />}
         </li>
       })}</ol>
+      <MessageFormatting account={user} mode="encrypted"/>
       <form onSubmit={event => { event.preventDefault(); void send() }}><label>Group message
         <textarea value={draft} maxLength={4000} disabled={!ready || busy} onChange={event => setDraft(event.target.value)} />
       </label><button className="primary" disabled={!ready || busy || !draft.trim()}>Send encrypted message</button></form></>}

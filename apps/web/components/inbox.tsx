@@ -10,6 +10,7 @@ import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Cal
 import { useCalling } from '../lib/calling'
 import { MessageSafetyWarning } from './message-safety-warning'
 import { ProtectedMessageText } from './protected-message-text'
+import { MessageFormatting, RichMessage } from './rich-message'
 import { CallPanel } from './call-panel'
 import { Brand } from './entry'
 import { ReportDialog, Safety } from './safety'
@@ -71,7 +72,8 @@ export function Inbox({ user }: { user: string }) {
   const [requestedRoom,setRequestedRoom] = useState<{workspace:string;id:string}|null>(null)
   const [tab, setTab] = useState<'inbox' | 'group-chats' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
     requestedMeeting?'meetings':pendingWorkspaceInvite()?'workspaces':
-      typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' :
+        typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('trial')==='return' ? 'workspaces' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
   const [taskSection,setTaskSection]=useState<'scoped'|'workspace'>('scoped')
   const [paletteOpen,setPaletteOpen]=useState(false)
@@ -1280,8 +1282,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
           <div className={'bubble'+(message.revoked_at?' revoked-message':'')}>
             {message.voice_note&&!message.revoked_at ?
               <VoiceNotePlayer chat={chat.id} message={message.id} blocked={blocked} revision={Boolean(message.voice_transcript)}/> :
-              (!file||message.body!=='Attachment: '+file.filename)&&(own || message.revoked_at ? <EmojiText value={message.body}/> :
-                <ProtectedMessageText key={message.edited_at||message.created_at} value={message.body}/>)}
+              (!file||message.body!=='Attachment: '+file.filename)&&(message.revoked_at ? <EmojiText value={message.body}/> : own ? <RichMessage key={message.edited_at||message.created_at} value={message.body} account={self} mode="managed" allowLinks={!blocked}/> : <ProtectedMessageText key={message.edited_at||message.created_at} value={message.body} account={blocked?undefined:self}/>)}
             {file&&<button className="attachment-file" type="button" onClick={()=>void download(file)}>
               <Download size={16}/><span>{file.filename}<small>{Math.ceil(file.size_bytes/1024)} KiB</small></span>
             </button>}
@@ -1414,6 +1415,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     </select></label>
     <VoiceNoteRecorder key={chat.id} chat={chat.id} blocked={blocked} timer={expireAfter}
       disabled={busy||Boolean(attachment)||Boolean(replying)} onSent={()=>void load()}/>
+    {!blocked&&<MessageFormatting account={self} mode='managed'/>}
     <form className="composer" onSubmit={send}>
       <input ref={filePicker} hidden type="file" accept={extensions} onChange={event=>{
         const file=event.target.files?.[0]

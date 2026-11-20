@@ -5,6 +5,7 @@ import { downloadName, extensions, formatChatFileBytes, saveDownload, supportedF
 import { workspaceFileRequest } from '../lib/workspace-files-client'
 import { WorkspaceFileDetails } from './workspace-file-details'
 import { WorkspaceFileHistory } from './workspace-file-history'
+import { FileEgressExplanation } from './workspace-file-egress'
 
 type Entry = { id: string; filename: string; size_bytes: number; can_remove: boolean }
 
@@ -116,6 +117,7 @@ function FileLibrary({ scope, owner, room = false }: { scope: string; owner: boo
       <p>{formatChatFileBytes(entry.size_bytes)}</p>
       {!room && <button type="button" className="secondary" disabled={busy} onClick={() => setDetails(entry.id)}>View file details</button>}
       <button type="button" className="secondary" disabled={busy} onClick={() => void useFile(entry, false)}>Download file</button>
+      {room && <FileEgressExplanation scope={scope} file={entry.id} room/>}
       {entry.can_remove && <button type="button" className="secondary" disabled={busy} onClick={() => void useFile(entry, true)}>Remove file</button>}
     </article>)}
     {!room && details && <WorkspaceFileDetails key={details} workspace={scope} file={details} close={() => setDetails(null)}/>}

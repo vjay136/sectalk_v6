@@ -1,5 +1,6 @@
 import {isIP} from 'node:net'
 import {createClient} from '@supabase/supabase-js'
+import {confirmationRedirect} from '../../../../lib/auth-confirmation-origin.mjs'
 import {readBoundedText} from '../../../../lib/request-body'
 
 export const runtime='nodejs'
@@ -13,7 +14,9 @@ export async function POST(request:Request) {
   const project=process.env.NEXT_PUBLIC_SUPABASE_URL
   const upstream=process.env.SECTALK_AUTH_SIGNUP_UPSTREAM||project
   const key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-  if (!project||!upstream||!key) return failure(503)
+  const redirect=confirmationRedirect(process.env.SECTALK_APP_URL,request.url,
+    process.env.VERCEL==='1'&&process.env.VERCEL_ENV!=='development')
+  if (!project||!upstream||!key||!redirect) return failure(503)
   try {
     const raw=await readBoundedText(request,4096)
     if (!raw) return failure()
@@ -54,7 +57,6 @@ export async function POST(request:Request) {
       }
     }
     const client=createClient(upstream,key,{auth,global:{headers:nativeHeaders}})
-    const redirect=new URL('/auth/confirm',process.env.SECTALK_APP_URL||request.url).href
     const result=resend
       ? await client.auth.resend({type:'signup',email,options:{emailRedirectTo:redirect}})
       : await client.auth.signUp({email,password:input.password,options:{emailRedirectTo:redirect,

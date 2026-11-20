@@ -9,6 +9,7 @@ import { useLocale } from './locale-provider'
 import { AccountSecurityChanges } from './account-security-changes'
 import { LoginAnomalies } from './login-anomalies'
 import { AccountPasskeys } from './account-passkeys'
+import {PermissionCatalog} from './permission-catalog'
 import { verifyAccountCredential } from '../lib/account-credential'
 
 type RecoveryStatus = 'staff' | 'ready' | 'missing'
@@ -197,7 +198,7 @@ export function AccountMfa({hints}: {hints: EventTarget}) {
       <button className="secondary" type="button" onClick={() => setCodes([])}>{t('recoveryCodesSaved')}</button>
     </div>}
     {error && <p role="alert">{error}</p>}
-  </div>{passkeysEnabled && <AccountPasskeys/>}{factors && status && <>
+  </div><PermissionCatalog/>{passkeysEnabled && <AccountPasskeys/>}{factors && status && <>
     {totp && verified.length===1 && status!=='staff' && <AccountRecoveryKey/>}
     <AccountSecurityChanges hints={hints} hasAuthenticator={Boolean(totp)} staff={status === 'staff'}/>
     <LoginAnomalies hints={hints} hasFactor={Boolean(totp)}/>

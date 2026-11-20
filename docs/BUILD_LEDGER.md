@@ -171,11 +171,21 @@
 | P4 | Add adaptive signup proof and native admission enforcement | Chromium, Mailpit, GoTrue and SQL verified ordinary email signup, suspicious-context proof, native bypass denial and replay rejection |
 | P10 | Complete human review for assigned workspace abuse reports | Three browsers and SQL verified reassignment, reasoned closure, minimal reporter status and escalation to separate Platform reviewers for severe cases |
 | P10 | Enforce workspace text data loss rules through rooms and channels | Two Edge sessions and SQL verified policy authorization, draft retention, warning confirmation, delivery prevention, managed redaction and scoped edits and forwarding |
+| P10 | Manage structured detection rule versions in Safety | Real application metrics, Edge and SQL verified historical tests, shadow, enable, pause, rollback and review-only matches |
+| P10 | Inspect explicitly submitted links in an isolated worker | Edge, local HTTPS fixtures, unit tests and SQL verified normalization, bounded redirects, signed intelligence and fail-closed destination checks |
+| P10 | Generate the permissions catalog from HTTP and native database interfaces | Browser and SQL verified positive and denied role paths, and drift checks inventoried 80 HTTP methods and 435 native signatures in integrated QA |
+| P10 | Triage automated detections and attachment signals through a scoped threat queue | Four browser roles and SQL verified filters, shadow suppression, whole-batch denial, revision checks and reasoned audit |
+| P9 | Pin billing entitlements to purchased plan versions | Browser and SQL verified live downgrade on expiry, atomic public offers, and exact workspace, seat, file and workspace API limits |
+| P10 | Evaluate and explain managed file egress requirements | Edge and SQL verified versioned owner policy, six trusted attributes, denied and allowed private downloads, scoped explanations and tenant isolation |
+| P10 | Deliver signed workspace SIEM digests | Browser, SQL and isolated collectors verified redacted hourly counts, webhook, TLS syslog/CEF, S3 SigV4, retry and replay protection |
+| P10 | Run versioned SOC playbooks after separate human approval | Browser and SQL verified an actual queue transition, checklist completion, a distinct reviewer, stale revision denial and replay-safe audit |
+| P5 | Render sanitized Markdown and scoped link previews | Managed and encrypted Edge conversations verified live rendering, safe edits, opt-in checks and no encrypted URL disclosure |
+| P9 | Offer a single 14-day Professional or Business trial per workspace | Browser, signed local provider fixtures and SQL verified both card configurations, owner scope, retries and automatic expiry |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 187 verified features and 52 pending. The next checkpoint is due at 197 verified features.
+Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 197 verified features and 42 pending. The next checkpoint is due at 207 verified features.
 
 ## Remaining work by dependency
 

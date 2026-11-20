@@ -4,6 +4,7 @@ import { readAttachmentUpload, readUploadFilename } from '../../../lib/attachmen
 import { allowedFileType, attachmentDocumentFormat, officeFormatPattern } from '../../../lib/file-type-policy'
 import { inspectAttachment } from '../../../lib/attachment-inspection'
 import { scanAttachment } from '../../../lib/attachment-scan-server'
+import { checkFileEgress } from '../../../lib/file-egress'
 import { digestWorkspaceBytes, roomFilePath, workspaceFileBucket, workspaceFileMaximum } from '../../../lib/workspace-file-storage'
 
 export const runtime = 'nodejs'
@@ -36,6 +37,8 @@ async function handle(request: Request) {
   }
   const bucket = auth.storage.storage.from(workspaceFileBucket)
   if (request.method === 'GET') {
+    const denied = await checkFileEgress(auth.client, 'room', room, file, 'download')
+    if (denied) return denied
     const access = await command('get')
     if (access.error || !access.data) return unavailable()
     const stored = await bucket.download(roomFilePath(access.data.workspace, room, file))
@@ -44,6 +47,8 @@ async function handle(request: Request) {
     const current = await command('get')
     if (current.error || !current.data || current.data.workspace !== access.data.workspace ||
       current.data.size_bytes !== bytes.length || current.data.sha256 !== digestWorkspaceBytes(bytes)) return unavailable()
+    const changed = await checkFileEgress(auth.client, 'room', room, file, 'download')
+    if (changed) return changed
     return new Response(Uint8Array.from(bytes), { headers: { ...fileHeaders, 'Content-Type': 'application/octet-stream',
       'Content-Disposition': 'attachment' } })
   }
