@@ -11,7 +11,7 @@ type SearchKind=Result['kind']|'all'
 type SavedSearch={id:string;query:string;kind:SearchKind}
 const searchOptions=[['all','All content'],['direct','Direct messages'],['channel','Channel posts'],['board','Board items'],['meeting','Meetings']] as const
 type Notification = { id:number; kind:string; meeting_id:string; created_at:string; read_at:string|null }
-const notificationText:Record<string,string>={'meeting.scheduled':'A workspace meeting was scheduled','meeting.admitted':'The host admitted you to a meeting','meeting.declined':'A host declined your meeting request'}
+const notificationText:Record<string,string>={'meeting.scheduled':'A workspace meeting was scheduled','meeting.started':'A workspace meeting has started','meeting.admitted':'The host admitted you to a meeting','meeting.declined':'A host declined your meeting request'}
 
 function highlight(text:string,terms:string) {
   if(!terms)return text

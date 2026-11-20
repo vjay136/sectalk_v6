@@ -14,7 +14,11 @@
 | P5 | Add a global command palette and permission-filtered search snippets with live revocation | `tests/v6-database.sql`, `tests/v3-database.sql` and two-browser keyboard, search and revocation checks |
 | P5 | Add host-only bulk meeting lobby admission | `tests/v6-lobby-database.sql`, two-browser waiting-room transition and local media token checks |
 | P5 | Record call outcomes and add a Missed calls view with same-mode callback | `tests/v6-call-history-database.sql` and two-browser callback and decline |
+| P5 | Add scheduled direct messages and a private sender outbox | `tests/v6-scheduled-messages-database.sql`, actual local cron and two-browser delivery checks |
+| P5 | Validate direct reply quotes and remove revoked sources from open conversations | `tests/v6-database.sql` and two-browser source revocation |
+| P5 | Add Meet now for authorized workspace hosts | `tests/v6-instant-meeting-database.sql` and a two-browser lobby, notice and retry check |
 | P10 | Add public vulnerability disclosure routes and repository reporting guidance | Unit and production HTTP tests passed with local configuration. A monitored contact is pending for v6. |
+| P10 | Add portable PostgreSQL backup and restore verification | Disposable recovery drill passed. Managed PITR, private Storage, Auth and cutover rehearsal are pending. |
 | P10 | Add a public status page and installable PWA with an offline shell | Local HTTP probes and `tests/pwa.e2e.mjs` |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 

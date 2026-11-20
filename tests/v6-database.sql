@@ -22,7 +22,9 @@ declare
   m constant uuid:=gen_random_uuid();
   m2 constant uuid:=gen_random_uuid();
   source constant uuid:=gen_random_uuid();
+  reply constant uuid:=gen_random_uuid();
   chat uuid;
+  target uuid;
 begin
   perform set_config('request.jwt.claims',json_build_object('sub',sender,'role','authenticated')::text,true);
   chat:=public.st_request('sectalk_v6_billie');
@@ -32,6 +34,9 @@ begin
   perform public.st_send(chat,m,'First saved sample');
   perform public.st_send(chat,m2,'Second saved sample');
   perform public.st_send(chat,source,repeat('x',240)||' [SecTalk-QA] <b>plain text</b>');
+  perform public.st_v2_send_reply(chat,reply,'Quoted reply',m);
+  if not exists(select 1 from public.st_v6_reply_quotes(chat,array[m]) q where q.id=m and q.sender=auth.uid() and q.body='First saved sample')
+    then raise exception 'Visible quote was not returned'; end if;
   if not exists(select 1 from public.st_v6_search('[sectalk-qa]','direct') s
     where s.id=source and s.snippet like '…%[SecTalk-QA] <b>plain text</b>')
     then raise exception 'Search did not center the snippet around the matched term'; end if;
@@ -51,6 +56,7 @@ begin
   if exists(select 1 from public.st_v6_saved_messages) then raise exception 'Remove saved message failed'; end if;
   perform set_config('request.jwt.claims',json_build_object('sub',outside_user,'role','authenticated')::text,true);
   if exists(select 1 from public.st_v6_search('[sectalk-qa]','direct')) then raise exception 'Search leaked a private snippet'; end if;
+  if exists(select 1 from public.st_v6_reply_quotes(chat,array[m,m2])) then raise exception 'Quote API leaked a private message'; end if;
   begin
     insert into public.st_v6_saved_messages(message_id) values(m);
     raise exception 'Outside account saved an inaccessible message' using errcode='P0004';
@@ -60,6 +66,16 @@ begin
   if not exists(select 1 from public.st_v6_saved_searches where query='Saved sample') then raise exception 'Other account removed owner saved search'; end if;
   perform public.st_v5_message_action(m,'revoke');
   perform public.st_v5_message_action(m2,'hide');
+  perform public.st_v2_send_reply(chat,reply,'Quoted reply',m);
+  if exists(select 1 from public.st_v6_reply_quotes(chat,array[m,m2]))
+    or not exists(select 1 from public.st_messages where id=reply and reply_to=m and body='Quoted reply')
+    then raise exception 'Revocation or hiding leaked the quote or broke the reply'; end if;
+  for target in select unnest(array[m,m2]) loop
+    begin
+      perform public.st_v2_send_reply(chat,gen_random_uuid(),'New reply to unavailable message',target);
+      raise exception 'New reply was accepted for an unavailable source' using errcode='P0004';
+    exception when raise_exception then null; end;
+  end loop;
   if exists(select 1 from public.st_v6_search('saved sample','direct'))
     or exists(select 1 from public.st_v6_search('Message removed','direct') s where s.id=m)
     or exists(select 1 from public.st_v3_search('saved sample','direct'))

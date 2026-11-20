@@ -15,11 +15,11 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
   const [meetings,setMeetings] = useState<Meeting[] | null>(null)
   const [spaces,setSpaces] = useState<Space[]>([])
   const [id,setId] = useState(requested)
-  const [view,setView] = useState<'upcoming'|'past'|'schedule'>('upcoming')
+  const [view,setView] = useState<'upcoming'|'past'|'schedule'|'instant'>('upcoming')
   const [ready,setReady] = useState(false)
   const [error,setError] = useState('')
   const [busy,setBusy] = useState(false)
-  const scheduleId = useRef<{ input:string; id:string } | null>(null)
+  const pendingMeeting = useRef<{ input:string; id:string } | null>(null)
   const reload = useCallback(async () => {
     const { data,error } = await db!.from('st_v3_meetings').select('*').order('starts_at',{ascending:false}).limit(100)
     if (error) setError('Could not load meetings.')
@@ -42,44 +42,53 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
     void fetch('/api/meetings/token').then(reply=>reply.json()).then(data=>setReady(data.mediaConfigured===true)).catch(()=>undefined)
     return () => { reconnect();window.clearInterval(interval);void db!.removeChannel(subscription) }
   },[reload,user])
-  async function schedule(event:FormEvent<HTMLFormElement>) {
+  async function createMeeting(event:FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (busy) return
     const form=event.currentTarget
     const data=new FormData(form)
     setBusy(true);setError('')
     try {
-      const input={p_workspace:data.get('workspace'),p_title:data.get('title'),p_agenda:data.get('agenda'),
-        p_start:new Date(String(data.get('start'))).toISOString(),p_end:new Date(String(data.get('end'))).toISOString()}
+      const common={p_workspace:data.get('workspace'),p_title:data.get('title')}
+      const input=instant?{...common,p_minutes:Number(data.get('duration'))}:{
+        ...common,p_agenda:data.get('agenda'),p_start:new Date(String(data.get('start'))).toISOString(),
+        p_end:new Date(String(data.get('end'))).toISOString(),
+      }
       const key=JSON.stringify(input)
-      if (scheduleId.current?.input!==key) scheduleId.current={input:key,id:crypto.randomUUID()}
-      const result=await db!.rpc('st_v3_schedule',{...input,p_id:scheduleId.current.id})
+      if (pendingMeeting.current?.input!==key) pendingMeeting.current={input:key,id:crypto.randomUUID()}
+      const result=await db!.rpc(instant?'st_v6_start_instant_meeting':'st_v3_schedule',{...input,p_id:pendingMeeting.current.id})
       if (result.error) throw result.error
-      scheduleId.current=null
+      pendingMeeting.current=null
       form.reset();await reload();setView('upcoming');setId(result.data)
-    } catch(error) { setError(formatError(error,'Could not schedule the meeting.')) }
+    } catch(error) { setError(formatError(error,instant?'Could not start the meeting.':'Could not schedule the meeting.')) }
     finally { setBusy(false) }
   }
   const selected=meetings?.find(m=>m.id===id)
   const hostSpaces=spaces.filter(space=>space.role==='owner'||space.role==='admin')
-  const canSchedule=hostSpaces.length>0
-  const scheduling=view==='schedule' && canSchedule
+  const canHost=hostSpaces.length>0
+  const instant=view==='instant'
+  const editing=canHost && (view==='schedule'||instant)
   const past=(meeting:Meeting)=>meeting.status==='ended'||Date.parse(meeting.ends_at)<=Date.now()
   const list=meetings?.filter(meeting=>past(meeting)===(view==='past'))
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Video size={22}/></div><div><h1>Meetings</h1><p>Schedule workspace meetings and manage the waiting room.</p></div></header>
     {!ready && <p className="release-info">Scheduling and waiting rooms are available. Live audio and video require a configured media provider.</p>}
     {error && <p role="alert" className="error">{error}</p>}
-    <SectionTabs label="Meeting sections" value={scheduling ? view : view==='past' ? 'past' : 'upcoming'} onChange={next=>{setId(null);setView(next)}} options={[
-      ['upcoming','Upcoming & live'], ['past','Past meetings'], ...(canSchedule ? [['schedule','Schedule'] as const] : []),
+    <SectionTabs label="Meeting sections" value={editing ? view : view==='past' ? 'past' : 'upcoming'} onChange={next=>{if(!busy){setError('');setId(null);setView(next)}}} options={[
+      ['upcoming','Upcoming & live'], ['past','Past meetings'], ...(canHost ? [['instant','Meet now'] as const,['schedule','Schedule'] as const] : []),
     ]}/>
-    {scheduling ? <div className="panel release-panel">
-      <h2>Schedule a meeting</h2><form className="release-form" onSubmit={schedule}>
+    {editing ? <div className="panel release-panel">
+      <h2>{instant?'Start a meeting now':'Schedule a meeting'}</h2><form key={view} className="release-form" onSubmit={createMeeting}>
         <label>Workspace<select required name="workspace">{hostSpaces.map(space=><option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
-        <label>Title<input name="title" required maxLength={100}/></label>
-        <label>Agenda<textarea name="agenda" rows={2} maxLength={2000}/></label>
-        <div className="release-flex"><label>Starts at<input type="datetime-local" name="start" required/></label><label>Ends at<input type="datetime-local" name="end" required/></label></div>
-        <button className="primary" disabled={busy}><CalendarDays size={16}/> Schedule meeting</button>
+        <label>Title<input name="title" required={!instant} placeholder={instant?'Instant meeting':undefined} maxLength={100}/></label>
+        {instant ? <label>Duration<select name="duration" defaultValue="60">
+          <option value="15">15 minutes</option><option value="30">30 minutes</option>
+          <option value="60">1 hour</option><option value="120">2 hours</option>
+        </select></label> : <>
+          <label>Agenda<textarea name="agenda" rows={2} maxLength={2000}/></label>
+          <div className="release-flex"><label>Starts at<input type="datetime-local" name="start" required/></label><label>Ends at<input type="datetime-local" name="end" required/></label></div>
+        </>}
+        <button className="primary" disabled={busy}>{instant?<Video size={16}/>:<CalendarDays size={16}/>} {instant?'Start meeting':'Schedule meeting'}</button>
       </form>
     </div> : <div className="panel release-panel">
       <h2>{view==='past'?'Past meetings':'Upcoming and live meetings'}</h2>

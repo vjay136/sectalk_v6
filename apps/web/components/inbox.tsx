@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import dynamic from 'next/dynamic'
 import {
-  ArrowLeft, Ban, Bell, BellOff, Bookmark, CalendarDays, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Folder, Inbox as InboxIcon, LogOut, ShieldAlert,
+  ArrowLeft, Ban, Bell, BellOff, Bookmark, CalendarClock, CalendarDays, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Folder, Inbox as InboxIcon, LogOut, ShieldAlert,
   Download, Hash, ListChecks, MessageCircle, MoreHorizontal, Paperclip, Phone, Pin, Search, Send, Shield, ShieldCheck, Smile, UserPlus, UserRound, Users, Video, X,
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
@@ -20,6 +20,7 @@ import { GlobalSearch, Notifications } from './discover'
 import { ScopedTasks } from './scoped-tasks'
 import { SectionTabs } from './section-tabs'
 import { CommandPalette, type Command } from './command-palette'
+import { ScheduledMessages } from './scheduled-messages'
 import { downloadChatFile, extensions, sendChatFile, supportedFile, type ChatFile } from '../lib/chat-files'
 import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
@@ -551,6 +552,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const composerInput=useRef<HTMLTextAreaElement>(null)
   const cursor=useRef<{start:number;end:number}|null>(null)
   const [replying, setReplying] = useState<Message | null>(null)
+  const [quotes,setQuotes]=useState<Record<string,Pick<Message,'id'|'sender'|'body'>>>({})
   const [history, setHistory] = useState<{ id: number; body: string; created_at: string }[] | null>(null)
   const [clock, setClock] = useState(0)
   const typingLast = useRef(0)
@@ -560,6 +562,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const feed = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
   const pending = useRef<{ id: string; body: string; reply: string | null } | null>(null)
+  const pendingSchedule=useRef<{id:string;body:string;at:string}|null>(null)
+  const [scheduleOpen,setScheduleOpen]=useState(false)
   const revoked=useRef(new Map<string,Message>())
   const [loadingOlder, setLoadingOlder] = useState(false)
   const merge = useCallback((rows: Message[]) => {
@@ -573,6 +577,18 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     setEditing(previous=>previous&&(updates.get(previous.id)?.revoked_at?null:previous))
   }, [])
 
+  const loadQuotes=useCallback(async(rows:Message[])=>{
+    const ids=[...new Set(rows.flatMap(row=>row.reply_to?[row.reply_to]:[]))]
+    if(!ids.length)return
+    const {data,error}=await db!.rpc('st_v6_reply_quotes',{p_chat:chat.id,p_ids:ids})
+    setQuotes(previous=>{
+      const next={...previous}
+      for(const id of ids)delete next[id]
+      if(!error)for(const row of data)if(!revoked.current.has(row.id))next[row.id]=row
+      return next
+    })
+  },[chat.id])
+
   const load = useCallback(async (before?: Message) => {
     let query = db!.from('st_messages').select('*').eq('chat_id', chat.id)
     if (before) query = query.or('created_at.lt.' + before.created_at + ',and(created_at.eq.' + before.created_at + ',id.lt.' + before.id + ')')
@@ -585,13 +601,14 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       const [removed,attachments]=await Promise.all([
         db!.from('st_v5_hidden_messages').select('message_id').in('message_id',ids),
         db!.from('st_v5_files').select('id,message_id,filename,size_bytes').in('message_id',ids),
+        loadQuotes(page),
       ])
       if(removed.data) setHidden(previous=>[...new Set([...previous,...removed.data.map(row=>row.message_id)])])
       if(attachments.data) setFiles(previous=>({...previous,...Object.fromEntries(attachments.data.map(file=>[file.message_id,file]))}))
     }
     merge(page)
     setLoaded(true)
-  }, [chat.id, inform, loaded, merge])
+  }, [chat.id, inform, loaded, loadQuotes, merge])
 
   const loadLatest = useRef(load)
   useEffect(() => { loadLatest.current = load }, [load])
@@ -616,7 +633,13 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     const onActivity = (event: Event) => { if ((event as MessageEvent).data === chat.id) sync() }
     const channel = liveChannel('thread:' + chat.id, sync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'st_messages', filter: 'chat_id=eq.' + chat.id }, payload => {
-        if (payload.eventType !== 'DELETE') merge([payload.new as Message])
+        if (payload.eventType !== 'DELETE'){
+          const message=payload.new as Message
+          merge([message])
+          if(message.reply_to)void loadQuotes([message])
+          if(payload.eventType==='UPDATE')setQuotes(current=>current[message.id]?
+            {...current,[message.id]:{id:message.id,sender:message.sender,body:message.body.slice(0,240)}}:current)
+        }
       })
       .subscribe(status => { if (status === 'SUBSCRIBED') void loadLatest.current() })
     const timer = window.setInterval(sync, 3500)
@@ -632,7 +655,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       window.clearInterval(timer)
       void db!.removeChannel(channel)
     }
-  }, [chat.id, hints, merge, loadActivity])
+  }, [chat.id, hints, merge, loadActivity, loadQuotes])
   useEffect(() => {
     if (!activity?.typing_until) return
     setClock(Date.now())
@@ -720,6 +743,20 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     })
   }
 
+  async function schedule(at:string) {
+    const body=draft.trim()
+    if(blocked||!body||replying||attachment)throw new Error('Only a plain text draft can be scheduled.')
+    const previous=pendingSchedule.current
+    const id=previous?.body===body&&previous.at===at?previous.id:crypto.randomUUID()
+    pendingSchedule.current={id,body,at}
+    const {data,error}=await db!.rpc('st_v6_schedule_message',{p_chat:chat.id,p_id:id,p_body:body,p_send_at:at})
+    if(error)throw error
+    if(data==='failed'||data==='cancelled')throw new Error('This attempt has closed. Choose a new date and time.')
+    pendingSchedule.current=null
+    setDraft(previous=>previous.trim()===body?'':previous)
+    void db!.rpc('st_v2_typing',{p_chat:chat.id,p_active:false})
+  }
+
   async function download(file:ChatFile) {
     try{ await downloadChatFile(file) }
     catch(error){inform(formatError(error,'Could not download the attachment.'))}
@@ -748,7 +785,9 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         const removed=rows.length?await db!.from('st_v5_hidden_messages').select('message_id').in('message_id',rows.map(row=>row.id)):null
         if(removed?.error){inform('Could not search this conversation.');return}
         const hiddenIds=new Set(removed?.data?.map(row=>row.message_id))
-        setResults(rows.filter(row=>!hiddenIds.has(row.id)).reverse())
+        const permitted=rows.filter(row=>!hiddenIds.has(row.id)).reverse()
+        await loadQuotes(permitted)
+        setResults(permitted)
       }
     }}><input name="query" aria-label="Search term" placeholder="Search within this chat" required minLength={2} maxLength={150}/>
       <button className="primary">Search</button>{results && <button className="secondary" type="button" onClick={() => setResults(null)}>Clear</button>}</form>}
@@ -769,7 +808,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       {(results ?? messages).filter(message=>!hidden.includes(message.id)).map(message => {
         const own = message.sender === self
         const file=message.revoked_at?undefined:files[message.id]
-        const original=messages.find(row=>row.id===message.reply_to&&!hidden.includes(row.id))
+        const quote=message.reply_to&&!hidden.includes(message.reply_to)&&!revoked.current.has(message.reply_to)
+          ? quotes[message.reply_to]:null
         const read = own && activity?.read_at && (message.created_at < activity.read_at || message.created_at === activity.read_at && message.id <= (activity.read_id ?? ''))
         const selectedReactions = reactions.filter(reaction => reaction.message_id === message.id)
         return <div className={'message ' + (own ? 'own' : '')} key={message.id}>
@@ -787,7 +827,9 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
               </button>
             })}
           </div>}
-          {message.reply_to&&!message.revoked_at && <blockquote className="reply-preview"><EmojiText value={original?.body||'Reply to an earlier message'}/></blockquote>}
+          {message.reply_to&&!message.revoked_at && <blockquote className="reply-preview">
+            {quote?<><strong>{quote.sender===self?selfName:peerName}</strong>{' · '}<EmojiText value={quote.body}/></>:'Original message unavailable'}
+          </blockquote>}
           <div className={'bubble'+(message.revoked_at?' revoked-message':'')}>
             {(!file||message.body!=='Attachment: '+file.filename)&&<EmojiText value={message.body}/>}
             {file&&<button className="attachment-file" type="button" onClick={()=>void download(file)}>
@@ -859,6 +901,9 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     </div>}
     {emoji&&<Dialog title="Add emoji" close={()=>setEmoji(false)}><ChatEmoji onPick={pickEmoji}/></Dialog>}
     {reacting&&<Dialog title="Add a reaction" close={()=>setReacting(null)}><ChatEmoji onPick={value=>void react(reacting,value)}/></Dialog>}
+    {scheduleOpen&&<Dialog title="Scheduled messages" close={()=>setScheduleOpen(false)}>
+      <ScheduledMessages chat={chat.id} draft={draft.trim()} schedule={schedule} canSchedule={!blocked&&Boolean(draft.trim())&&!replying&&!attachment}/>
+    </Dialog>}
     <form className="composer" onSubmit={send}>
       <input ref={filePicker} hidden type="file" accept={extensions} onChange={event=>{
         const file=event.target.files?.[0]
@@ -875,6 +920,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => changeDraft(e.target.value)} onKeyDown={event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
       }} />
+      <button type="button" className="icon" title="Scheduled messages" aria-label="Scheduled messages" onClick={()=>setScheduleOpen(true)}><CalendarClock size={19}/></button>
       <button className="primary square" title="Send message" aria-label="Send message" disabled={busy||(!draft.trim()&&!attachment)||blocked}><Send size={19} /></button>
     </form>
   </>

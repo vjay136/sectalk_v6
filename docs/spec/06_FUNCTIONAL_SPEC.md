@@ -59,3 +59,15 @@ Workspace members request admission before joining media. The active host can ad
 ## CALL-17 · Call history and callback
 
 Calls shows the latest 40 participant-visible calls, with filters for missed incoming calls, audio and video. An unanswered call becomes Missed for the recipient after its ring window expires. The server records declines and caller cancellations while ringing. Older records whose outcome was not captured display Ended. The Call back action uses the missed call’s audio or video mode and goes through the same consent, participant availability and block checks as a new call.
+
+## MSG-21 · Scheduled direct messages
+
+In an accepted direct chat, enter a text draft and open Scheduled messages in the composer. Choose a future local date and time within 30 days. Upcoming shows the caller’s queued messages and lets them cancel. History records sent, cancelled and failed entries without retaining a second copy of the text. Recipients see the message in the normal chat after delivery. The dispatcher rechecks contact access at delivery time and uses the schedule ID as the message ID to prevent duplicate sends.
+
+## MSG-10 · Direct-message quotes
+
+Reply stores a reference to the original message. The server resolves the quote from the current source and clips the preview to 240 characters. It excludes messages the current reader has hidden and messages revoked for everyone. Once a source is unavailable, the chat displays a placeholder and keeps the reply text. The server also rejects new replies to an unavailable source.
+
+## CALL-05 · Instant meetings
+
+A workspace owner or admin can use Meet now to open a meeting immediately. The server creates the live meeting and admits the host in the same transaction. Existing lobby permissions govern member entry, and other members receive a private meeting-started notice.
