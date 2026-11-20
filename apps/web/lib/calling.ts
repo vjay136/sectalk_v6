@@ -42,6 +42,8 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   const activePeer = useRef<RTCPeerConnection | null>(null)
   const current = useRef<Call | null>(null)
   const owned = useRef<string | null>(null)
+  const answering = useRef<string | null>(null)
+  const [device] = useState(() => crypto.randomUUID())
   const stopped = useRef(new Set<string>())
   const lastRead = useRef(0)
   const started = useRef(false)
@@ -59,38 +61,59 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   }, [])
 
   const applyCall = useCallback((next: Call | null) => {
+    const previous = current.current
+    if (next && next.status === 'active' && answering.current === next.id && owned.current !== next.id) return
     const visible = next && next.status !== 'ended' && Date.parse(next.expires_at) > Date.now() &&
       !stopped.current.has(next.id) &&
       (owned.current === next.id || (next.callee === user && next.status === 'ringing')) ? next : null
+    if (!visible && previous?.status === 'ringing' && next?.id === previous.id && !stopped.current.has(next.id)) {
+      if (next.status === 'active' && previous.callee === user) notice('Call answered on another device.')
+      else if (next.end_reason === 'cancelled' && previous.callee === user) notice('The caller cancelled.')
+      else if (next.end_reason === 'busy' && previous.caller === user) notice('Your contact is busy.')
+      else if (next.end_reason === 'declined' && previous.caller === user) notice('Your contact declined the call.')
+      else if (next.end_reason === 'busy') notice('Call marked busy on another device.')
+      else if (next.end_reason === 'declined') notice('Call declined on another device.')
+    }
     if (!visible && owned.current) {
       owned.current = null
       cleanupMedia()
     }
     current.current = visible
     setCall(previous => previous?.id === visible?.id && previous?.status === visible?.status ? previous : visible)
-  }, [user, cleanupMedia])
+  }, [user, cleanupMedia, notice])
 
   const refresh = useCallback(async () => {
     const version = lastRead.current
+    const waiting = current.current
     const { data, error } = await db!.from('st_calls').select('*')
       .or('caller.eq.' + user + ',callee.eq.' + user)
       .in('status', ['ringing', 'active']).gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false }).limit(1)
-    if (!error && lastRead.current === version && mounted.current) applyCall((data?.[0] ?? null) as Call | null)
+    if (error || lastRead.current !== version || !mounted.current) return
+    if (!data?.length && waiting?.status === 'ringing') {
+      const last = await db!.from('st_calls').select('*').eq('id', waiting.id).maybeSingle()
+      if (!last.error && lastRead.current === version && mounted.current) applyCall(last.data as Call | null)
+    } else applyCall((data?.[0] ?? null) as Call | null)
   }, [user, applyCall])
 
-  const end = useCallback(async () => {
+  const finish = useCallback(async (reason: 'end'|'busy') => {
     const active = current.current
     if (!active) return
+    const action = active.status === 'ringing' && active.callee === user
+      ? reason === 'busy' ? 'busy' : 'decline'
+      : 'end'
     ++lastRead.current
     stopped.current.add(active.id)
     owned.current = null
     current.current = null
     setCall(null)
     cleanupMedia()
-    const { error } = await db!.rpc('st_call_status', { p_call: active.id, p_accept: false })
+    const { data, error } = await db!.rpc('st_v6_call_action', { p_call: active.id, p_action: action, p_device: device })
     if (error) notice('The call closed here. The other participant may need to hang up.')
-  }, [cleanupMedia, notice])
+    else if (data === 'answered_elsewhere') notice('Call answered on another device.')
+  }, [cleanupMedia, device, notice, user])
+  const end = useCallback(() => finish('end'), [finish])
+  const markBusy = useCallback(() => finish('busy'), [finish])
 
   useEffect(() => {
     mounted.current = true
@@ -126,9 +149,9 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       stream.current?.getTracks().forEach(track => track.stop())
       displayStream.current?.getTracks().forEach(track => track.stop())
       const id = owned.current
-      if (id) void db!.rpc('st_call_status', { p_call: id, p_accept: false })
+      if (id) void db!.rpc('st_v6_call_action', { p_call: id, p_action: 'end', p_device: device })
     }
-  }, [user, refresh, applyCall, hints])
+  }, [user, refresh, applyCall, hints, device])
 
   async function start(chatId: string, video: boolean) {
     if (started.current || current.current) return
@@ -138,10 +161,10 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       const source = await media(video)
       if (!mounted.current) { source.getTracks().forEach(track => track.stop()); return }
       stream.current = source
-      const { data, error } = await db!.rpc('st_place_call', { p_chat: chatId, p_video: video })
+      const { data, error } = await db!.rpc('st_v6_start_call', { p_chat: chatId, p_video: video, p_device: device })
       if (error) throw error
       if (!mounted.current) {
-        await db!.rpc('st_call_status', { p_call: data, p_accept: false })
+        await db!.rpc('st_v6_call_action', { p_call: data, p_action: 'end', p_device: device })
         return
       }
       owned.current = data
@@ -159,7 +182,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
 
   async function answer() {
     const incoming = current.current
-    if (!incoming || started.current) return
+    if (!incoming || incoming.status !== 'ringing' || incoming.callee !== user || started.current) return
     started.current = true
     setBusy(true)
     try {
@@ -169,13 +192,23 @@ export function useCalling(user: string, notice: (message: string) => void, hint
         return
       }
       stream.current = source
-      owned.current = incoming.id
-      const { error } = await db!.rpc('st_call_status', { p_call: incoming.id, p_accept: true })
+      answering.current = incoming.id
+      const accept = () => db!.rpc('st_v6_call_action', { p_call: incoming.id, p_action: 'accept', p_device: device })
+      let response = await accept()
+      if (response.error && (response.status === 0 || response.status >= 500) && mounted.current) response = await accept()
+      const { data, error } = response
       if (error) throw error
-      if (!mounted.current || stopped.current.has(incoming.id)) {
-        await db!.rpc('st_call_status', { p_call: incoming.id, p_accept: false })
+      answering.current = null
+      if (data !== 'accepted') {
+        cleanupMedia()
+        await refresh()
         return
       }
+      if (!mounted.current || stopped.current.has(incoming.id)) {
+        await db!.rpc('st_v6_call_action', { p_call: incoming.id, p_action: 'end', p_device: device })
+        return
+      }
+      owned.current = incoming.id
       ++lastRead.current
       setLocal(source)
       await refresh()
@@ -184,6 +217,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       cleanupMedia()
       notice(formatError(error, 'The call could not be answered.'))
     } finally {
+      answering.current = null
       started.current = false
       setBusy(false)
     }
@@ -219,7 +253,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
 
     async function transmit(kind: Signal['kind'], payload: Signal['payload']) {
       if (disposed) return
-      const { error } = await db!.rpc('st_signal', { p_call: activeId, p_kind: kind, p_payload: payload })
+      const { error } = await db!.rpc('st_v6_call_signal', { p_call: activeId, p_kind: kind, p_payload: payload, p_device: device })
       if (error && !disposed) throw error
     }
 
@@ -382,7 +416,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       if (activePeer.current === pc) activePeer.current = null
       pc?.close()
     }
-  }, [activeId, isCaller, local, user, end, notice, hints])
+  }, [activeId, isCaller, local, user, end, notice, hints, device])
 
   async function stopSharing() {
     const capture = displayStream.current
@@ -423,5 +457,5 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     }
   }
 
-  return { call, local, remote, connection, busy, start, answer, end, historyVersion, screen, sharingBusy, shareScreen, stopSharing }
+  return { call, local, remote, connection, busy, start, answer, end, markBusy, historyVersion, screen, sharingBusy, shareScreen, stopSharing }
 }

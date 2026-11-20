@@ -28,6 +28,15 @@
 | P5 | Issue per-call ICE credentials and renew short leases | Active-call SQL fixture and local browser test for signature, TTL and renewal |
 | P5 | Authorize and audit short-lived attachment downloads | Signing unit test, permission SQL, successful local byte retrieval and download audit records |
 | P5 | Validate stored attachment bytes before publishing a chat message | File-type unit test, normal composer upload and rejection of mismatched bytes and raw RPC bypass |
+| P5 | Add workspace groups, teams and departments | Workspace lifecycle SQL fixture and two-browser membership and tenant isolation |
+| P5 | Add typed workspace setup with enforced privacy defaults | Workspace onboarding SQL fixture and two-browser creation, room and lobby checks |
+| P5 | Assign immutable direct-message sequence numbers and fill reconnect gaps | Legacy backfill, rollback fixture and two-browser multi-page catch-up and dedupe |
+| P5 | Set one winning call session and synchronize outcomes across devices | Call endpoint SQL fixture, three-browser answer race and ICE regression |
+| P5 | Add live hand raises and transient meeting reactions | Meeting roster SQL and two-browser Realtime and expiry checks |
+| P5 | Add explainable safety warnings with contextual report review | Local warning heuristics and browser dismissal, edit and consent flow |
+| P5 | Apply direct-chat edit windows and per-author revision visibility | SQL authorization and two-browser live edit, sharing and revocation |
+| P10 | Report delivery latency percentiles to MFA-verified staff | Exact synthetic percentile fixture and local authenticator step-up browser check |
+| P10 | Report product usage as rounded aggregates with small-group suppression | Aggregate privacy SQL and local staff MFA and browser check |
 | P10 | Add public vulnerability disclosure routes and repository reporting guidance | Unit and production HTTP tests passed with local configuration. A monitored contact is pending for v6. |
 | P10 | Add portable PostgreSQL backup and restore verification | Disposable recovery drill passed. Managed PITR, private Storage, Auth and cutover rehearsal are pending. |
 | P10 | Add in-product help and a keyboard shortcut sheet | Fresh-account browser onboarding, empty Inbox, keyboard and mobile help checks |

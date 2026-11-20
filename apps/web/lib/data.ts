@@ -42,7 +42,7 @@ export type Message = { id: string; chat_id: string; sender: string; body: strin
 export type Call = {
   id: string; chat_id: string; caller: string; callee: string; video: boolean
   status: 'ringing' | 'active' | 'ended'; expires_at: string; created_at: string
-  end_reason?: 'missed' | 'declined' | 'cancelled' | null
+  end_reason?: 'missed' | 'declined' | 'cancelled' | 'busy' | null
 }
 
 export const categories = {

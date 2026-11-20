@@ -115,3 +115,27 @@ An authenticated participant can get a short-lived TURN lease for an active dire
 ## FILE-03 and FILE-07 · Private attachment publication and retrieval
 
 New uploads stay private until the server checks the filename extension, supplied MIME and stored bytes. It publishes only supported types. Downloads use a 30-second app link bound to the signed-in recipient, and authorization is checked again when the link is redeemed. Successful retrieval is recorded privately. Revoking a chat message stops downloads from it. Explicitly shared evidence retains its separate MFA-reviewed access.
+
+## ORG-01 and ORG-05 · Workspace setup and directory
+
+The workspace wizard asks for a workspace type, name and review before creation. Privacy-focused types restrict room visibility and require individual meeting admission. Workspace members can read their group, team and department directory, and owners and admins can manage groups and add current members. Group assignments are cleared when workspace membership is removed. Management actions are audited.
+
+## MSG-08 and MSG-15 · Editing and message order
+
+Direct messages receive an immutable sequence when accepted. Reconnect fills missing sequence ranges with stable cursor pagination. An author can edit within 24 hours and choose whether to share earlier revisions in that chat. The receiver sees the edited marker and can see revisions only while the author shares them and the source remains visible.
+
+## CALL-18 · Incoming calls across devices
+
+An incoming call can ring in multiple browser sessions. The server grants acceptance to the first eligible session, and other sessions close the incoming panel. Busy, decline and caller cancellation update both sides. Signaling, ICE access and hangup are bound to the participating session.
+
+## CALL-11 · Hand raises and reactions
+
+Admitted attendees in a live meeting can raise or lower their hand and send a reaction. Other admitted attendees receive the changes in real time. Reactions expire after eight seconds and interaction state is cleared when an attendee leaves or is admitted again.
+
+## AI-07 · Message safety warnings
+
+The recipient sees tentative safety warnings with specific reasons when local checks detect a suspicious pattern. They can review a report or dismiss the warning for the current message revision. A message edit can show a new warning.
+
+## ANL-04 and ANL-05 · Staff analytics
+
+Verified staff can open delivery latency and usage metrics in Safety after authenticator step-up. Delivery latency measures acknowledgment for accepted direct messages and reports p50, p95 and p99 only for sufficient cohorts. Usage measures direct sends, call starts, meeting creation and task completions across fixed windows. Usage counts are rounded down to tens and small groups are omitted. Both APIs return aggregate data.

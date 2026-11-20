@@ -6,6 +6,8 @@ import { db, formatError, formatTime, liveChannel, onReconnect, type Profile } f
 import { SectionTabs } from './section-tabs'
 import { RoomDirectory } from './room-directory'
 import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
+import { WorkspaceGroups } from './workspace-groups'
+import { WorkspaceOnboarding } from './workspace-onboarding'
 
 type Invite = { id: string; workspace_name: string }
 type Channel = { id: string; name: string }
@@ -100,12 +102,7 @@ export function Workspaces({ user, view = 'workspaces' }: { user:string;view?:Wo
     </div>)}</section>}
     <div className="release-flex">
       <WorkspaceSwitcher/>
-      {view==='workspaces' && <details className="release-create" open={!space || undefined}>
-        <summary>Create a workspace</summary><QuickForm label="Create a workspace" button="Create workspace" send={async fields => {
-          const id = await rpc('st_v2_create_workspace', { p_name: fields.get('name') })
-          await reloadWorkspaces(id)
-        }}><label>Workspace name<input name="name" required maxLength={64} placeholder="e.g. Eagle Security" /></label></QuickForm>
-      </details>}
+      {view==='workspaces' && workspaces && <WorkspaceOnboarding openByDefault={!space} onCreated={reloadWorkspaces}/>}
     </div>
     {space ? <WorkspaceArea key={space.id+view+space.role} space={space} user={user} view={view} /> :
       workspaces?.length===0&&view!=='workspaces'&&<p>Join or create a workspace to get started.</p>}
@@ -113,7 +110,7 @@ export function Workspaces({ user, view = 'workspaces' }: { user:string;view?:Wo
 }
 
 function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view:WorkspaceView }) {
-  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'activity'>('people')
+  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'activity'>('people')
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
@@ -152,13 +149,15 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
   }, [load])
 
   return <div className="panel release-panel">
+    {view==='workspaces'&&space.policy&&<p className="muted">{space.policy.details?.label||space.policy.workspace_type} · {space.policy.template==='restricted'?'Restricted policy':'Standard policy'}</p>}
     {view==='workspaces' && <SectionTabs label="Workspace sections" value={tab==='activity'&&!manager?'people':tab} onChange={setTab} options={[
       ['channels', <><Hash size={15}/> Channels</>], ['board', <><ListChecks size={15}/> Board</>],
-      ['people', <><Users size={15}/> People</>], ...(manager ? [['activity','Activity'] as const] : []),
+      ['people', <><Users size={15}/> People</>], ['teams','Groups & teams'], ...(manager ? [['activity','Activity'] as const] : []),
     ]}/>}
     {error && <p role="alert" className="error">{error}</p>}
     {view==='rooms'&&<SectionTabs label="Room sections" value={roomView} onChange={setRoomView} options={ [['rooms','Room directory'],['channels','Workspace channels']] }/>}
     {view==='rooms'&&roomView==='rooms'&&<RoomDirectory space={space.id} user={user} manager={manager} profiles={profiles}
+      allowedRoomKinds={space.policy?.room_kinds}
       workspaceAdminIds={members.filter(member=>member.role!=='member').map(member=>member.user_id)}/>}
     {((view==='rooms'&&roomView==='channels')||(view==='workspaces'&&tab==='channels')) && <div className="release-section">
       <div className="release-flex">
@@ -172,6 +171,7 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
       {channelId && <ChannelFeed key={channelId} channelId={channelId} profiles={profiles} user={user}/>}
     </div>}
     {view==='workspaces' && tab==='board' && <Board space={space.id} manager={manager} />}
+    {view==='workspaces' && tab==='teams' && <WorkspaceGroups workspace={space.id} manager={manager} people={members} profiles={profiles}/>}
     {view==='tasks'&&<TaskList space={space.id} actor={user} manager={manager} members={members} profiles={profiles}/>}
     {view==='calendar'&&<WorkspaceCalendar space={space.id} />}
     {view==='workspaces'&&(tab==='people'||(tab==='activity'&&!manager)) && <div className="release-section">

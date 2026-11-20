@@ -133,7 +133,7 @@ label { display: grid; gap: 7px; font-size: .88rem; font-weight: 650; }
 .report-row:last-child { border-bottom: 0; }
 button.report-row:hover { background: var(--raised); }
 .report-row > svg { flex: none; color: var(--muted); }
-.state-open, .warning, .risk { color: #f1c383; }
+.state-open, .warning, .risk-warning { color: #f1c383; }
 .state-reviewing { color: #b9cfff; }
 .state-resolved { color: var(--accent); }
 .case, .mfa-panel { padding: 18px; display: grid; justify-items: start; gap: 9px; overflow-wrap: anywhere; }
@@ -169,8 +169,8 @@ blockquote { margin: 0; width: 100%; border-left: 3px solid #6285ab; color: var(
 .self-media { max-width: 115px; align-self: end; }
 .audio-media video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .mobile-back { display: none; }
-.risk { font-size: .75rem; margin-top: 5px; display: flex; gap: 5px; }
-.risk svg { flex: none; }
+.risk-warning { font-size: .8rem; margin-top: 6px; padding-inline-start: 10px; border-inline-start: 2px solid currentColor; }
+.risk-warning ul { margin: 0 0 7px; padding-inline-start: 18px; }
 @media (max-width: 700px) {
   .benefits { grid-template-columns: 1fr; }
   .benefits > div + div { border-left: 0; border-top: 1px solid var(--line); }

@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import dynamic from 'next/dynamic'
 import {
-  ArrowLeft, Ban, Bell, BellOff, Bookmark, CalendarClock, CalendarDays, Check, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Folder, Inbox as InboxIcon, LogOut, ShieldAlert,
+  ArrowLeft, Ban, Bell, BellOff, Bookmark, CalendarClock, CalendarDays, Check, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Folder, Inbox as InboxIcon, LogOut,
   Download, Hash, ListChecks, MessageCircle, MoreHorizontal, Paperclip, Phone, Pin, Search, Send, Shield, ShieldCheck, Smile, UserPlus, UserRound, Users, Video, X,
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
 import { useCalling } from '../lib/calling'
-import { riskIndicators } from '../lib/safety.mjs'
+import { MessageSafetyWarning } from './message-safety-warning'
 import { CallPanel } from './call-panel'
 import { Brand } from './entry'
 import { ReportDialog, Safety } from './safety'
@@ -502,7 +502,7 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
         const name = profiles[peer]?.name || 'Contact'
         const reachable = chats.some(chat => chat.id === row.chat_id && chat.status === 'accepted') && !blocks.includes(peer)
         const status=missed(row)?(incoming?'Missed':'No answer'):
-          row.end_reason==='declined'?'Declined':row.end_reason==='cancelled'?'Cancelled':
+          row.end_reason==='declined'?'Declined':row.end_reason==='cancelled'?'Cancelled':row.end_reason==='busy'?'Busy':
           row.status==='active'&&Date.parse(row.expires_at)>now?'In progress':row.status==='ringing'?'Ringing':'Ended'
         return <div className="report-row" key={row.id}>
           <Avatar name={name} />
@@ -554,8 +554,12 @@ function ProfileForm({ profile, onSave }: { profile: Profile | null; onSave: () 
 }
 
 type Reaction = { message_id: string; user_id: string; reaction: string }
-type ChatActivity = { muted: boolean; read_at: string | null; read_id: string | null; typing_until: string | null }
-type DirectMessage = Message & { delivered_at?:string|null }
+type ChatActivity = {
+  muted:boolean;read_sequence:number|null;typing_until:string|null
+  share_own_edit_history:boolean;share_peer_edit_history:boolean
+}
+type EditHistory={message:string;own:boolean;revisions:{id:number;body:string;created_at:string}[]}
+type DirectMessage = Message & { sequence:number; delivered_at?:string|null }
 type OutboxMessage = {
   id:string; body:string; reply:string|null; file:File|null; at:string; state:'queued'|'sent'|'failed'|'damaged'
 }
@@ -595,7 +599,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const cursor=useRef<{start:number;end:number}|null>(null)
   const [replying, setReplying] = useState<Message | null>(null)
   const [quotes,setQuotes]=useState<Record<string,Pick<Message,'id'|'sender'|'body'>>>({})
-  const [history, setHistory] = useState<{ id: number; body: string; created_at: string }[] | null>(null)
+  const [history,setHistory]=useState<EditHistory|null>(null)
+  const [historySettings,setHistorySettings]=useState(false)
   const [clock, setClock] = useState(0)
   const typingLast = useRef(0)
   const readLast = useRef('')
@@ -612,13 +617,21 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const [scheduleOpen,setScheduleOpen]=useState(false)
   const revoked=useRef(new Map<string,DirectMessage>())
   const [loadingOlder, setLoadingOlder] = useState(false)
-  const merge = useCallback((rows: DirectMessage[]) => {
+  const lifecycle=useRef<AbortController|null>(null)
+  const frontier=useRef<number|null>(null)
+  const inFlight=useRef<Promise<void>|null>(null)
+  const runAgain=useRef(false)
+  const refreshWindow=useRef(false)
+  const activityVersion=useRef(0)
+  const merge = useCallback((rows: DirectMessage[], existingOnly=false) => {
     for(const row of rows)if(row.revoked_at)revoked.current.set(row.id,row)
     const current=rows.map(row=>revoked.current.get(row.id)||row)
     setMessages(previous => {
       const byId=new Map(previous.map(row=>[row.id,row]))
-      for(const row of current)byId.set(row.id,mergeDelivery(byId.get(row.id),row))
-      return [...byId.values()].sort((a,b)=>a.created_at.localeCompare(b.created_at)||a.id.localeCompare(b.id))
+      for(const row of current){
+        if(!existingOnly||byId.has(row.id))byId.set(row.id,mergeDelivery(byId.get(row.id),row))
+      }
+      return [...byId.values()].sort((a,b)=>a.sequence-b.sequence)
     })
     const updates=new Map(current.map(row=>[row.id,row]))
     setResults(previous=>previous?.map(row=>{
@@ -628,6 +641,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     setOutbox(previous=>previous.some(item=>updates.has(item.id))?previous.filter(item=>!updates.has(item.id)):previous)
     setReplying(previous=>previous&&(updates.get(previous.id)?.revoked_at?null:previous))
     setEditing(previous=>previous&&(updates.get(previous.id)?.revoked_at?null:previous))
+    setHistory(previous=>previous&&(updates.get(previous.message)?.revoked_at?null:previous))
   }, [])
 
   const loadQuotes=useCallback(async(rows:Message[])=>{
@@ -642,44 +656,101 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     })
   },[chat.id])
 
-  const load = useCallback(async (before?: Message) => {
-    let query = db!.from('st_messages').select('*').eq('chat_id', chat.id)
-    if (before) query = query.or('created_at.lt.' + before.created_at + ',and(created_at.eq.' + before.created_at + ',id.lt.' + before.id + ')')
-    const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(51)
-    if (error) { inform('Could not sync messages.'); return }
-    if (before || !loaded) setOlder(data.length > 50)
-    const page=data.slice(0,50) as DirectMessage[]
+  const hydrate=useCallback(async(page:DirectMessage[],signal:AbortSignal)=>{
     const ids=page.map(row=>row.id)
     if(ids.length){
       const [removed,attachments]=await Promise.all([
-        db!.from('st_v5_hidden_messages').select('message_id').in('message_id',ids),
-        db!.from('st_v5_files').select('id,message_id,filename,size_bytes').in('message_id',ids),
+        db!.from('st_v5_hidden_messages').select('message_id').in('message_id',ids).abortSignal(signal),
+        db!.from('st_v5_files').select('id,message_id,filename,size_bytes').in('message_id',ids).abortSignal(signal),
         loadQuotes(page),
       ])
-      if(removed.data) setHidden(previous=>[...new Set([...previous,...removed.data.map(row=>row.message_id)])])
+      if(signal.aborted)return
+      if(removed.error||attachments.error)throw new Error('Message metadata unavailable')
+      if(removed.data.length)setHidden(previous=>[...new Set([...previous,...removed.data.map(row=>row.message_id)])])
       if(attachments.data) setFiles(previous=>({...previous,...Object.fromEntries(attachments.data.map(file=>[file.message_id,file]))}))
     }
-    merge(page)
-    setLoaded(true)
-  }, [chat.id, inform, loaded, loadQuotes, merge])
+    if(!signal.aborted)merge(page)
+  },[loadQuotes,merge])
+
+  const load = useCallback(async(before?:DirectMessage, refreshRecent=true)=>{
+    const signal=lifecycle.current?.signal
+    if(!signal||signal.aborted)return
+    const query=()=>db!.from('st_messages').select('*').eq('chat_id',chat.id).abortSignal(signal)
+    if(before){
+      try{
+        const {data,error}=await query().lt('sequence',before.sequence).order('sequence',{ascending:false}).limit(51)
+        if(error)throw error
+        await hydrate(data.slice(0,50) as DirectMessage[],signal)
+        if(!signal.aborted)setOlder(data.length>50)
+      }catch{if(!signal.aborted)inform('Could not sync messages.')}
+      return
+    }
+    refreshWindow.current ||= refreshRecent
+    if(inFlight.current){
+      runAgain.current=true
+      return inFlight.current
+    }
+    const sync=(async()=>{
+      let passes=0
+      try{
+        do{
+          runAgain.current=false
+          const recent=refreshWindow.current
+          refreshWindow.current=false
+          if(frontier.current===null){
+            const {data,error}=await query().order('sequence',{ascending:false}).limit(51)
+            if(error)throw error
+            await hydrate(data.slice(0,50) as DirectMessage[],signal)
+            if(signal.aborted)return
+            frontier.current=data[0]?.sequence??0
+            setOlder(data.length>50)
+            setLoaded(true)
+          }else{
+            // Advance only from pages read in sequence order. A live event can point
+            // beyond messages missed while disconnected and must not skip them.
+            for(let page=0;page<6&&!signal.aborted;page++){
+              const {data,error}=await query().gt('sequence',frontier.current).order('sequence').limit(50)
+              if(error)throw error
+              if(!data.length)break
+              await hydrate(data as DirectMessage[],signal)
+              if(signal.aborted)return
+              frontier.current=data[data.length-1].sequence
+              if(data.length<50)break
+            }
+            if(recent&&!signal.aborted){
+              const {data,error}=await query().lte('sequence',frontier.current).order('sequence',{ascending:false}).limit(50)
+              if(error)throw error
+              await hydrate(data as DirectMessage[],signal)
+            }
+          }
+        }while(runAgain.current&&!signal.aborted&&++passes<3)
+      }catch{if(!signal.aborted)inform('Could not sync messages.')}
+    })()
+    inFlight.current=sync
+    try{await sync}finally{if(inFlight.current===sync)inFlight.current=null}
+  },[chat.id,hydrate,inform])
 
   const loadLatest = useRef(load)
   useEffect(() => { loadLatest.current = load }, [load])
   const loadActivity = useCallback(async () => {
+    const version=++activityVersion.current
     const [status, reactions, pinned] = await Promise.all([
       db!.rpc('st_v2_chat_status', { p_chat: chat.id }),
       db!.from('st_v2_reactions').select('message_id,user_id,reaction').eq('chat_id', chat.id).limit(1000),
       db!.from('st_v2_pins').select('message_id').eq('chat_id', chat.id).maybeSingle(),
     ])
+    if(version!==activityVersion.current)return
     if (!status.error) setActivity(status.data)
     if (!reactions.error) setReactions(reactions.data)
     if (pinned.error) return
     if (pinned.data) {
       const { data } = await db!.from('st_messages').select('*').eq('id', pinned.data.message_id).maybeSingle()
-      setPin(data as Message | null)
+      if(version===activityVersion.current)setPin(data as Message | null)
     } else setPin(null)
   }, [chat.id])
   useEffect(() => {
+    const controller=new AbortController()
+    lifecycle.current=controller
     void loadLatest.current()
     const sync = () => { void loadLatest.current(); void loadActivity() }
     const onHint = (event: Event) => { if ((event as MessageEvent).data === chat.id) sync() }
@@ -688,8 +759,11 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       .on('postgres_changes', { event: '*', schema: 'public', table: 'st_messages', filter: 'chat_id=eq.' + chat.id }, payload => {
         if (payload.eventType !== 'DELETE'){
           const message=payload.new as DirectMessage
-          merge([message])
-          if(message.reply_to)void loadQuotes([message])
+          const next=frontier.current
+          if(next===null||message.sequence>next){
+            // This also fills a gap when the announcement is more than one sequence ahead.
+            void loadLatest.current(undefined,false)
+          }else if(payload.eventType==='UPDATE')merge([message],true)
           if(payload.eventType==='UPDATE')setQuotes(current=>current[message.id]?
             {...current,[message.id]:{id:message.id,sender:message.sender,body:message.body.slice(0,240)}}:current)
         }
@@ -701,6 +775,10 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     hints.addEventListener('ready', sync)
     hints.addEventListener('chat_activity', onActivity)
     return () => {
+      controller.abort()
+      ++activityVersion.current
+      lifecycle.current=null
+      inFlight.current=null
       hints.removeEventListener('inbox', onHint)
       hints.removeEventListener('ready', sync)
       hints.removeEventListener('chat_activity', onActivity)
@@ -708,13 +786,18 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       window.clearInterval(timer)
       void db!.removeChannel(channel)
     }
-  }, [chat.id, hints, merge, loadActivity, loadQuotes])
+  }, [chat.id, hints, merge, loadActivity])
   useEffect(() => {
     if (!activity?.typing_until) return
     setClock(Date.now())
     const timer = window.setTimeout(() => setClock(Date.now()), Math.max(0, Date.parse(activity.typing_until) - Date.now()) + 30)
     return () => window.clearTimeout(timer)
   }, [activity?.typing_until])
+  const historyAllowed=history&&!blocked&&!hidden.includes(history.message)&&
+    (history.own||activity?.share_peer_edit_history)
+  useEffect(()=>{
+    if(history&&!historyAllowed)setHistory(null)
+  },[history,historyAllowed])
   useEffect(()=>{
     if(blocked)return
     const unavailable=new Set(hidden)
@@ -855,6 +938,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         onClick={() => void update('st_v2_mute', { p_chat: chat.id, p_muted: !activity?.muted })}>
         {activity?.muted ? <BellOff size={15}/> : <Bell size={15}/>} {activity?.muted ? 'Muted' : 'Mute'}
       </button>
+      <button type="button" className="secondary" disabled={blocked||!activity}
+        onClick={()=>setHistorySettings(true)}>Edit history settings</button>
     </div>
     {showSearch && <form className="thread-toolbar" onSubmit={async event => {
       event.preventDefault()
@@ -891,9 +976,9 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         const file=message.revoked_at?undefined:files[message.id]
         const quote=message.reply_to&&!hidden.includes(message.reply_to)&&!revoked.current.has(message.reply_to)
           ? quotes[message.reply_to]:null
-        const read = own && activity?.read_at && (message.created_at < activity.read_at || message.created_at === activity.read_at && message.id <= (activity.read_id ?? ''))
+        const read=own&&typeof activity?.read_sequence==='number'&&message.sequence<=activity.read_sequence
         const selectedReactions = reactions.filter(reaction => reaction.message_id === message.id)
-        return <div className={'message ' + (own ? 'own' : '')} key={message.id}>
+        return <div className={'message ' + (own ? 'own' : '')} key={message.id} data-sequence={message.sequence}>
           <div className="message-reaction-header"><strong className="message-sender">{own?selfName+' (you)':peerName}</strong>
             {!blocked&&!message.revoked_at&&<button className="small-icon add-reaction" type="button" title="Add reaction" aria-label="Add reaction"
               onClick={()=>setReacting(message.id)}><Smile size={16}/></button>}
@@ -917,13 +1002,17 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
               <Download size={16}/><span>{file.filename}<small>{Math.ceil(file.size_bytes/1024)} KiB</small></span>
             </button>}
           </div>
-          {!own&&!message.revoked_at && riskIndicators(message.body).map(flag => <p key={flag} className="risk"><ShieldAlert size={14} />{flag}</p>)}
+          {!own&&!message.revoked_at&&<MessageSafetyWarning key={message.id+':'+(message.edited_at||message.created_at)}
+            account={self} message={message.id} revision={message.edited_at||message.created_at} body={message.body}
+            onReport={()=>onReport(message,file)}/>}
           <div className="message-meta"><time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
-            {message.edited_at&&!message.revoked_at && <button type="button" className="text-button" onClick={async () => {
+            {message.edited_at&&!message.revoked_at && (!blocked&&(own||activity?.share_peer_edit_history)?
+              <button type="button" className="text-button" aria-label="View edit history" onClick={async () => {
               const { data, error } = await db!.from('st_v2_message_edits').select('id,body,created_at').eq('message_id', message.id).order('id', { ascending: false }).limit(25)
               if (error) inform('Could not load edit history.')
-              else setHistory(data)
-            }}>Edited</button>}
+              else if(data.length&&!revoked.current.has(message.id))setHistory({message:message.id,own,revisions:data})
+              else inform('Edit history is unavailable.')
+            }}>Edited</button>:<span>Edited</span>)}
             {!message.revoked_at && (own ? <span>{read?'Read':message.delivered_at?'Delivered':'Sent'}</span> :
               <button className="small-icon" title="Report message" aria-label="Report message" onClick={() => onReport(message,file)}><Flag size={13} /></button>)}
             <details className="message-menu">
@@ -983,7 +1072,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
             if(removing.action==='hide') setHidden(previous=>[...new Set([...previous,removing.message.id])])
             else {
               const {data}=await db!.from('st_messages').select('*').eq('id',removing.message.id).maybeSingle()
-              if(data)merge([data as Message])
+              if(data)merge([data as DirectMessage])
             }
             setHistory(null);setRemoving(null)
           }
@@ -995,7 +1084,25 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       const body = new FormData(event.currentTarget).get('body')
       if (await update('st_v2_edit_message', { p_message: editing.id, p_body: body })) { setEditing(null); setResults(null) }
     }}><label>Message<textarea name="body" required maxLength={4000} defaultValue={editing.body}/></label><button className="primary">Save changes</button></form></Dialog>}
-    {history && <Dialog title="Edit history" close={() => setHistory(null)}>{history.map(edit => <article className="release-board-item" key={edit.id}><time dateTime={edit.created_at}>{new Date(edit.created_at).toLocaleString()}</time><p>{edit.body}</p></article>)}</Dialog>}
+    {history&&historyAllowed&&<Dialog title="Edit history" close={()=>setHistory(null)}>
+      {history.revisions.map(edit=><article className="release-board-item" key={edit.id}><time dateTime={edit.created_at}>{new Date(edit.created_at).toLocaleString()}</time><p>{edit.body}</p></article>)}
+    </Dialog>}
+    {historySettings&&<Dialog title="Edit history settings" close={()=>setHistorySettings(false)}>
+      <form onSubmit={async event=>{
+        event.preventDefault()
+        const share=new FormData(event.currentTarget).get('audience')==='shared'
+        if(await update('st_v6_set_edit_history',{p_chat:chat.id,p_share:share}))setHistorySettings(false)
+      }}>
+        <p>This applies to earlier versions of your messages in this chat, including edits you already made.</p>
+        <label>Who can see my edit history?
+          <select name="audience" defaultValue={activity?.share_own_edit_history===false?'private':'shared'}>
+            <option value="shared">Both contacts</option>
+            <option value="private">Only me</option>
+          </select>
+        </label>
+        <button className="primary" disabled={blocked}>Save history setting</button>
+      </form>
+    </Dialog>}
     {replying && <div className="thread-pin"><span>Replying to <EmojiText value={replying.body}/></span><button type="button" className="icon" aria-label="Cancel reply" onClick={() => setReplying(null)}><X size={16}/></button></div>}
     {attachment&&<div className="thread-pin"><Paperclip size={16}/><span>{attachment.file.name}</span>
       <button type="button" className="icon" disabled={busy} aria-label="Remove attachment" onClick={()=>setAttachment(null)}><X size={16}/></button>

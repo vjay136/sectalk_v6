@@ -8,6 +8,7 @@ import { saveDownload } from '../lib/chat-files'
 import { meetingCalendar, meetingLink } from '../lib/meeting-calendar'
 import { SectionTabs } from './section-tabs'
 import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
+import { MeetingEngagement } from './meeting-engagement'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
 type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null }
@@ -138,12 +139,12 @@ function WorkspaceMeetings({ user, requested, workspace }: { user:string; reques
       </div>)}
     </div>}
     {selected && <MeetingDetail key={selected.id} meeting={selected} user={user} mediaReady={ready}
-      host={selected.host_id===user && canHost} refresh={reload}/>}
+      host={selected.host_id===user && canHost} bulkAdmit={workspace.policy?.bulk_admit!==false} refresh={reload}/>}
   </>
 }
 
-function MeetingDetail({meeting,user,mediaReady,host,refresh}: {
-  meeting:Meeting;user:string;mediaReady:boolean;host:boolean;refresh:()=>Promise<void>
+function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
+  meeting:Meeting;user:string;mediaReady:boolean;host:boolean;bulkAdmit:boolean;refresh:()=>Promise<void>
 }) {
   const [people,setPeople]=useState<Attendance[]>([])
   const [profiles,setProfiles]=useState<Record<string,Profile>>({})
@@ -242,8 +243,9 @@ function MeetingDetail({meeting,user,mediaReady,host,refresh}: {
       {(self==='admitted'||self==='waiting') && <button className="secondary" disabled={busy} onClick={()=>{setMedia(null);void action('st_v3_leave',{})}}>Leave</button>}
     </div>}
     {media && self==='admitted' && !ended && <MeetingMedia {...media} leave={refreshMedia}/>}
+    {self==='admitted'&&meeting.status==='live'&&!ended&&<MeetingEngagement meeting={meeting.id} user={user}/>}
     {host && <section className="release-section"><h2>Waiting room and attendance</h2>
-      {meeting.status==='live'&&!ended&&people.some(person=>person.status==='waiting')&&
+      {bulkAdmit&&meeting.status==='live'&&!ended&&people.some(person=>person.status==='waiting')&&
         <button className="primary" type="button" disabled={busy} onClick={()=>void action('st_v6_admit_all',{})}>Admit all eligible attendees</button>}
       {lobbyNotice&&<p role="status">{lobbyNotice}</p>}
       {!people.length&&<p>No attendees yet.</p>}

@@ -7,7 +7,7 @@
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
 | Unit tests | 14 passed, including file type and ticket checks, calendar export, readiness, safety heuristics, vault, emoji data and disclosure configuration |
-| Supabase database integration | All 20 rollback suites passed, including workspace context, attachment authorization, message delivery and active-call ICE permissions |
+| Supabase database integration | All 28 rollback suites passed, including workspace and room policies, message ordering and edit privacy, media ownership, meeting engagement and aggregate analytics |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -35,6 +35,15 @@
 | ICE credential leases | Browser and SQL verified per-call signing, distinct participants, bounded expiry, renewal and denial for ineligible callers with simulated TURN settings. Cross-network relay remains pending. |
 | Signed attachment downloads | The local app issued and redeemed user-bound 30-second links, rechecked access, logged retrieval and rejected a stale link after revocation. Unit tests exercised the expiry boundary and tampering. |
 | Attachment type policy | Unit and browser checks verified agreement between extension, requested MIME and stored bytes. The normal composer published an approved file. The API rejected a renamed text file and the database denied raw publication. |
+| Workspace directory | SQL and two browsers verified groups, teams and departments, assignment, audit, archive and restore, membership cleanup and tenant isolation. |
+| Typed workspace onboarding | Browser verified the wizard, persisted Family policy, restricted room options and individual admission. SQL verified standard and restricted defaults, role enforcement, quota, audit and legacy compatibility. |
+| Direct message ordering | SQL and browser checks verified legacy backfill, equal-time ordering, concurrent deduplication, and recovery across 120 missed messages with ordered pagination. |
+| Incoming call ownership | Three local browser contexts exercised a competing answer, a losing device, busy, decline and caller cancellation. SQL verified ownership of ICE, signaling and hangup. Synthetic TURN settings were used. |
+| Meeting interactions | Two browsers verified realtime hand changes and the expiry of a reaction after eight seconds. SQL verified waiting and outside attendee denial, cross-meeting isolation, and leave and readmission cleanup. |
+| Safety warnings | Browser verified tentative language, a specific reason, report review with the original message, dismissal and a fresh warning after edit. |
+| Message delivery latency | SQL verified p50, p95 and p99 calculations, small-cohort suppression and MFA gating. Browser used a real TOTP challenge in isolated Supabase to open the metrics view. |
+| Message edit privacy | SQL and two browsers verified the edit window, per-author sharing, raw history denial, edited markers and removal of open revision history after redaction or a privacy change. |
+| Product usage | SQL verified rounded aggregate counts and suppression for a single contributor. The browser reached the aggregate-only view after authenticator step-up. |
 | Local database security advisor | No warning or error reported for the isolated candidate at test time. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
 | Updated candidate | `npm run build` passed after the rooms, search, status, PWA and thread changes. |

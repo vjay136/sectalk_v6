@@ -13,7 +13,7 @@ type Roster={user_id:string;role:Role}
 type Entry={user_id:string;kind:'invite'|'request';invited_role:Role;expires_at:string}
 type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:string}
 type ThreadState={post_id:string;replies:number;following:boolean;excerpt:string}
-type DirectoryProps={space:string;user:string;manager:boolean;profiles:Record<string,Profile>;workspaceAdminIds:string[]}
+type DirectoryProps={space:string;user:string;manager:boolean;profiles:Record<string,Profile>;workspaceAdminIds:string[];allowedRoomKinds?:string[]}
 const kinds:Record<Kind,string>={public:'Workspace-wide',private:'Private',admin:'Admins only',announcement:'Announcements',broadcast:'Broadcast'}
 const templates={
   blank:{name:'Blank room',kinds:['public','private','admin','announcement','broadcast'],description:''},
@@ -32,12 +32,12 @@ async function call(name:string,input:Record<string,unknown>) {
   return result.data
 }
 
-export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:DirectoryProps) {
+export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,allowedRoomKinds}:DirectoryProps) {
   const [rooms,setRooms]=useState<Room[]|null>(null)
   const [selected,setSelected]=useState('')
   const [filter,setFilter]=useState<'active'|'archived'>('active')
   const [template,setTemplate]=useState<Template>('blank')
-  const [kind,setKind]=useState<Kind>('public')
+  const [kind,setKind]=useState<Kind>()
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
   const [working,setWorking]=useState(false)
@@ -66,6 +66,11 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:Di
   const visible=rooms?.filter(room=>room.archived===(filter==='archived'))
   const current=visible?.find(room=>room.id===selected)
   const preset=templates[template]
+  const allowed=(option:Kind)=>!allowedRoomKinds||allowedRoomKinds.includes(option)
+  const roomKinds=preset.kinds.filter(allowed) as Kind[]
+  const chosenKind=kind&&roomKinds.includes(kind)?kind:roomKinds[0]
+  const description=template==='project'&&!allowed('public')
+    ?'Requires room admission. Pins prompts for goals, ownership, and milestones.':preset.description
 
   return <section aria-label="Room directory">
     <h2>Room directory</h2>
@@ -77,8 +82,9 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:Di
       <form className="release-form" onSubmit={event=>{
         event.preventDefault()
         const values=new FormData(event.currentTarget)
+        if(!chosenKind)return
         void perform(async()=>{
-          const input={p_workspace:space,p_name:values.get('name'),p_kind:kind,p_template:template}
+          const input={p_workspace:space,p_name:values.get('name'),p_kind:chosenKind,p_template:template}
           const key=JSON.stringify(input)
           if(newId.current?.key!==key)newId.current={key,id:crypto.randomUUID()}
           const id=await call('st_v6_room_create',{...input,p_id:newId.current.id})
@@ -89,15 +95,15 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:Di
         <label>Room name<input name="name" required maxLength={64}/></label>
         <label>Room template<select name="template" value={template} onChange={event=>{
           const next=event.target.value as Template
-          setTemplate(next);setKind(templates[next].kinds[0])
+          setTemplate(next);setKind(undefined)
         }}>
-          {Object.entries(templates).map(([id,entry])=><option key={id} value={id}>{entry.name}</option>)}
+          {Object.entries(templates).filter(([,entry])=>entry.kinds.some(allowed)).map(([id,entry])=><option key={id} value={id}>{entry.name}</option>)}
         </select></label>
-        {preset.description&&<p aria-live="polite">{preset.description}</p>}
-        <label>Room type<select value={kind} onChange={event=>setKind(event.target.value as Kind)}>
-          {preset.kinds.map(option=><option key={option} value={option}>{kinds[option]}</option>)}
+        {description&&<p aria-live="polite">{description}</p>}
+        <label>Room type<select value={chosenKind||''} onChange={event=>setKind(event.target.value as Kind)}>
+          {roomKinds.map(option=><option key={option} value={option}>{kinds[option]}</option>)}
         </select></label>
-        <button className="primary" disabled={working}>Create room</button>
+        <button className="primary" disabled={working||!chosenKind}>Create room</button>
       </form>
     </details>}
     <details><summary>Request access with a room code</summary>

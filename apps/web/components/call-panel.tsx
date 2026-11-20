@@ -23,7 +23,7 @@ export function CallPanel({ state, self, name, openChat, reportContact }: {
 }) {
   const [muted, setMuted] = useState(false)
   const [camera, setCamera] = useState(true)
-  const { call, local, remote, connection, busy, answer, end, screen, sharingBusy, shareScreen, stopSharing } = state
+  const { call, local, remote, connection, busy, answer, end, markBusy, screen, sharingBusy, shareScreen, stopSharing } = state
   if (!call) return null
   const incoming = call.status === 'ringing' && call.callee === self
   const mode = call.video ? 'Video' : 'Audio'
@@ -40,10 +40,11 @@ export function CallPanel({ state, self, name, openChat, reportContact }: {
         <div className="message-menu-panel">
           <button type="button" className="text-button" onClick={()=>openChat(call.chat_id)}>Open conversation</button>
           <button type="button" className="text-button" onClick={()=>reportContact(call.chat_id)}>Report contact</button>
-          <button type="button" className="text-button remove-text" onClick={()=>void end()}>{incoming?'Decline call':'End call'}</button>
+          <button type="button" className="text-button remove-text" disabled={busy} onClick={()=>void end()}>{incoming?'Decline call':call.status==='ringing'?'Cancel call':'End call'}</button>
         </div>
       </details>
       {incoming && <button disabled={busy} className="primary" onClick={answer}><Phone size={17} /> Answer</button>}
+      {incoming && <button disabled={busy} type="button" className="secondary" onClick={markBusy}>Busy</button>}
       {local && <button title={muted ? 'Unmute' : 'Mute microphone'} aria-label={muted ? 'Unmute' : 'Mute microphone'} className="secondary" onClick={() => {
         local.getAudioTracks().forEach(track => { track.enabled = muted })
         setMuted(!muted)
@@ -55,7 +56,7 @@ export function CallPanel({ state, self, name, openChat, reportContact }: {
       {call.video && (connection === 'connected' || screen) && <button className="secondary" disabled={sharingBusy} onClick={() => void (screen ? stopSharing() : shareScreen())}>
         {screen ? <MonitorOff size={17} /> : <Monitor size={17} />} {screen ? 'Stop sharing' : 'Share screen'}
       </button>}
-      <button className="danger" onClick={end}><PhoneOff size={17} /> {incoming ? 'Decline' : 'Hang up'}</button>
+      <button className="danger" disabled={busy} onClick={end}><PhoneOff size={17} /> {incoming ? 'Decline' : call.status==='ringing'?'Cancel call':'Hang up'}</button>
     </div>
   </section>
 }

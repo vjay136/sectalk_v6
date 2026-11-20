@@ -3,8 +3,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { db, onReconnect } from '../lib/data'
 
-export type Workspace = { id:string; name:string; role:'owner'|'admin'|'member' }
-type Membership = { role:Workspace['role']; workspace:{id:string;name:string}|null }
+type WorkspacePolicy={workspace_type:string;template:'standard'|'restricted';room_kinds:string[];bulk_admit:boolean;details:{label:string}|null}
+export type Workspace = { id:string; name:string; role:'owner'|'admin'|'member';policy:WorkspacePolicy|null }
+type Membership = { role:Workspace['role']; workspace:Omit<Workspace,'role'>|null }
 type WorkspaceContextValue = {
   workspaces:Workspace[]|null; active:Workspace|null; error:string
   select:(id:string)=>void; reload:(preferred?:string)=>Promise<void>
@@ -27,7 +28,7 @@ export function WorkspaceContextProvider({user,children}:{ user:string;children:
   const reload=useCallback(async(preferred?:string)=>{
     if(preferred)preferredSelection.current=preferred
     const version=++requestVersion.current
-    const {data,error}=await db!.from('st_v2_members').select('role,workspace:st_v2_workspaces(id,name)')
+    const {data,error}=await db!.from('st_v2_members').select('role,workspace:st_v2_workspaces(id,name,policy:st_v6_workspace_policy(workspace_type,template,room_kinds,bulk_admit,details:st_v6_workspace_templates(label)))')
       .eq('user_id',user).order('joined_at').order('workspace_id').limit(100).returns<Membership[]>()
     if(version!==requestVersion.current)return
     if(error){setWorkspaces(null);setError('Could not load your workspaces.');return}

@@ -6,6 +6,8 @@ import { categories, db, formatError, type Message } from '../lib/data'
 import { Dialog } from './inbox'
 import { SectionTabs } from './section-tabs'
 import { downloadChatFile, type ChatFile } from '../lib/chat-files'
+import { DeliveryLatency } from './delivery-latency'
+import { UsageMetrics } from './usage-metrics'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
@@ -58,7 +60,7 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 export function Safety({ staff, refresh }: { staff: string; refresh: () => Promise<void> }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage'>('mine')
   const [selected,setSelected]=useState<Report|null>(null)
   const [timeline,setTimeline]=useState<TimelineItem[]|null>(null)
   const [notices,setNotices]=useState<Notice[]>([])
@@ -90,14 +92,17 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
     return ()=>{live=false;window.clearInterval(timer)}
   },[selected])
   const staffAccess=staff==='mfa'||staff==='verified'
+  const visibleView=((view==='latency'||view==='usage')&&staff!=='verified')||(view==='queue'&&!staffAccess)?'mine':view
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
-    <SectionTabs label="Safety center sections" value={view==='queue'&&!staffAccess?'mine':view} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
+    <SectionTabs label="Safety center sections" value={visibleView} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
       ['mine','My reports'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
+      ...(staff==='verified'?[['latency','Delivery metrics'] as const,['usage','Usage metrics'] as const]:[]),
     ]}/>
-    {view==='queue'&&staffAccess ? (staff === 'verified' ? <QueuePanel /> : <StaffMfa refresh={refresh}/>) :
-      view==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
+    {visibleView==='latency'?<DeliveryLatency/>:visibleView==='usage'?<UsageMetrics/>:
+      visibleView==='queue' ? (staff === 'verified' ? <QueuePanel /> : <StaffMfa refresh={refresh}/>) :
+      visibleView==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
         {error&&<p role="alert" className="error">{error}</p>}
         {!notices.length&&<p>No account notices.</p>}
         {notices.map(notice=><div className="release-board-item" key={notice.id}><strong>{labels[notice.action]}</strong><p><DateLabel value={notice.created_at}/></p>
