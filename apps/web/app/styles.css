@@ -152,6 +152,9 @@ blockquote { margin: 0; width: 100%; border-left: 3px solid #6285ab; color: var(
 .dialog::backdrop { background: #040604bc; }
 .dialog-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .dialog-title h2 { font-size: 1.3rem; }
+.command-palette { width: min(95vw, 540px); }
+.command-list { display: grid; gap: 5px; max-height: min(52dvh, 430px); overflow: auto; padding: 3px; }
+.command-list button { text-align: start; justify-content: flex-start; overflow-wrap: anywhere; }
 .muted { color: var(--muted); display: inline; }
 .error { color: var(--danger); }
 .toast, .call-panel { position: fixed; z-index: 5; border: 1px solid #385371; background: #142940; box-shadow: 0 15px 45px #0008; border-radius: 13px; }

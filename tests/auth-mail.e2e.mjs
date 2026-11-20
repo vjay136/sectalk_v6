@@ -40,6 +40,8 @@ async function signIn(page, password, expected) {
 try {
   const page = await browser.newPage()
   await page.goto(app + '/#account')
+  const disclosure=page.getByRole('link',{name:'Security disclosures',exact:true})
+  assert.equal(await disclosure.getAttribute('href'),'/security')
   await page.getByRole('button', { name: 'Create account', exact: true }).click()
   await page.getByLabel('Email address', { exact: true }).fill(email)
   await page.getByLabel('Password', { exact: true }).fill(original)

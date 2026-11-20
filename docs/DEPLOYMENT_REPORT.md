@@ -12,5 +12,6 @@ Run `npm run verify:registry -- --release` to check feature completion. V6 requi
 | Realtime and jobs | Provide isolated Ably, Redis and queue credentials for the adapters and failure-path verification. |
 | Storage and encryption | Provision a dedicated nonproduction S3-compatible bucket and KMS key with narrowly scoped grants for scanner, retention and key-management tests after the adapters are implemented. |
 | Push and safety AI | Provision the push keys and a policy-approved test model or gateway account after the delivery and classification paths are implemented. |
+| Vulnerability disclosure | Set the stable v6 HTTPS origin, a verified and monitored private contact, and the contact expiry documented in [SECURITY.md](../SECURITY.md). Verify both public disclosure routes on the target deployment. |
 
 The matrix uses BLOCKED_EXTERNAL only when the implementation and its test-mode proof are present. Missing configuration and missing code are tracked separately.

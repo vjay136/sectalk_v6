@@ -21,6 +21,7 @@ declare
   outside_user constant uuid:='60000000-0000-4000-8000-000000000003';
   m constant uuid:=gen_random_uuid();
   m2 constant uuid:=gen_random_uuid();
+  source constant uuid:=gen_random_uuid();
   chat uuid;
 begin
   perform set_config('request.jwt.claims',json_build_object('sub',sender,'role','authenticated')::text,true);
@@ -30,6 +31,10 @@ begin
   perform set_config('request.jwt.claims',json_build_object('sub',sender,'role','authenticated')::text,true);
   perform public.st_send(chat,m,'First saved sample');
   perform public.st_send(chat,m2,'Second saved sample');
+  perform public.st_send(chat,source,repeat('x',240)||' [SecTalk-QA] <b>plain text</b>');
+  if not exists(select 1 from public.st_v6_search('[sectalk-qa]','direct') s
+    where s.id=source and s.snippet like '…%[SecTalk-QA] <b>plain text</b>')
+    then raise exception 'Search did not center the snippet around the matched term'; end if;
   insert into public.st_v6_saved_messages(message_id) values(m),(m2) on conflict(user_id,message_id) do nothing;
   insert into public.st_v6_saved_messages(message_id) values(m) on conflict(user_id,message_id) do nothing;
   if (select count(*) from public.st_v6_saved_messages)<>2 then raise exception 'Save failed or duplicated'; end if;
@@ -45,6 +50,7 @@ begin
   delete from public.st_v6_saved_messages where message_id=m;
   if exists(select 1 from public.st_v6_saved_messages) then raise exception 'Remove saved message failed'; end if;
   perform set_config('request.jwt.claims',json_build_object('sub',outside_user,'role','authenticated')::text,true);
+  if exists(select 1 from public.st_v6_search('[sectalk-qa]','direct')) then raise exception 'Search leaked a private snippet'; end if;
   begin
     insert into public.st_v6_saved_messages(message_id) values(m);
     raise exception 'Outside account saved an inaccessible message' using errcode='P0004';
@@ -54,12 +60,19 @@ begin
   if not exists(select 1 from public.st_v6_saved_searches where query='Saved sample') then raise exception 'Other account removed owner saved search'; end if;
   perform public.st_v5_message_action(m,'revoke');
   perform public.st_v5_message_action(m2,'hide');
+  if exists(select 1 from public.st_v6_search('saved sample','direct'))
+    or exists(select 1 from public.st_v6_search('Message removed','direct') s where s.id=m)
+    or exists(select 1 from public.st_v3_search('saved sample','direct'))
+    then raise exception 'Hidden or revoked data appeared in an API search'; end if;
   if exists(select 1 from public.st_v6_saved_messages) then raise exception 'Hidden or revoked content remained visible'; end if;
   begin
     insert into public.st_v6_saved_messages(message_id) values(m);
     raise exception 'Revoked content could be saved again' using errcode='P0004';
   exception when insufficient_privilege then null;
   end;
+  perform set_config('request.jwt.claims',json_build_object('sub',receiver,'role','authenticated')::text,true);
+  if (select array_agg(s.id) from public.st_v6_search('saved sample','direct') s) is distinct from array[m2]
+    then raise exception 'Search hide was not private to the acting account'; end if;
 end $$;
 reset role;
 select 'passed: private saves and searches, idempotent writes, removal, inaccessible chats, hide, revoke, readiness' as result;

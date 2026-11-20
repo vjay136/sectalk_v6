@@ -215,6 +215,6 @@ export function Entry({ recovering }: { recovering: boolean }) {
       <div><span className="benefit-icon"><AudioLines /></span><h2>Live conversations</h2><p>Move from messaging to one-to-one audio or video in the same workspace.</p></div>
       <div><span className="benefit-icon"><Flag /></span><h2>Safety controls</h2><p>Block contact and share selected evidence with a safety reviewer.</p></div>
     </section>
-    <footer className="site-footer"><Brand /><span>SecTalk by Eagle Security</span><a href="/status">Service status</a><a href="#account">Account access <Send size={14}/></a></footer>
+    <footer className="site-footer"><Brand /><span>SecTalk by Eagle Security</span><a href="/status">Service status</a><a href="/security">Security disclosures</a><a href="#account">Account access <Send size={14}/></a></footer>
   </main>
 }

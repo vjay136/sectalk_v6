@@ -42,6 +42,12 @@ A room participant opens a thread from a room message and reads its replies or p
 
 An authenticated user saves a query and search category, opens it from the Saved searches tab, and may remove it. Saving the same trimmed query and category is idempotent. Saved queries are readable only by the owner. Running a saved search executes the current search query and permissions. It does not store a copy of the results.
 
+## SRCH-05 and SRCH-07 · Command palette and search snippets
+
+Press Ctrl+K or Command+K from the signed-in workspace, or open the palette from Search. Filter navigation and action shortcuts by typing, use the arrow keys to focus a command, and press Enter to run it. Submitting the search field runs the entered terms through Global Search. Escape returns focus to the opener.
+
+Supabase checks each source table’s read permissions before returning search results. Direct-message snippets exclude revoked messages and messages hidden by the caller. Snippets show the match in context and the app renders the match as highlighted text. An open search refreshes direct-message results on changes and reconnect.
+
 ## PLAT-08 · Offline shell
 
 The app manifest declares a standalone start URL and 192 and 512 pixel icons. The service worker keeps a single public offline document in its cache. A same-origin navigation falls back to that document when the network fails. The document links back to the app so users can retry once connected. Authenticated HTML, API responses, attachment bytes, and message content are excluded from the cache.

@@ -13,11 +13,21 @@ const searchOptions=[['all','All content'],['direct','Direct messages'],['channe
 type Notification = { id:number; kind:string; meeting_id:string; created_at:string; read_at:string|null }
 const notificationText:Record<string,string>={'meeting.scheduled':'A workspace meeting was scheduled','meeting.admitted':'The host admitted you to a meeting','meeting.declined':'A host declined your meeting request'}
 
-export function GlobalSearch({ openChat,openMeeting }: { openChat:(id:string)=>void;openMeeting:(id:string)=>void }) {
+function highlight(text:string,terms:string) {
+  if(!terms)return text
+  const escaped=terms.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
+  return text.split(new RegExp('('+escaped+')','giu')).map((part,index)=>
+    index%2===1?<mark key={index}>{part}</mark>:part)
+}
+
+export function GlobalSearch({ openChat,openMeeting,openPalette,initialQuery='' }: {
+  openChat:(id:string)=>void;openMeeting:(id:string)=>void;openPalette:()=>void;initialQuery?:string
+}) {
   const [results,setResults]=useState<Result[]|null>(null)
   const [kind,setKind]=useState<SearchKind>('all')
-  const [query,setQuery]=useState('')
+  const [query,setQuery]=useState(initialQuery)
   const [view,setView]=useState<'search'|'saved'>('search')
+  const [matchedQuery,setMatchedQuery]=useState('')
   const [saved,setSaved]=useState<SavedSearch[]|null>(null)
   const [loading,setLoading]=useState(false)
   const [editing,setEditing]=useState(false)
@@ -29,24 +39,41 @@ export function GlobalSearch({ openChat,openMeeting }: { openChat:(id:string)=>v
     setSaved(data as SavedSearch[])
   },[])
   useEffect(()=>{if(view==='saved')void refreshSaved()},[view,refreshSaved])
-  async function search(terms:string,category:SearchKind) {
-    setLoading(true);setError('')
+  const search=useCallback(async(terms:string,category:SearchKind)=>{
+    setLoading(true);setError('');setResults(null)
     try {
-      const {data,error}=await db!.rpc('st_v3_search',{p_query:terms,p_kind:category==='all'?null:category})
+      const {data,error}=await db!.rpc('st_v6_search',{p_query:terms,p_kind:category==='all'?null:category})
       if(error) throw error
-      const rows=data as Result[]
-      const ids=rows.filter(row=>row.kind==='direct').map(row=>row.id)
-      if(!ids.length){setResults(rows);return}
-      const [hidden,removed]=await Promise.all([
-        db!.from('st_v5_hidden_messages').select('message_id').in('message_id',ids),
-        db!.from('st_messages').select('id').in('id',ids).not('revoked_at','is',null),
-      ])
-      if(hidden.error||removed.error)throw new Error('Search privacy check failed')
-      const excluded=new Set([...hidden.data.map(row=>row.message_id),...removed.data.map(row=>row.id)])
-      setResults(rows.filter(row=>row.kind!=='direct'||!excluded.has(row.id)))
+      setMatchedQuery(terms.trim());setResults(data as Result[])
     } catch {setError('Search is unavailable. Try again.')}
     finally {setLoading(false)}
-  }
+  },[])
+  useEffect(()=>{if(initialQuery)void search(initialQuery,'all')},[initialQuery,search])
+
+  const directIds=results?.filter(row=>row.kind==='direct').map(row=>row.id).sort().join(',')
+  useEffect(()=>{
+    if(view!=='search'||!directIds)return
+    let active=true
+    let version=0
+    const refresh=async()=>{
+      const request=++version
+      const {data,error}=await db!.rpc('st_v6_search',{p_query:matchedQuery,p_kind:kind==='all'?null:kind})
+      if(!active||request!==version)return
+      if(error){setResults(null);setError('Search is unavailable. Try again.');return}
+      setResults(data as Result[])
+    }
+    const channel=liveChannel('search-results:'+crypto.randomUUID(),refresh)
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'st_messages',filter:'id=in.('+directIds+')'},event=>{
+        if(event.new.revoked_at){
+          ++version
+          setResults(current=>current?.filter(row=>row.kind!=='direct'||row.id!==event.new.id)||null)
+        }else void refresh()
+      }).subscribe(status=>{if(status==='SUBSCRIBED')void refresh()})
+    const reconnect=onReconnect(refresh)
+    const timer=window.setInterval(()=>{if(document.visibilityState==='visible')void refresh()},15000)
+    return ()=>{active=false;clearInterval(timer);reconnect();void db!.removeChannel(channel)}
+  },[directIds,kind,matchedQuery,view])
+
   async function saveSearch() {
     if(editing||query.trim().length<2)return
     setEditing(true);setError('');setNotice('')
@@ -58,7 +85,9 @@ export function GlobalSearch({ openChat,openMeeting }: { openChat:(id:string)=>v
     finally{setEditing(false)}
   }
   return <section className="content-page">
-    <header className="content-title"><div className="card-icon"><Search size={22}/></div><div><h1>Search</h1><p>Find messages, channel posts, board items, and meetings you can access.</p></div></header>
+    <header className="content-title"><div className="card-icon"><Search size={22}/></div><div><h1>Search</h1><p>Find messages, channel posts, board items, and meetings you can access.</p>
+      <button className="secondary" type="button" aria-keyshortcuts="Control+K Meta+K" onClick={openPalette}>Open command palette</button>
+    </div></header>
     <SectionTabs label="Search tabs" value={view} onChange={next=>{if(!loading&&!editing){setView(next);setError('');setNotice('')}}}
       options={ [['search','Search SecTalk'],['saved','Saved searches']] }/>
     {error&&<p role="alert" className="error">{error}</p>}
@@ -93,8 +122,8 @@ export function GlobalSearch({ openChat,openMeeting }: { openChat:(id:string)=>v
     </form>
     {results?.length===0&&<p role="status">No matching items.</p>}
     {results?.map(item=><article className="panel release-panel" key={item.kind+item.id}>
-      <div className="release-row"><h2>{item.title}</h2><time dateTime={item.at}>{new Date(item.at).toLocaleString()}</time></div>
-      <p className="meeting-agenda">{item.snippet}</p>
+      <div className="release-row"><h2>{highlight(item.title,matchedQuery)}</h2><time dateTime={item.at}>{new Date(item.at).toLocaleString()}</time></div>
+      <p className="meeting-agenda">{highlight(item.snippet,matchedQuery)}</p>
       {item.kind==='meeting'&&<button className="secondary" onClick={()=>openMeeting(item.id)}>View meeting</button>}
       {item.kind==='direct'&&<button className="secondary" onClick={()=>openChat(item.scope_id)}>Open conversation</button>}
     </article>)}

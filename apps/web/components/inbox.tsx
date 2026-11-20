@@ -19,6 +19,7 @@ import { FilesLibrary } from './files-library'
 import { GlobalSearch, Notifications } from './discover'
 import { ScopedTasks } from './scoped-tasks'
 import { SectionTabs } from './section-tabs'
+import { CommandPalette, type Command } from './command-palette'
 import { downloadChatFile, extensions, sendChatFile, supportedFile, type ChatFile } from '../lib/chat-files'
 import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
@@ -47,6 +48,8 @@ export function Inbox({ user }: { user: string }) {
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
   const [taskSection,setTaskSection]=useState<'scoped'|'workspace'>('scoped')
+  const [paletteOpen,setPaletteOpen]=useState(false)
+  const [paletteSearch,setPaletteSearch]=useState({query:'',sequence:0})
   const [chatTasks,setChatTasks]=useState(false)
   const [sourceTask,setSourceTask]=useState<string|null>(null)
   const [profileTab, setProfileTab] = useState<'account' | 'availability' | 'discovery' | 'activity' | 'blocked'>('account')
@@ -164,9 +167,9 @@ export function Inbox({ user }: { user: string }) {
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='k' && !document.querySelector('dialog[open]')) {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase()==='k' && !document.querySelector('dialog[open]')) {
         event.preventDefault()
-        setTab('search')
+        setPaletteOpen(true)
       }
     }
     window.addEventListener('keydown',shortcut)
@@ -208,6 +211,31 @@ export function Inbox({ user }: { user: string }) {
     (!search || [profiles[peerId(item, user)]?.name, profiles[peerId(item, user)]?.handle]
       .some(value => value?.toLowerCase().includes(search.toLowerCase().trim()))))
   const callerId = call.call ? (call.call.caller === user ? call.call.callee : call.call.caller) : ''
+
+  function showSearch(query='') {
+    setPaletteSearch(previous=>({query,sequence:previous.sequence+1}))
+    setTab('search')
+  }
+
+  const destinations=[
+    ['inbox','Inbox','chats messages'],['friends','Friends','contacts people'],['calls','Calls','audio video history'],
+    ['workspaces','Workspaces','organizations'],['rooms','Rooms','channels'],['tasks','Tasks','board assignments'],
+    ['calendar','Calendar','schedule'],['meetings','Meetings','video'],['vault','Files','attachments vault'],
+    ['notifications','Notifications','updates'],['safety','Safety','reports'],['billing','Billing','plans subscription'],
+    ['profile','Profile','settings account'],
+  ] as const
+  const commands:Command[]=[
+    ...destinations.map(([destination,label,keywords])=>({label:'Go to '+label,keywords,run:()=>{
+      if(destination==='meetings')setRequestedMeeting(null)
+      setTab(destination)
+    }})),
+    {label:'Open saved messages',keywords:'bookmarks',run:()=>setTab('saved')},
+    {label:'Review incoming contact requests',keywords:'friends',run:openRequests},
+    {label:'Open advanced search',keywords:'find filters',run:()=>showSearch()},
+  ]
+  if(acceptedChat)commands.push({label:'Open tasks for this chat',keywords:'assignments',run:()=>{
+    setSourceTask(null);setChatTasks(true);setTab('inbox')
+  }})
 
   function select(id: string | null) {
     setSelected(id)
@@ -273,7 +301,7 @@ export function Inbox({ user }: { user: string }) {
       <button className={tab==='calendar'?'active':''} aria-current={tab==='calendar'?'page':undefined} onClick={()=>setTab('calendar')}><CalendarDays size={19}/><span>Calendar</span></button>
       <button className={tab==='meetings'?'active':''} aria-current={tab==='meetings'?'page':undefined} onClick={()=>{setRequestedMeeting(null);setTab('meetings')}}><CalendarDays size={19}/><span>Meetings</span></button>
       <button className={tab==='vault'?'active':''} aria-current={tab==='vault'?'page':undefined} onClick={()=>setTab('vault')}><Folder size={19}/><span>Files</span></button>
-      <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} title="Search (Ctrl or Command + K)" onClick={()=>setTab('search')}><Search size={19}/><span>Search</span></button>
+      <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} onClick={()=>showSearch()}><Search size={19}/><span>Search</span></button>
       <button className={tab==='notifications'?'active':''} aria-current={tab==='notifications'?'page':undefined} onClick={()=>setTab('notifications')}><Bell size={19}/><span>Notifications</span></button>
       <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>Safety</span></button>
       <div className="rail-end"><button className={tab === 'billing' ? 'active' : ''} aria-current={tab === 'billing' ? 'page' : undefined} onClick={() => setTab('billing')}><CreditCard size={19} /><span>Billing</span></button><button className={tab === 'profile' ? 'active' : ''} aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}><UserRound size={20} /><span>Profile</span></button>
@@ -348,7 +376,7 @@ export function Inbox({ user }: { user: string }) {
       tab === 'billing' ? <Billing user={user} /> :
       tab === 'meetings' ? <Meetings key={requestedMeeting||'all'} requested={requestedMeeting} user={user}/> :
       tab === 'vault' ? <FilesLibrary user={user} openChat={select}/> :
-      tab === 'search' ? <GlobalSearch openChat={select} openMeeting={openMeeting}/> :
+      tab === 'search' ? <GlobalSearch key={paletteSearch.sequence} initialQuery={paletteSearch.query} openChat={select} openMeeting={openMeeting} openPalette={()=>setPaletteOpen(true)}/> :
       tab === 'notifications' ? <Notifications user={user} openMeeting={openMeeting}/> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
@@ -393,6 +421,7 @@ export function Inbox({ user }: { user: string }) {
         void run('st_set_block',{p_chat:managedBlock.id,p_block:block},()=>{setManagedBlock(null);setNotice(block?'Contact blocked.':'Contact unblocked.')})
       }}>{blocks.includes(peerId(managedBlock,user))?'Unblock':'Block'}</button>
     </Dialog>}
+    {paletteOpen&&<CommandPalette commands={commands} onClose={()=>setPaletteOpen(false)} onSearch={showSearch}/>}
     {report && <ReportDialog chat={report.chat} message={report.message} file={report.file} close={() => setReport(null)} inform={setNotice} />}
     {call.call && <CallPanel key={call.call.id} state={call} self={user} name={profiles[callerId]?.name || 'Contact'}
       openChat={select} reportContact={chatId => setReport({chat:chatId,message:null})} />}
