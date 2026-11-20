@@ -7,7 +7,7 @@
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
 | Unit tests | 26 passed, including credential detection, provider log redaction and the existing safety, locale, file and readiness checks |
-| Supabase database integration | All 47 rollback suites passed, including read receipts, personal attachments, authenticator recovery and warning proposals |
+| Supabase database integration | All 54 checkpoint rollback suites passed, including private drafts, notification delivery controls, tenant cache and analytics |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -69,7 +69,12 @@
 | Locale scaffold | Browser verified English and Arabic switching and persistence across reload, preserved form input, mobile signed-in navigation and the Help shortcut count. Unit tests exercised all six Arabic ICU plural forms. |
 | Local database security advisor | No warning or error reported for the isolated candidate at test time. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
-| Updated candidate | `npm run build` passed with scoped receipts, account authenticators, attachment fingerprints, warning proposals and redacted provider diagnostics. |
+| Encrypted drafts | Two sessions verified private synchronization, reload restore, conflict resolution and clearing after send. SQL verified encrypted storage, account and thread isolation and stale-save denial. |
+| Notifications | Browser and SQL verified category persistence, mandatory priority, alert ordering, and real browser acknowledgments in the admin-room audit. |
+| Meeting preview and presenting | Loopback LiveKit and Edge verified media devices, real GPU background blur, network checks, single-presenter claims and permission-loss cleanup. Native capture selection was simulated. |
+| Tenant operations and cache | Real TOTP and SQL verified metadata-only permissions, TTL, version and tenant isolation, and invalidation on roster updates. |
+| Analytics | Edge and local cron verified minute-based delivery and usage refresh and WebSocket recovery. SQL and browser tested rounded weekly threat-reporting and enforcement counts. |
+| Updated candidate | `npm run build` passed with synchronized drafts, private notification controls, media checks and scoped analytics. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |
 | Production npm dependency advisory check | 0 reported advisories at test time |

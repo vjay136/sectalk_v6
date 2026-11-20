@@ -32,6 +32,7 @@ import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
 import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
 import { AccountMfa } from './account-mfa'
+import { DraftStatus, notifyDraftChange, useSyncedDraft } from './synced-draft'
 import { QuietHoursSettings, useEffectiveAvailability, useQuietIncoming } from './quiet-hours'
 
 const ChatEmoji=dynamic(()=>import('./chat-emoji'))
@@ -70,6 +71,7 @@ export function Inbox({ user }: { user: string }) {
   const [managedBlock,setManagedBlock]=useState<Chat|null>(null)
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
+  const [priorityNotice, setPriorityNotice] = useState<{message: string; priority: 'high' | 'critical'} | null>(null)
   const [onboarding,setOnboarding]=useState(false)
   const [report, setReport] = useState<{ chat: string; message: Message | null; file?:ChatFile } | null>(null)
   const [lastSeen,setLastSeen]=useState<{chat:string;at:string}|null>(null)
@@ -84,13 +86,21 @@ export function Inbox({ user }: { user: string }) {
   const announced = useRef(new Map<string, string>())
   const readVersion = useRef(0)
   const [hints] = useState(() => new EventTarget())
+  const announceAlert = useCallback((message: string, priority: unknown) => {
+    if (priority === 'high' || priority === 'critical') {
+      setPriorityNotice(current => current?.priority === 'critical' && priority === 'high' ? current : {message, priority})
+    } else setNotice(message)
+  }, [])
+  const acknowledgeAdminAlert = useCallback(async (receipt: unknown) => {
+    if (typeof receipt === 'string') await db!.rpc('st_v6_ack_admin_notification', {p_receipt: receipt})
+  }, [])
   const offlineMessages=useOfflineMessages(user,hints)
   const call = useCalling(user, setNotice, hints)
   useEffect(() => { activeChat.current = tab === 'inbox' ? selected : null }, [tab, selected])
   const refreshInboxStatus = useCallback(async (changedChat?: string) => {
     const [{ data, error }, quiet] = await Promise.all([
       db!.rpc('st_v2_inbox_status'),
-      changedChat ? db!.rpc('st_v6_quiet_active', { p_chat: changedChat }) : null,
+      changedChat ? db!.rpc('st_v6_direct_alert_quiet', { p_chat: changedChat, p_category: 'dm' }) : null,
     ])
     if (error) return
     setInboxStatus(Object.fromEntries((data as InboxStatus[]).map(row => [row.chat_id,row])))
@@ -150,14 +160,29 @@ export function Inbox({ user }: { user: string }) {
       .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
       .on('broadcast', { event: 'presence' }, () => { hints.dispatchEvent(new Event('presence')); void refresh() })
       .on('broadcast', { event: 'availability' }, () => hints.dispatchEvent(new Event('availability')))
+      .on('broadcast', { event: 'draft_change' }, ({payload}) => notifyDraftChange(payload||{}))
       .on('broadcast', { event: 'room_activity' }, ({ payload }) => {
         if (typeof payload?.room_id === 'string') {
-          setNotice(payload.mention_kind==='mention.user'?'You were mentioned directly in a room.':
-            typeof payload.mention_kind==='string'?'You received a room mention.':'New activity in one of your rooms.')
+          announceAlert(payload.mention_kind==='mention.user'?'You were mentioned directly in a room.':
+            typeof payload.mention_kind==='string'?'You received a room mention.':'New activity in one of your rooms.',
+            payload.priority)
+          void acknowledgeAdminAlert(payload.receipt_id)
         }
       })
       .on('broadcast', { event: 'channel_activity' }, ({ payload }) => {
         if (typeof payload?.channel_id === 'string') setNotice('New activity in one of your workspace channels.')
+      })
+      .on('broadcast', { event: 'category_alert' }, ({ payload }) => {
+        void acknowledgeAdminAlert(payload?.receipt_id)
+        switch (payload?.kind) {
+          case 'thread.reply': announceAlert('New reply in a thread you follow.',payload.priority); break
+          case 'task.completed': announceAlert('A task you follow was completed.',payload.priority); break
+          case 'task.due': announceAlert('A task is due soon.',payload.priority); break
+          case 'security.report': announceAlert('One of your Safety reports has an update.',payload.priority); break
+          case 'security.account': announceAlert('There is a new account notice in your Safety center.',payload.priority); break
+          case 'billing.subscription': announceAlert('Your subscription has an update.',payload.priority); break
+          case 'admin.room': announceAlert('New activity in a workspace admin room.',payload.priority); break
+        }
       })
       .on('broadcast', { event: 'workspace_memberships' }, () => { void reloadWorkspaces(); void refresh() })
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
@@ -195,7 +220,7 @@ export function Inbox({ user }: { user: string }) {
       void db!.removeChannel(account)
       void db!.removeChannel(channel)
     }
-  }, [user, refresh, hints, refreshInboxStatus, reloadWorkspaces])
+  }, [user, refresh, hints, refreshInboxStatus, reloadWorkspaces, announceAlert, acknowledgeAdminAlert])
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -459,7 +484,7 @@ export function Inbox({ user }: { user: string }) {
       tab === 'meetings' ? <Meetings key={requestedMeeting||'all'} requested={requestedMeeting} user={user}/> :
       tab === 'vault' ? <FilesLibrary user={user} openChat={select}/> :
       tab === 'search' ? <GlobalSearch key={paletteSearch.sequence} initialQuery={paletteSearch.query} openChat={select} openMeeting={openMeeting} openPalette={()=>setPaletteOpen(true)}/> :
-      tab === 'notifications' ? <Notifications user={user} openMeeting={openMeeting} openRoom={openRoom} openChat={select}/> :
+      tab === 'notifications' ? <Notifications user={user} hints={hints} openMeeting={openMeeting} openRoom={openRoom} openChat={select}/> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
         <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={peerExtras.photo}/>
@@ -500,7 +525,12 @@ export function Inbox({ user }: { user: string }) {
       </section> : <section className="thread"><header className="thread-header default-header"><h2>Messages</h2><span className="pill"><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} />{online || broadcastOnline ? 'Live updates' : 'Syncing'}</span></header>
         <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>{t('yourConversations')}</h2><p>{t('conversationWelcome')}</p><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> {t('findFriends')}</button><button className="secondary" onClick={showHelp}>{t('gettingStarted')}</button></div>
       </section>}
-    {notice && <div className="toast" role="status"><CircleHelp size={18} /><span>{notice}</span><button className="icon" aria-label="Dismiss notice" onClick={() => setNotice('')}><X size={17}/></button></div>}
+    {(priorityNotice || notice) && <div className="toast" role={priorityNotice?.priority === 'critical' ? 'alert' : 'status'}>
+      <CircleHelp size={18} aria-hidden="true" />
+      <div>{priorityNotice && <><strong>{priorityNotice.priority === 'critical' ? 'Critical security notice' : 'High-priority alert'}</strong><br/></>}
+        <span>{priorityNotice?.message ?? notice}</span></div>
+      <button className="icon" aria-label="Dismiss notice" onClick={() => priorityNotice ? setPriorityNotice(null) : setNotice('')}><X size={17}/></button>
+    </div>}
     {managedBlock&&<Dialog title={blocks.includes(peerId(managedBlock,user))?'Unblock contact?':'Block contact?'} close={()=>setManagedBlock(null)}>
       <p>{blocks.includes(peerId(managedBlock,user))?'Allow new messages and calls from this contact.':'Stop new messages and calls from this contact.'}</p>
       <button className="danger" type="button" disabled={working} onClick={()=>{
@@ -637,7 +667,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   forwardDestinations:ForwardDestination[]
 }) {
   const [messages, setMessages] = useState<DirectMessage[]>([])
-  const [draft, setDraft] = useState('')
+  const syncedDraft=useSyncedDraft(self,'chat',chat.id,null,!blocked)
+  const draft=syncedDraft.body
   const [loaded, setLoaded] = useState(false)
   const [activity, setActivity] = useState<ChatActivity | null>(null)
   const [reactions, setReactions] = useState<Reaction[]>([])
@@ -900,7 +931,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   }
 
   async function changeDraft(value: string) {
-    setDraft(value)
+    syncedDraft.change(value)
     if (blocked || !activity?.share_own_typing || typingPolicyBusy || !navigator.onLine) return
     if (!value.trim()) {
       await stopTyping()
@@ -978,7 +1009,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         setBusy(false)
       }
     }
-    setDraft(previous=>previous.trim()===body?'':previous)
+    syncedDraft.clear(body)
     setReplying(current=>current?.id===reply?null:current)
     void stopTyping()
   }
@@ -1004,7 +1035,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     if(error)throw error
     if(data==='failed'||data==='cancelled')throw new Error('This attempt has closed. Choose a new date and time.')
     pendingSchedule.current=null
-    setDraft(previous=>previous.trim()===body?'':previous)
+    syncedDraft.clear(body)
     void stopTyping()
   }
 
@@ -1223,6 +1254,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     {scheduleOpen&&<Dialog title="Scheduled messages" close={()=>setScheduleOpen(false)}>
       <ScheduledMessages chat={chat.id} draft={draft.trim()} schedule={schedule} canSchedule={!blocked&&Boolean(draft.trim())&&!replying&&!attachment}/>
     </Dialog>}
+    <DraftStatus draft={syncedDraft}/>
     <form className="composer" onSubmit={send}>
       <input ref={filePicker} hidden type="file" accept={extensions} onChange={event=>{
         const file=event.target.files?.[0]
@@ -1236,7 +1268,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         if(composerInput.current)cursor.current={start:composerInput.current.selectionStart,end:composerInput.current.selectionEnd}
         setEmoji(true)
       }}><Smile size={20}/></button>
-      <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => void changeDraft(e.target.value)} onKeyDown={event => {
+      <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => void changeDraft(e.target.value)} onBlur={syncedDraft.flush} onKeyDown={event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
       }} />
       <button type="button" className="icon" title="Scheduled messages" aria-label="Scheduled messages" onClick={()=>setScheduleOpen(true)}><CalendarClock size={19}/></button>

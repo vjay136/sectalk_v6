@@ -11,8 +11,10 @@ import { SectionTabs } from './section-tabs'
 import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
 import { MeetingEngagement } from './meeting-engagement'
 import { MeetingCollaboration } from './meeting-collaboration'
+import type { MeetingChoices } from './meeting-prejoin'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
+const MeetingPrejoin = dynamic(() => import('./meeting-prejoin'), { ssr: false })
 type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null }
 type Attendance = { user_id:string; status:'waiting'|'admitted'|'declined'|'left'; requested_at:string; admitted_at:string|null; left_at:string|null }
 export function Meetings({ user, requested }: { user:string; requested:string|null }) {
@@ -155,7 +157,7 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
   const [profiles,setProfiles]=useState<Record<string,Profile>>({})
   const [error,setError]=useState('')
   const [busy,setBusy]=useState(false)
-  const [media,setMedia]=useState<{url:string;token:string}|null>(null)
+  const [media,setMedia]=useState<{url:string;token:string;choices:MeetingChoices}|null>(null)
   const [focus,setFocus]=useState<string|null>(null)
   const [lobbyNotice,setLobbyNotice]=useState('')
   const [calendarNotice,setCalendarNotice]=useState('')
@@ -196,15 +198,18 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
     } catch(error){setError(formatError(error,'The meeting action failed.'))}
     finally{setBusy(false)}
   }
-  async function connect() {
+  async function requestMedia(networkCheck = false, signal?: AbortSignal) {
+    const {data}=await db!.auth.getSession()
+    const result=await fetch('/api/meetings/token',{method:'POST',signal,headers:{'Content-Type':'application/json',Authorization:'Bearer '+data.session?.access_token},body:JSON.stringify({meetingId:meeting.id,networkCheck})})
+    const value=await result.json()
+    if(!result.ok) throw new Error(value.error||'Could not join the call.')
+    return value as {url:string;token:string}
+  }
+  async function connect(choices: MeetingChoices) {
     if(busy || !mediaReady) return
     setBusy(true);setError('')
     try {
-      const {data}=await db!.auth.getSession()
-      const result=await fetch('/api/meetings/token',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+data.session?.access_token},body:JSON.stringify({meetingId:meeting.id})})
-      const value=await result.json()
-      if(!result.ok) throw new Error(value.error||'Could not join the call.')
-      setMedia(value)
+      setMedia({...await requestMedia(),choices})
     } catch(error){setError(formatError(error,'Could not join the call.'))}
     finally{setBusy(false)}
   }
@@ -245,10 +250,12 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
       {(!host || meeting.status==='live') && (!self||self==='left') && <button className="secondary" disabled={busy} onClick={()=>void action('st_v3_request_admission',{})}>{host?'Rejoin meeting':'Request admission'}</button>}
       {self==='waiting' && <span role="status">Waiting for the host to admit you</span>}
       {self==='declined' && <span role="status">The host declined your request</span>}
-      {self==='admitted' && meeting.status==='live' && !media && <button className="primary" disabled={busy||!mediaReady} onClick={()=>void connect()}>{mediaReady?'Join audio and video':'Live media unavailable'}</button>}
+      {self==='admitted' && meeting.status==='live' && !mediaReady && <span role="status">Live media unavailable</span>}
       {(self==='admitted'||self==='waiting') && <button className="secondary" disabled={busy} onClick={()=>{setMedia(null);void action('st_v3_leave',{})}}>Leave</button>}
     </div>}
-    {media && self==='admitted' && !ended && <MeetingMedia {...media} focus={focus} leave={refreshMedia}/>}
+    {self==='admitted' && meeting.status==='live' && !ended && mediaReady && !media &&
+      <MeetingPrejoin busy={busy} join={connect} requestMedia={requestMedia}/>}
+    {media && self==='admitted' && !ended && <MeetingMedia {...media} meeting={meeting.id} focus={focus} leave={refreshMedia}/>}
     {self==='admitted'&&meeting.status==='live'&&!ended&&<>
       <MeetingCollaboration meeting={meeting.id} user={user} host={host} setFocus={setFocus}/>
       <MeetingEngagement meeting={meeting.id} user={user}/>

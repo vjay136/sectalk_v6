@@ -1,4 +1,4 @@
-const services = new Set(['meeting_access','meeting_signing','call_networking'])
+const services = new Set(['meeting_access','meeting_signing','meeting_screen_share','call_networking'])
 const failureTypes = new Set(['unavailable','signing_failed'])
 
 /** Serialize only the reviewed diagnostic fields. Never serialize an Error, request, or provider response. */

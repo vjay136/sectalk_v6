@@ -38,3 +38,58 @@
   padding: 16px;
   text-align: center;
 }
+
+.prejoin {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  width: 100%;
+}
+
+.prejoin h3,
+.prejoin p {
+  margin: 0;
+}
+
+.devices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: start;
+  gap: 12px;
+  width: 100%;
+}
+
+.devices > div {
+  display: grid;
+  align-items: start;
+  gap: 8px;
+}
+
+.devices select,
+.devices meter {
+  width: 100%;
+}
+
+.cameraPreview {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #181c21;
+  border-radius: 8px;
+  object-fit: contain;
+  transform: scaleX(-1);
+}
+
+.screenShare {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.screenShare label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

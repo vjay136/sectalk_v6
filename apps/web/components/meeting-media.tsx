@@ -6,11 +6,14 @@ import {
 } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 import { MoreHorizontal, Signal, VideoOff } from 'lucide-react'
+import { useState } from 'react'
 import '@livekit/components-styles'
 import { useMeetingNetwork } from './meeting-network'
+import { deviceConstraint, type MeetingChoices } from './meeting-prejoin'
+import { MeetingScreenShare } from './meeting-screen-share'
 import styles from './meeting-media.module.css'
 
-function ConferenceStage({ focus }: { focus: string | null }) {
+function ConferenceStage({ focus, meeting }: { focus: string | null; meeting: string }) {
   const network = useMeetingNetwork()
   const tracks = useTracks([
     { source: Track.Source.Camera, withPlaceholder: true },
@@ -42,7 +45,8 @@ function ConferenceStage({ focus }: { focus: string | null }) {
       </div> : <div className={`lk-grid-layout-wrapper ${styles.videoStage}`}>
         <GridLayout tracks={tracks}><ParticipantTile/></GridLayout>
       </div>}
-      <ControlBar controls={{ microphone: true, camera: true, screenShare: true, chat: false, leave: true }}
+      <MeetingScreenShare meeting={meeting} presenting={tracks.some(track => track.source === Track.Source.ScreenShare && !track.participant.isLocal)}/>
+      <ControlBar controls={{ microphone: true, camera: true, screenShare: false, chat: false, leave: true }}
         saveUserChoices={false}/>
     </div>
     <RoomAudioRenderer/>
@@ -50,17 +54,27 @@ function ConferenceStage({ focus }: { focus: string | null }) {
   </div>
 }
 
-export default function MeetingMedia({ url, token, focus, leave }: {
-  url: string; token: string; focus: string | null; leave: () => void
+export default function MeetingMedia({ url, token, focus, choices, meeting, leave }: {
+  url: string; token: string; focus: string | null; choices: MeetingChoices; meeting: string; leave: () => void
 }) {
+  const [mediaError, setMediaError] = useState('')
+  const configuredRoom = {
+    ...roomOptions,
+    audioCaptureDefaults: { deviceId: deviceConstraint(choices.microphone) },
+    videoCaptureDefaults: { deviceId: deviceConstraint(choices.camera), processor: choices.processor },
+    audioOutput: choices.speaker ? { deviceId: choices.speaker } : undefined,
+  }
   return <div className="meeting-media" data-lk-theme="default">
+    {mediaError && <p className={styles.networkStatus} role="status">{mediaError}</p>}
     <details className="call-menu meeting-call-menu">
       <summary className="secondary" aria-label="Meeting call menu"><MoreHorizontal size={17}/> Call menu</summary>
       <div className="message-menu-panel"><button className="text-button remove-text" type="button" onClick={leave}>Disconnect from media</button></div>
     </details>
-    <LiveKitRoom serverUrl={url} token={token} connect audio={false} video={false}
-      options={roomOptions} onDisconnected={leave} onError={leave}>
-      <ConferenceStage focus={focus}/>
+    <LiveKitRoom serverUrl={url} token={token} connect audio={choices.audio} video={choices.video}
+      options={configuredRoom} onDisconnected={leave}
+      onMediaDeviceFailure={() => setMediaError('A selected media device could not start. Check your permissions and devices.')}
+      onError={() => setMediaError('Could not start meeting media. Check your devices or reconnect.')}>
+      <ConferenceStage focus={focus} meeting={meeting}/>
     </LiveKitRoom>
   </div>
 }

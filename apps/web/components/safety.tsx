@@ -10,6 +10,9 @@ import { DeliveryLatency } from './delivery-latency'
 import { UsageMetrics } from './usage-metrics'
 import { ReleaseControls } from './release-controls'
 import { RiskFeedback } from './risk-feedback'
+import { TenantOperations } from './tenant-operations'
+import { useAnalyticsStream } from '../lib/live-analytics'
+import { ThreatTrends } from './threat-trends'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
@@ -62,11 +65,13 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 export function Safety({ staff, refresh }: { staff: string; refresh: () => Promise<void> }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends'>('mine')
   const [flagOperator,setFlagOperator]=useState(false)
+  const [tenantStatus,setTenantStatus]=useState<'none' | 'mfa' | 'verified'>('none')
   const [selected,setSelected]=useState<Report|null>(null)
   const [timeline,setTimeline]=useState<TimelineItem[]|null>(null)
   const [notices,setNotices]=useState<Notice[]>([])
+  const analyticsRevision = useAnalyticsStream(staff === 'verified')
 
   const load = useCallback(async () => {
     const [reports,account]=await Promise.all([
@@ -102,18 +107,36 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
     return()=>{active=false}
   },[staff])
   const releaseAccess=staff==='verified'&&flagOperator
-  const visibleView=((view==='latency'||view==='usage'||view==='feedback')&&staff!=='verified')||(view==='queue'&&!staffAccess)
-    ||(view==='release'&&!releaseAccess)?'mine':view
+  const refreshTenantStatus = useCallback(async (isCurrent: () => boolean = () => true) => {
+    const { data, error } = await db!.rpc('st_v6_tenant_operations_status')
+    if (isCurrent()) setTenantStatus(!error && (data === 'mfa' || data === 'verified') ? data : 'none')
+  }, [])
+  useEffect(() => {
+    let current = true
+    const update = () => void refreshTenantStatus(() => current)
+    update()
+    const timer = window.setInterval(update, 15000)
+    return () => { current = false; window.clearInterval(timer) }
+  }, [refreshTenantStatus])
+  const visibleView=((view==='latency'||view==='usage'||view==='feedback'||view==='trends')&&staff!=='verified')||(view==='queue'&&!staffAccess)
+    ||(view==='release'&&!releaseAccess)||(view==='tenants'&&tenantStatus==='none')?'mine':view
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
     <SectionTabs label="Safety center sections" value={visibleView} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
       ['mine','My reports'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
-      ...(staff==='verified'?[['latency','Delivery metrics'] as const,['usage','Usage metrics'] as const,['feedback','Warning feedback'] as const]:[]),
+      ...(staff==='verified'?[['latency','Delivery metrics'] as const,['usage','Usage metrics'] as const,
+        ['feedback','Warning feedback'] as const,['trends','Threat trends'] as const]:[]),
       ...(releaseAccess?[['release','Release controls'] as const]:[]),
+      ...(tenantStatus!=='none'?[['tenants','Tenant operations'] as const]:[]),
     ]}/>
-    {visibleView==='latency'?<DeliveryLatency/>:visibleView==='usage'?<UsageMetrics/>:visibleView==='release'?<ReleaseControls/>:
+    {visibleView==='latency'?<DeliveryLatency revision={analyticsRevision}/>:visibleView==='usage'?<UsageMetrics revision={analyticsRevision}/>:visibleView==='release'?<ReleaseControls/>:
       visibleView==='feedback'?<RiskFeedback/>:
+      visibleView==='trends'?<ThreatTrends/>:
+      visibleView==='tenants' ? (tenantStatus === 'verified'
+        ? <TenantOperations onAccessChanged={refreshTenantStatus}/>
+        : <StaffMfa refresh={async () => { await refreshTenantStatus(); await refresh() }}
+          explanation="An authenticator code is required to view workspace metadata."/>) :
       visibleView==='queue' ? (staff === 'verified' ? <QueuePanel /> : <StaffMfa refresh={refresh}/>) :
       visibleView==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
         {error&&<p role="alert" className="error">{error}</p>}
@@ -143,7 +166,8 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
   </section>
 }
 
-function StaffMfa({ refresh }: { refresh: () => Promise<void> }) {
+function StaffMfa({ refresh, explanation = 'An authenticator code is required to review reports or change account restrictions.' }:
+  { refresh: () => Promise<void>; explanation?: string }) {
   const [setup, setSetup] = useState<{ id: string; qr_code: string; secret: string } | null>(null)
   const [factor, setFactor] = useState('')
   const [loaded, setLoaded] = useState(false)
@@ -186,7 +210,7 @@ function StaffMfa({ refresh }: { refresh: () => Promise<void> }) {
     setBusy(false)
   }
 
-  return <div className="panel mfa-panel"><div className="card-icon"><ShieldCheck size={22}/></div><h2>Verify staff access</h2><p>An authenticator code is required to review reports or change account restrictions.</p>
+  return <div className="panel mfa-panel"><div className="card-icon"><ShieldCheck size={22}/></div><h2>Verify staff access</h2><p>{explanation}</p>
     {setup && <div className="mfa-setup"><img src={setup.qr_code} alt="Scan with your authenticator app" width={180} height={180}/><p>Manual setup key</p><code>{setup.secret}</code></div>}
     {factor ? <form onSubmit={verify}><label>Authenticator code<input name="code" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required /></label><button className="primary" disabled={busy}>Verify access <ArrowRight size={16}/></button></form> :
       <button className="primary" disabled={busy || !loaded} onClick={enroll}>Set up authenticator</button>}

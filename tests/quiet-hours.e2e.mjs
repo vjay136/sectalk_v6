@@ -95,7 +95,7 @@ try {
     await scope.getByText(regularNotice, { exact: true }).waitFor()
   }
   async function waitForQuietDecision(page, chatId, action) {
-    const response = page.waitForResponse(result => result.ok() && result.url().endsWith('/rpc/st_v6_quiet_active')
+    const response = page.waitForResponse(result => result.ok() && result.url().endsWith('/rpc/st_v6_direct_alert_quiet')
       && result.request().postDataJSON().p_chat === chatId)
     await action()
     const result = await response
@@ -153,7 +153,7 @@ try {
   }), true)
   await ownerPage.getByText('Ringing', { exact: true }).waitFor()
   assert.equal(await ownerPage.getByRole('region', { name: 'Audio call', exact: true }).count(), 0)
-  const ending = ownerPage.waitForResponse(result => result.ok() && result.url().endsWith('/rpc/st_v6_quiet_active'))
+  const ending = ownerPage.waitForResponse(result => result.ok() && result.url().endsWith('/rpc/st_v6_direct_alert_quiet'))
   data(await peer.client.rpc('st_call_status', { p_call: callId, p_accept: false }))
   assert.equal(await (await ending).json(), true)
   assert.equal(await ownerPage.getByText('The caller cancelled.', { exact: true }).count(), 0)

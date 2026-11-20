@@ -72,7 +72,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
           : next.end_reason === 'cancelled' ? 'The caller cancelled.'
           : next.end_reason === 'busy' ? 'Call marked busy on another device.'
           : next.end_reason === 'declined' ? 'Call declined on another device.' : null
-        if (message) void db!.rpc('st_v6_quiet_active', { p_chat: previous.chat_id }).then(({ data }) => {
+        if (message) void db!.rpc('st_v6_direct_alert_quiet', { p_chat: previous.chat_id, p_category: 'call' }).then(({ data }) => {
           if (data === false && mounted.current && !current.current) notice(message)
         })
       } else if (next.end_reason === 'busy') notice('Your contact is busy.')

@@ -215,6 +215,79 @@ type DigestEntry={id:string;occurred_at:string;label:string}&(
 )
 type DigestNavigation={openRoom:(workspace:string,room:string)=>void;openChat:(id:string)=>void}
 
+const preferenceCategories = [
+  ['dm', 'Direct messages', 'New direct messages outside the open conversation.'],
+  ['mention', 'Mentions', 'Room mentions addressed to you.'],
+  ['thread', 'Thread replies', 'Replies in your rooms, including threads you follow.'],
+  ['task', 'Task updates', 'Due and completed task notices.'],
+  ['call', 'Calls', 'Incoming call prompts and updates.'],
+  ['security', 'Safety and security', 'Updates to reports you filed.'],
+  ['billing', 'Billing', 'Changes to your subscription.'],
+  ['admin', 'Admin updates', 'New posts in workspace admin rooms.'],
+] as const
+type PreferenceCategory = typeof preferenceCategories[number][0]
+type Preferences = Record<PreferenceCategory, boolean>
+
+function NotificationPreferences({hints}: {hints: EventTarget}) {
+  const [preferences, setPreferences] = useState<Preferences | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [loadError, setLoadError] = useState(false)
+  const [feedback, setFeedback] = useState<{message: string; error: boolean} | null>(null)
+  const requestVersion = useRef(0)
+  const reload = useCallback(async () => {
+    const version = ++requestVersion.current
+    const {data, error} = await db!.rpc('st_v6_notification_preferences')
+    if (version !== requestVersion.current) return
+    setLoadError(Boolean(error || !data))
+    if (!error && data) setPreferences(data as Preferences)
+  }, [])
+
+  useEffect(() => {
+    void reload()
+    hints.addEventListener('availability', reload)
+    hints.addEventListener('ready', reload)
+    return () => {
+      ++requestVersion.current
+      hints.removeEventListener('availability', reload)
+      hints.removeEventListener('ready', reload)
+    }
+  }, [hints, reload])
+
+  async function save(category: PreferenceCategory, enabled: boolean) {
+    if (saving) return
+    setSaving(true)
+    setFeedback(null)
+    const {error} = await db!.rpc('st_v6_set_notification_preference', {p_category: category, p_enabled: enabled})
+    if (error) setFeedback({message: 'Could not save your notification preference.', error: true})
+    else {
+      ++requestVersion.current
+      setPreferences(current => current && {...current, [category]: enabled})
+      setFeedback({message: 'Notification preference saved.', error: false})
+      hints.dispatchEvent(new Event('availability'))
+    }
+    setSaving(false)
+  }
+
+  return <div className="panel release-panel">
+    <h2>In-app alerts</h2>
+    <p>Choose which live alerts appear while SecTalk is open.</p>
+    <p>Direct and group mentions and due task reminders take priority over other optional alerts and follow quiet hours. Critical account notices appear even when quiet hours or alert preferences silence other alerts.</p>
+    {loadError && <div className="actions"><p role="alert">Could not load your notification preferences.</p>
+      <button className="secondary" onClick={() => void reload()}>Try again</button></div>}
+    {!preferences && !loadError && <p role="status">Loading notification preferences…</p>}
+    {preferences && <fieldset disabled={saving || loadError}>
+      <legend>Alert categories</legend>
+      {preferenceCategories.map(([category, label, description]) => <div className="release-board-item" key={category}>
+        <label className="task-check"><input type="checkbox" checked={preferences[category]}
+          aria-describedby={'notification-preference-' + category}
+          onChange={event => void save(category, event.target.checked)}/> {label}</label>
+        <p id={'notification-preference-' + category}>{description}</p>
+      </div>)}
+    </fieldset>}
+    {feedback && <p role={feedback.error ? 'alert' : 'status'}>{feedback.message}</p>}
+  </div>
+}
+
 function NotificationDigest({openRoom,openChat}:DigestNavigation) {
   const [days,setDays]=useState<'1'|'7'>('1')
   const [entries,setEntries]=useState<DigestEntry[]|null>(null)
@@ -272,17 +345,17 @@ function DigestTime({value}:{value:string}) {
   return <time dateTime={value}>{new Date(value).toLocaleString()}</time>
 }
 
-export function Notifications({user,openMeeting,openRoom,openChat}: DigestNavigation & {
-  user:string;openMeeting:(id:string)=>void
+export function Notifications({user,hints,openMeeting,openRoom,openChat}: DigestNavigation & {
+  user:string;hints:EventTarget;openMeeting:(id:string)=>void
 }) {
   const [items,setItems]=useState<Notification[]|null>(null)
-  const [category,setCategory]=useState<'meetings'|'mentions'|'tasks'|'digest'>('meetings')
+  const [category,setCategory]=useState<'meetings'|'mentions'|'tasks'|'digest'|'preferences'>('meetings')
   const [filter,setFilter]=useState<'all'|'unread'>('all')
   const [headings,setHeadings]=useState<Record<string,string>>({})
   const [error,setError]=useState('')
   const requestVersion=useRef(0)
   const reload=useCallback(async ()=>{
-    if(category==='tasks'||category==='digest')return
+    if(category!=='meetings'&&category!=='mentions')return
     const version=++requestVersion.current
     let query=db!.from('st_v3_notifications').select('id,kind,meeting_id,room_id,workspace_id,created_at,read_at').eq('recipient',user)
       .like('kind',category==='mentions'?'mention.%':'meeting.%')
@@ -305,7 +378,7 @@ export function Notifications({user,openMeeting,openRoom,openChat}: DigestNaviga
     }
   },[category,filter,user])
   useEffect(()=>{
-    if(category==='tasks'||category==='digest')return
+    if(category!=='meetings'&&category!=='mentions')return
     void reload()
     const channel=liveChannel('notifications:'+user,reload).on('postgres_changes',{event:'*',schema:'public',table:'st_v3_notifications',filter:'recipient=eq.'+user},reload).subscribe()
     const reconnect=onReconnect(reload)
@@ -322,8 +395,8 @@ export function Notifications({user,openMeeting,openRoom,openChat}: DigestNaviga
   if(category==='mentions')visible?.sort((a,b)=>(mentionDetails[b.kind]?.priority||0)-(mentionDetails[a.kind]?.priority||0))
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Bell size={22}/></div><div><h1>Notifications</h1></div></header>
-    <SectionTabs label="Notification categories" value={category} onChange={next=>{if(next!==category){setItems(null);setCategory(next)}}} options={ [['meetings','Meetings'],['mentions','Mentions'],['tasks','Task updates'],['digest','Digest']] }/>
-    {category==='tasks'?<TaskNotices user={user}/>:category==='digest'?<NotificationDigest openRoom={openRoom} openChat={openChat}/>:<>
+    <SectionTabs label="Notification categories" value={category} onChange={next=>{if(next!==category){setItems(null);setCategory(next)}}} options={ [['meetings','Meetings'],['mentions','Mentions'],['tasks','Task updates'],['digest','Digest'],['preferences','Preferences']] }/>
+    {category==='preferences'?<NotificationPreferences hints={hints}/>:category==='tasks'?<TaskNotices user={user}/>:category==='digest'?<NotificationDigest openRoom={openRoom} openChat={openChat}/>:<>
     {error&&<p role="alert" className="error">{error}</p>}
     <SectionTabs label="Notification filters" value={filter} onChange={setFilter} options={ [['all','All updates'], ['unread','Unread']] }/>
     <button className="secondary" disabled={!visible?.some(item=>!item.read_at)} onClick={()=>void mark(null)}><Check size={15}/> Mark all read</button>

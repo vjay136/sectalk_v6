@@ -63,10 +63,17 @@
 | P5 | Detect repeat attachment content within the uploading account and direct chat | SQL and Edge verified same-byte detection, isolation, retry and independent authorization. Workspace, vault and earlier files remain open. |
 | P3 | Add authenticator setup and one-time recovery codes | Browser and SQL verified enrollment, sign-in step-up, regeneration, reset and replay denial. Direct API assurance enforcement remains open. |
 | P3 | Enforce source and browser asset secret checks and redact provider diagnostics | Unit checks and production asset scan, wired into the release validator |
+| P5 | Synchronize account-private encrypted drafts across eligible conversations | Two-device browser and private SQL fixtures, including concurrent edits and clearing on send |
+| P5 | Add notification preferences, priority, and admin-room delivery status | Per-category policy fixtures, live browser alert ordering, and recipient-acknowledged audit records |
+| P5 | Add meeting pre-join checks and one-presenter screen sharing | Real local LiveKit and Edge with synthetic capture, GPU background processing, and permission revocation scenarios |
+| P10 | Add a restricted tenant lookup and versioned member-count cache | Browser real TOTP and SQL verified metadata scope, count caching, TTL and roster invalidation |
+| P10 | Stream delivery and usage metrics and show threat-reporting trends | SQL and real browser evidence for private hints, reconnect catch-up, completed weeks and suppressed cohorts |
 | P10 | Add an English and Arabic locale scaffold with ICU messages | Locale unit tests and production browser checks on public and signed-in screens |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
+
+Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 87 verified features. The next checkpoint is due at 97, and the matrix records evidence as each feature passes.
 
 ## Remaining work by dependency
 

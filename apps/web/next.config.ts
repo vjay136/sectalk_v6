@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next'
+import { backgroundModel, backgroundWasm } from './lib/meeting-background'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const origin = supabaseUrl ? new URL(supabaseUrl).origin : ''
@@ -21,8 +22,9 @@ const config: NextConfig = {
         { key: 'Content-Security-Policy', value: [
           "default-src 'self'", "base-uri 'none'", "frame-ancestors 'none'", "object-src 'none'",
           "form-action 'self'", "img-src 'self' data: blob:", "style-src 'self' 'unsafe-inline'",
-          "script-src 'self' 'unsafe-inline'" + (dev ? " 'unsafe-eval'" : ''),
-          ["connect-src 'self'", origin, websocket, meetingSocket, meetingHttp, ...meetingCloud, dev ? 'ws:' : ''].filter(Boolean).join(' '),
+          ["script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'", backgroundWasm + '/', dev ? "'unsafe-eval'" : ''].filter(Boolean).join(' '),
+          "worker-src 'self' blob:",
+          ["connect-src 'self'", origin, websocket, meetingSocket, meetingHttp, ...meetingCloud, backgroundWasm + '/', backgroundModel, dev ? 'ws:' : ''].filter(Boolean).join(' '),
         ].join('; ') },
       ],
     }]

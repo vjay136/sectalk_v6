@@ -12,6 +12,7 @@
     "@emoji-mart/data": "1.2.1",
     "@livekit/components-react": "2.9.25",
     "@livekit/components-styles": "1.2.0",
+    "@livekit/track-processors": "0.8.3",
     "@supabase/supabase-js": "2.119.2",
     "fflate": "0.8.3",
     "intl-messageformat": "12.2.0",

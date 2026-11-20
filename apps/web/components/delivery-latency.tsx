@@ -1,33 +1,20 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { db } from '../lib/data'
+import { useState } from 'react'
+import { useAnalyticsSnapshot } from '../lib/live-analytics'
 import { SectionTabs } from './section-tabs'
 
 type Window='24h'|'7d'|'30d'
 type Metrics={through:string;available:false}|{through:string;available:true;p50:number;p95:number;p99:number}
 
-export function DeliveryLatency(){
+export function DeliveryLatency({ revision }: { revision: number }){
   const [window,setWindow]=useState<Window>('24h')
-  const [metrics,setMetrics]=useState<Metrics|null>(null)
-  const [error,setError]=useState(false)
-  const [attempt,retry]=useState(0)
-
-  useEffect(()=>{
-    let active=true
-    setMetrics(null);setError(false)
-    void db!.rpc('st_v6_delivery_latency',{p_window:window}).then(result=>{
-      if(!active)return
-      if(result.error)setError(true)
-      else setMetrics(result.data as Metrics)
-    })
-    return()=>{active=false}
-  },[window,attempt])
+  const { snapshot: metrics, error, refresh } = useAnalyticsSnapshot<Metrics>('st_v6_delivery_latency', window, revision)
 
   return <section className="panel release-panel" aria-labelledby="delivery-latency-title">
     <div className="panel-header">
       <h2 id="delivery-latency-title">Message delivery latency</h2>
-      <button type="button" className="secondary" onClick={()=>retry(value=>value+1)}>Refresh metrics</button>
+      <button type="button" className="secondary" onClick={refresh}>Refresh metrics</button>
     </div>
     <p>Time from server acceptance to acknowledgment by a direct-chat recipient.</p>
     <SectionTabs label="Latency period" value={window} onChange={setWindow}

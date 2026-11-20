@@ -54,7 +54,7 @@ export function useQuietIncoming(call: { id: string; chat_id: string } | null, h
     let sequence = 0
     const refresh = async () => {
       const request = ++sequence
-      const { data } = await db!.rpc('st_v6_quiet_active', { p_chat: chat })
+      const { data } = await db!.rpc('st_v6_direct_alert_quiet', { p_chat: chat, p_category: 'call' })
       if (!disconnected && request === sequence) setDecision({ id, quiet: data !== false })
     }
     void refresh()

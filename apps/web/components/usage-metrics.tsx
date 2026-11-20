@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { db } from '../lib/data'
+import { useState } from 'react'
+import { useAnalyticsSnapshot } from '../lib/live-analytics'
 import { SectionTabs } from './section-tabs'
 
 const categories=[
@@ -11,26 +11,13 @@ const categories=[
 type Category=typeof categories[number][0]
 type Usage={through:string;metrics:Partial<Record<Category,number>>}
 
-export function UsageMetrics(){
+export function UsageMetrics({ revision }: { revision: number }){
   const [period,setPeriod]=useState<'7d'|'30d'>('7d')
-  const [usage,setUsage]=useState<Usage|null>(null)
-  const [error,setError]=useState(false)
-  const [attempt,retry]=useState(0)
-
-  useEffect(()=>{
-    let active=true
-    setUsage(null);setError(false)
-    void db!.rpc('st_v6_usage_metrics',{p_window:period}).then(result=>{
-      if(!active)return
-      if(result.error)setError(true)
-      else setUsage(result.data as Usage)
-    })
-    return()=>{active=false}
-  },[period,attempt])
+  const { snapshot: usage, error, refresh } = useAnalyticsSnapshot<Usage>('st_v6_usage_metrics', period, revision)
 
   return <section className="panel release-panel" aria-labelledby="usage-metrics-title">
     <div className="panel-header"><h2 id="usage-metrics-title">Product usage</h2>
-      <button type="button" className="secondary" onClick={()=>retry(value=>value+1)}>Refresh usage</button></div>
+      <button type="button" className="secondary" onClick={refresh}>Refresh usage</button></div>
     <SectionTabs label="Usage period" value={period} onChange={setPeriod} options={[['7d','7 days'],['30d','30 days']]}/>
     {error&&<p role="alert" className="error">Could not load usage metrics.</p>}
     {!usage&&!error&&<p role="status">Loading usage metrics…</p>}

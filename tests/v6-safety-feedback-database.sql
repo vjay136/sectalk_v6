@@ -1,4 +1,15 @@
 begin;
+-- Keep exact cohort thresholds independent of prior browser fixtures in the
+-- disposable database. This entire fixture rolls back.
+delete from sectalk_private.st_v6_warning_proposals
+  where rule_version='message-rules-1' and category in ('credential_harvesting','spam')
+    and feedback_month=date_trunc('month',now() at time zone 'UTC')::date;
+delete from sectalk_private.st_v6_risk_feedback_review
+  where rule_version='message-rules-1' and category in ('credential_harvesting','spam')
+    and review_month=date_trunc('month',now() at time zone 'UTC')::date;
+delete from sectalk_private.st_v6_risk_feedback
+  where rule_version='message-rules-1' and category in ('credential_harvesting','spam')
+    and submitted_at>=date_trunc('month',now() at time zone 'UTC') at time zone 'UTC';
 insert into auth.users(id,email)
   select ('99200000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'feedback-'||n||'@example.invalid'
   from generate_series(1,8) n;

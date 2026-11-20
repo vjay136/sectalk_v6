@@ -7,10 +7,44 @@ import { ForwardMessageDialog } from './forward-message'
 import { ScopedTasks } from './scoped-tasks'
 import { QuietHoursSettings } from './quiet-hours'
 import { RoomPostReactions, RoomReactionSettings, useRoomReactionCounts, useWorkspaceReactionPolicy, type RoomReactionPolicy } from './room-reactions'
+import { AdminNotificationAudit } from './admin-notification-audit'
 import { useReadReceiptSettings, useRoomReadReceipts } from './read-receipts'
+import { DraftStatus, useSyncedDraft } from './synced-draft'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
+
+function RoomComposer({user,room,parent,staff,showAnnounce,working,canToggleTyping,shareTyping,onTyping,onStopTyping,onToggleTyping,onSend}:{
+  user:string;room:string;parent:string|null;staff:boolean;showAnnounce:boolean;working:boolean
+  canToggleTyping:boolean;shareTyping:boolean;onTyping:(value:string)=>void;onStopTyping:()=>void;onToggleTyping:()=>void
+  onSend:(body:string,announce:boolean,parent:string|null,onSent:()=>void)=>void
+}){
+  const draft=useSyncedDraft(user,'room',room,parent)
+  function submit(event:FormEvent<HTMLFormElement>){
+    event.preventDefault()
+    if(working||!draft.body.trim())return
+    const form=event.currentTarget
+    const body=draft.body
+    onSend(body,new FormData(form).has('announce'),parent,()=>{
+      draft.clear(body)
+      form.reset()
+    })
+  }
+  return <form className="release-form" onSubmit={submit}>
+    <label>{parent?'Write a reply':'Write a room message'}<textarea name="body" required maxLength={4000}
+      aria-describedby="room-mentions-help" value={draft.body} onChange={event=>{
+        draft.change(event.target.value)
+        onTyping(event.target.value)
+      }} onBlur={()=>{draft.flush();onStopTyping()}}/></label>
+    <DraftStatus draft={draft}/>
+    <p id="room-mentions-help">Use <code>@handle</code> to mention a room member.
+      {staff&&<> Use <code>@group:"Group name"</code> for a group, <code>@channel</code> for the room, or <code>@here</code> for online members.</>}</p>
+    {showAnnounce&&<label className="task-check"><input type="checkbox" name="announce"/> Post as announcement</label>}
+    <button className="primary" disabled={working}>Send</button>
+    <button className="secondary" type="button" disabled={!canToggleTyping}
+      aria-pressed={shareTyping} onClick={onToggleTyping}>Share my typing</button>
+  </form>
+}
 type Room={id:string;name:string;kind:Kind;template:Template;archived:boolean;locked:boolean;slow_seconds:number; forwarding_allowed:boolean}
 type Post={id:string;sender:string;body:string;kind:'message'|'announcement';created_at:string;edited_at:string|null;removed_at:string|null; forwarded:boolean}
 type Roster={user_id:string;role:Role}
@@ -258,17 +292,13 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
       onArchiveChange(archive)
     })
   }
-  function send(event:FormEvent<HTMLFormElement>){
-    event.preventDefault()
-    const form=event.currentTarget
-    const values=new FormData(form)
-    const parent=view==='threads'?thread:null
-    const input={p_room:room.id,p_body:values.get('body'),p_kind:room.kind==='announcement'||values.has('announce')?'announcement':'message',p_parent:parent}
+  function send(body:string,announce:boolean,parent:string|null,onSent:()=>void){
+    const input={p_room:room.id,p_body:body,p_kind:room.kind==='announcement'||announce?'announcement':'message',p_parent:parent}
     void perform(async()=>{
       const key=JSON.stringify(input)
       if(pending.current?.key!==key)pending.current={key,id:crypto.randomUUID()}
       await call('st_v6_room_post',{...input,p_id:pending.current.id})
-      pending.current=null;form.reset()
+      pending.current=null;onSent()
       void stopRoomTyping(parent)
     })
   }
@@ -464,17 +494,11 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
           .filter(id=>profiles[id]).map(id=>[id,profiles[id]]))}/>}
       {activeTyping?.until&&Date.parse(activeTyping.until)>Date.now()&&<p className="thread-typing" role="status">Someone is typing…</p>}
       {canPost&&(actualView==='messages'||(actualView==='threads'&&thread&&room.kind!=='announcement'))&&
-        <form className="release-form" onSubmit={send}>
-          <label>{actualView==='threads'?'Write a reply':'Write a room message'}<textarea name="body" required maxLength={4000}
-            aria-describedby="room-mentions-help" onChange={event=>void sendRoomTyping(event.target.value)}
-            onBlur={()=>void stopRoomTyping(typingParent)}/></label>
-          <p id="room-mentions-help">Use <code>@handle</code> to mention a room member.
-            {staff&&<> Use <code>@group:"Group name"</code> for a group, <code>@channel</code> for the room, or <code>@here</code> for online members.</>}</p>
-          {staff&&room.kind!=='announcement'&&actualView==='messages'&&<label className="task-check"><input type="checkbox" name="announce"/> Post as announcement</label>}
-          <button className="primary" disabled={working}>Send</button>
-          <button className="secondary" type="button" disabled={!activeTyping||typingPolicyBusy}
-            aria-pressed={Boolean(activeTyping?.share)} onClick={()=>void changeRoomTypingPolicy()}>Share my typing</button>
-        </form>}
+        <RoomComposer key={typingParent||'root'} user={user} room={room.id} parent={typingParent} staff={staff}
+          showAnnounce={staff&&room.kind!=='announcement'&&actualView==='messages'} working={working}
+          canToggleTyping={Boolean(activeTyping)&&!typingPolicyBusy} shareTyping={Boolean(activeTyping?.share)}
+          onTyping={value=>void sendRoomTyping(value)} onStopTyping={()=>void stopRoomTyping(typingParent)}
+          onToggleTyping={()=>void changeRoomTypingPolicy()} onSend={send}/>}
       {actualView==='people'&&<>
         {room.kind==='admin'?<p>Workspace owners and admins have access.</p>:roster.map(person=><div className="release-row" key={person.user_id}>
           <strong>{name(person.user_id)}</strong><span className="pill">{roleLabel(person.role)}</span>
@@ -570,6 +594,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         }}><label>Slow mode in seconds<input key={room.slow_seconds} name="seconds" type="number" min={0} max={300} required defaultValue={room.slow_seconds}/></label>
           <button className="secondary" disabled={working}>Save slow mode</button></form>}
       </>}
+      {actualView==='audit'&&room.kind==='admin'&&staff&&<AdminNotificationAudit key={room.id} room={room.id} name={name}/>}
       {actualView==='audit'&&(notes.length?<ol className="audit">{notes.map(note=><li key={note.id}>
         <strong>{note.action.replaceAll('.',' ')}</strong><span>{name(note.actor)} · {new Date(note.occurred_at).toLocaleString()}</span>
         {note.action.startsWith('membership.')&&note.target&&<span>Member {name(note.target)}</span>}

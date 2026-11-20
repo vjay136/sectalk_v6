@@ -1,4 +1,4 @@
-import { AccessToken } from 'livekit-server-sdk'
+import { AccessToken, TrackSource } from 'livekit-server-sdk'
 import { createClient } from '@supabase/supabase-js'
 import { logProviderFailure } from '../../../../lib/provider-log.mjs'
 
@@ -35,10 +35,17 @@ export async function POST(request: Request) {
   }
   if (access.data !== true) return Response.json({ error: 'The host must admit you while the meeting is live.' }, { status: 403, headers })
 
-  const { data: profile } = await client.from('st_profiles').select('name').eq('id', data.user.id).maybeSingle()
   try {
+    if (payload.networkCheck === true) {
+      const token = new AccessToken(apiKey, secret, { identity: data.user.id, ttl: 30 })
+      token.addGrant({ roomJoin: true, room: 'sectalk-network-check-' + data.user.id, hidden: true,
+        canPublish: false, canSubscribe: false, canPublishData: false })
+      return Response.json({ url, token: await token.toJwt() }, { headers })
+    }
+    const { data: profile } = await client.from('st_profiles').select('name').eq('id', data.user.id).maybeSingle()
     const token = new AccessToken(apiKey, secret, { identity: data.user.id, name: profile?.name || 'SecTalk member', ttl: 120 })
-    token.addGrant({ roomJoin: true, room: 'sectalk-v3-' + meeting, canPublish: true, canSubscribe: true, canPublishData: false })
+    token.addGrant({ roomJoin: true, room: 'sectalk-v3-' + meeting.toLowerCase(), canPublish: true, canSubscribe: true, canPublishData: false,
+      canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE] })
     return Response.json({ url, token: await token.toJwt() }, { headers })
   } catch {
     logProviderFailure('meeting_signing','signing_failed')
