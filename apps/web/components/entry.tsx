@@ -7,6 +7,8 @@ import {
   LockKeyhole, Mail, Phone, Send, Shield, ShieldCheck, Video,
 } from 'lucide-react'
 import { db, transientAuthClient } from '../lib/data'
+import type { PlainMessageKey } from '../lib/locale'
+import { LanguageSelect, useLocale } from './locale-provider'
 
 export function Brand({ compact = false }: { compact?: boolean }) {
   return <div className={'brand' + (compact ? ' compact-brand' : '')}>
@@ -18,33 +20,34 @@ export function Brand({ compact = false }: { compact?: boolean }) {
 type Step = 'sign-in' | 'sign-up' | 'confirm' | 'forgot' | 'recover' | 'new-password'
 
 const steps = {
-  'sign-in': ['Sign in to SecTalk', 'Use the email address and password for your account.', 'Sign in'],
-  'sign-up': ['Create your account', 'Choose a password. We’ll email you a link to verify your address.', 'Create account'],
-  confirm: ['Check your email', 'Open the SecTalk verification link for', 'Back to sign in'],
-  forgot: ['Reset your password', 'Enter your account email to receive a recovery code.', 'Send recovery code'],
-  recover: ['Verify your recovery code', 'Enter the recovery code for', 'Verify code'],
-  'new-password': ['Set a new password', 'Use a password you haven’t used for this account before.', 'Update password'],
+  'sign-in': ['signInTitle', 'signInDescription', 'signIn'],
+  'sign-up': ['signUpTitle', 'signUpDescription', 'signUp'],
+  confirm: ['confirmTitle', 'confirmDescription', 'backToSignIn'],
+  forgot: ['forgotTitle', 'forgotDescription', 'sendRecoveryCode'],
+  recover: ['recoverTitle', 'recoverDescription', 'verifyCode'],
+  'new-password': ['newPasswordTitle', 'newPasswordDescription', 'updatePassword'],
 } as const
 
-function authMessage(error: { code?: string; status?: number }, step: Step) {
-  if (error.code === 'over_email_send_rate_limit') return 'SecTalk has reached its email sending limit. No new email was sent. Try again later.'
-  if (error.status === 429) return 'Too many requests. Wait a minute and try again.'
-  if (error.code === 'weak_password') return 'Choose a stronger password with at least 12 characters.'
-  if (step === 'sign-in') return 'Check your email and password, then try again.'
-  if (step === 'recover') return 'This code is invalid or expired. Request a new code and try again.'
-  if (step === 'new-password') return error.code === 'same_password' ? 'Choose a password different from your current password.' : 'Your password could not be updated. If the recovery session expired, request a new code.'
-  return 'We couldn’t send a verification email. Check the address and try again.'
+function authMessage(error: { code?: string; status?: number }, step: Step): PlainMessageKey {
+  if (error.code === 'over_email_send_rate_limit') return 'emailRateLimit'
+  if (error.status === 429) return 'tooManyRequests'
+  if (error.code === 'weak_password') return 'weakPassword'
+  if (step === 'sign-in') return 'invalidSignIn'
+  if (step === 'recover') return 'invalidRecoveryCode'
+  if (step === 'new-password') return error.code === 'same_password' ? 'samePassword' : 'passwordUpdateFailed'
+  return 'verificationSendFailed'
 }
 
 export function Entry({ recovering }: { recovering: boolean }) {
+  const { t } = useLocale()
   const [step, setStep] = useState<Step>('sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
-  const [alert, setAlert] = useState('')
-  const [info, setInfo] = useState('')
+  const [alert, setAlert] = useState<PlainMessageKey | ''>('')
+  const [info, setInfo] = useState<PlainMessageKey | ''>('')
   const recovery = useRef<ReturnType<typeof transientAuthClient>>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const current = recovering ? 'new-password' : step
@@ -55,7 +58,7 @@ export function Entry({ recovering }: { recovering: boolean }) {
   const checkEmail = current === 'confirm' || codeRequired
   const showEmail = current === 'sign-in' || current === 'sign-up' || current === 'forgot'
 
-  function go(next: Step, message = '') {
+  function go(next: Step, message: PlainMessageKey | '' = '') {
     setStep(next)
     setPassword('')
     setConfirmation('')
@@ -74,10 +77,10 @@ export function Entry({ recovering }: { recovering: boolean }) {
     if (current === 'confirm') { await backToSignIn(); return }
     setAlert('')
     setInfo('')
-    if (!db) { setAlert('Sign-in is unavailable until SecTalk is configured.'); return }
-    if (newPassword && password !== confirmation) { setAlert('The passwords don’t match.'); return }
+    if (!db) { setAlert('signInUnavailable'); return }
+    if (newPassword && password !== confirmation) { setAlert('passwordMismatch'); return }
     if (newPassword && (password.length < 12 || new TextEncoder().encode(password).length > 72)) {
-      setAlert('Use at least 12 characters and at most 72 bytes. Some characters count as more than one byte.')
+      setAlert('invalidPasswordLength')
       return
     }
     setBusy(true)
@@ -87,7 +90,7 @@ export function Entry({ recovering }: { recovering: boolean }) {
         case 'sign-in': {
           const { error } = await db.auth.signInWithPassword({ email: address, password })
           if (error?.code === 'email_not_confirmed') {
-            go('confirm', 'Use your original signup link or request a new one.')
+            go('confirm', 'verificationReminder')
             return
           }
           if (error) throw error
@@ -120,7 +123,7 @@ export function Entry({ recovering }: { recovering: boolean }) {
           if (error) throw error
           await client.auth.signOut({ scope: 'global' })
           recovery.current = null
-          go('sign-in', 'Password updated. Sign in with your new password.')
+          go('sign-in', 'passwordUpdated')
           break
         }
       }
@@ -144,8 +147,8 @@ export function Entry({ recovering }: { recovering: boolean }) {
       if (result.error) throw result.error
       setCode('')
       setInfo(current === 'confirm'
-        ? 'If this signup is still awaiting verification, check your email for a new message.'
-        : 'If the account can be recovered, check your email for a new message.')
+        ? 'verificationResent'
+        : 'recoveryResent')
     } catch (error) {
       setAlert(authMessage(error as { code?: string; status?: number }, current === 'confirm' ? 'sign-up' : 'forgot'))
     } finally {
@@ -163,58 +166,59 @@ export function Entry({ recovering }: { recovering: boolean }) {
   return <main className="landing">
     <header className="site-header">
       <Brand />
-      <a className="header-link" href="#safety"><Shield size={16} /> Safety & privacy</a>
-      <a className="header-cta" href="#account" onClick={() => { if (!busy) void backToSignIn() }}>Sign in <ArrowRight size={15} /></a>
+      <LanguageSelect />
+      <a className="header-link" href="#safety"><Shield size={16} /> {t('safetyPrivacy')}</a>
+      <a className="header-cta" href="#account" onClick={() => { if (!busy) void backToSignIn() }}>{t('signIn')} <ArrowRight size={15} /></a>
     </header>
     <section className="access-layout">
       <div className="hero-copy">
-        <div className="eyebrow"><span /> SECURE MESSAGING BY EAGLE SECURITY</div>
-        <h1>Private by design.<br /><em>Yours to control.</em></h1>
-        <p>Real-time messages, audio and video with the people you approve. Block unwanted contact and report abuse from the conversation.</p>
+        <div className="eyebrow"><span /> {t('eyebrow')}</div>
+        <h1>{t('privateByDesign')}<br /><em>{t('yoursToControl')}</em></h1>
+        <p>{t('heroDescription')}</p>
         <div className="threat-visual" aria-hidden="true">
           <div className="signal-orbit orbit-one" /><div className="signal-orbit orbit-two" />
           <Image src="/sectalk-logo.webp" alt="" width={180} height={180} className="hero-logo" priority />
           <div className="comms-preview">
-            <div className="preview-head"><span className="preview-icon"><AudioLines size={16} /></span><div><b>Avery Morgan</b><small>Accepted contact</small></div><Phone size={15} /><Video size={17} /></div>
-            <div className="preview-messages"><span>Ready when you are.</span><span>Let’s talk. <Check size={13}/></span></div>
+            <div className="preview-head"><span className="preview-icon"><AudioLines size={16} /></span><div><b>Avery Morgan</b><small>{t('acceptedContact')}</small></div><Phone size={15} /><Video size={17} /></div>
+            <div className="preview-messages"><span>{t('readyWhenYouAre')}</span><span>{t('letsTalk')} <Check size={13}/></span></div>
           </div>
         </div>
       </div>
-      <section id="account" className="auth-shell" aria-label="Your account">
+      <section id="account" className="auth-shell" aria-label={t('yourAccount')}>
         <form className="auth-card access-card" onSubmit={submit}>
-          {(current === 'sign-in' || current === 'sign-up') && <div className="auth-tabs" aria-label="Account access">
-            <button type="button" disabled={busy} aria-pressed={current === 'sign-in'} onClick={() => go('sign-in')}>Sign in</button>
-            <button type="button" disabled={busy} aria-pressed={current === 'sign-up'} onClick={() => go('sign-up')}>Create account</button>
+          {(current === 'sign-in' || current === 'sign-up') && <div className="auth-tabs" aria-label={t('accountAccess')}>
+            <button type="button" disabled={busy} aria-pressed={current === 'sign-in'} onClick={() => go('sign-in')}>{t('signIn')}</button>
+            <button type="button" disabled={busy} aria-pressed={current === 'sign-up'} onClick={() => go('sign-up')}>{t('signUp')}</button>
           </div>}
           <div className="card-icon">{checkEmail ? <Mail size={21} /> : current === 'new-password' ? <KeyRound size={21} /> : <LockKeyhole size={21} />}</div>
           <div className="auth-intro">
-            <h2 ref={heading} tabIndex={-1}>{title}</h2>
-            <p>{description}{checkEmail && <> <strong>{email}</strong>.</>}</p>
+            <h2 ref={heading} tabIndex={-1}>{t(title)}</h2>
+            <p>{t(description)}{checkEmail && <> <strong dir="ltr">{email}</strong>.</>}</p>
           </div>
-          {showEmail && <label>Email address<div className="input-icon"><Mail size={16} /><input type="email" autoComplete="email" maxLength={254} required placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)} /></div></label>}
-          {passwordRequired && <label>Password<div className="input-icon"><KeyRound size={16} /><input key={current} type="password" autoComplete={newPassword ? 'new-password' : 'current-password'} minLength={newPassword ? 12 : undefined} maxLength={256} required placeholder={newPassword ? 'At least 12 characters' : 'Your password'} value={password} onChange={event => setPassword(event.target.value)} /></div></label>}
-          {newPassword && <label>Confirm password<div className="input-icon"><KeyRound size={16} /><input type="password" autoComplete="new-password" minLength={12} maxLength={256} required placeholder="Re-enter password" value={confirmation} onChange={event => setConfirmation(event.target.value)} /></div></label>}
-          {codeRequired && <label>Verification code<input className="code-input" type="text" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6,10}" maxLength={10} required placeholder="Enter the email code" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} /></label>}
-          {current === 'sign-in' && <button className="text-button forgot" type="button" disabled={busy} onClick={() => go('forgot')}>Forgot password?</button>}
-          {alert && <p className="form-message error" role="alert">{alert}</p>}
-          {info && <p className="form-message success" role="status">{info}</p>}
-          <button className="primary submit-auth" disabled={busy}>{busy ? 'Please wait…' : action} <ArrowRight size={18} /></button>
+          {showEmail && <label>{t('emailAddress')}<div className="input-icon"><Mail size={16} /><input dir="ltr" type="email" autoComplete="email" maxLength={254} required placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)} /></div></label>}
+          {passwordRequired && <label>{t('password')}<div className="input-icon"><KeyRound size={16} /><input key={current} type="password" autoComplete={newPassword ? 'new-password' : 'current-password'} minLength={newPassword ? 12 : undefined} maxLength={256} required placeholder={newPassword ? t('minimumPassword') : t('yourPassword')} value={password} onChange={event => setPassword(event.target.value)} /></div></label>}
+          {newPassword && <label>{t('confirmPassword')}<div className="input-icon"><KeyRound size={16} /><input type="password" autoComplete="new-password" minLength={12} maxLength={256} required placeholder={t('reenterPassword')} value={confirmation} onChange={event => setConfirmation(event.target.value)} /></div></label>}
+          {codeRequired && <label>{t('verificationCode')}<input dir="ltr" className="code-input" type="text" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6,10}" maxLength={10} required placeholder={t('enterEmailCode')} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} /></label>}
+          {current === 'sign-in' && <button className="text-button forgot" type="button" disabled={busy} onClick={() => go('forgot')}>{t('forgotPassword')}</button>}
+          {alert && <p className="form-message error" role="alert">{t(alert)}</p>}
+          {info && <p className="form-message success" role="status">{t(info)}</p>}
+          <button className="primary submit-auth" disabled={busy}>{busy ? t('pleaseWait') : t(action)} <ArrowRight size={18} /></button>
           {current !== 'sign-in' && current !== 'sign-up' && <div className="form-links">
-            {current !== 'confirm' && <button type="button" disabled={busy} onClick={() => void backToSignIn()}><ArrowLeft size={14} /> Back to sign in</button>}
-            {checkEmail && <button type="button" onClick={resend} disabled={busy}>{current === 'confirm' ? 'Resend verification link' : 'Resend code'}</button>}
+            {current !== 'confirm' && <button type="button" disabled={busy} onClick={() => void backToSignIn()}><ArrowLeft size={14} /> {t('backToSignIn')}</button>}
+            {checkEmail && <button type="button" onClick={resend} disabled={busy}>{current === 'confirm' ? t('resendLink') : t('resendCode')}</button>}
           </div>}
           {current === 'confirm' && <p className="form-message">
-            Already verified this email? Sign in or <button className="text-button" type="button" disabled={busy} onClick={() => go('forgot')}>reset your password</button>.
+            {t('alreadyVerified')} <button className="text-button" type="button" disabled={busy} onClick={() => go('forgot')}>{t('resetPasswordLink')}</button>.
           </p>}
         </form>
-        <div className="auth-footnote"><Fingerprint size={16} /> {current === 'sign-up' || checkEmail ? 'Email verification protects account access.' : 'Only approved contacts can message or call you.'}</div>
+        <div className="auth-footnote"><Fingerprint size={16} /> {current === 'sign-up' || checkEmail ? t('verificationFootnote') : t('contactsFootnote')}</div>
       </section>
     </section>
     <section id="safety" className="benefits">
-      <div><span className="benefit-icon"><ShieldCheck /></span><h2>Contact approval</h2><p>Accept a request before someone can send messages or start a call.</p></div>
-      <div><span className="benefit-icon"><AudioLines /></span><h2>Live conversations</h2><p>Move from messaging to one-to-one audio or video in the same workspace.</p></div>
-      <div><span className="benefit-icon"><Flag /></span><h2>Safety controls</h2><p>Block contact and share selected evidence with a safety reviewer.</p></div>
+      <div><span className="benefit-icon"><ShieldCheck /></span><h2>{t('contactApproval')}</h2><p>{t('contactApprovalDescription')}</p></div>
+      <div><span className="benefit-icon"><AudioLines /></span><h2>{t('liveConversations')}</h2><p>{t('liveConversationsDescription')}</p></div>
+      <div><span className="benefit-icon"><Flag /></span><h2>{t('safetyControls')}</h2><p>{t('safetyControlsDescription')}</p></div>
     </section>
-    <footer className="site-footer"><Brand /><span>SecTalk by Eagle Security</span><a href="/status">Service status</a><a href="/security">Security disclosures</a><a href="#account">Account access <Send size={14}/></a></footer>
+    <footer className="site-footer"><Brand /><span>SecTalk by Eagle Security</span><a href="/status">{t('serviceStatus')}</a><a href="/security">{t('securityDisclosures')}</a><a href="#account">{t('accountAccess')} <Send size={14}/></a></footer>
   </main>
 }

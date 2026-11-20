@@ -5,9 +5,11 @@ import type { Session } from '@supabase/supabase-js'
 import { db } from '../lib/data'
 import { Brand, Entry } from '../components/entry'
 import { Inbox } from '../components/inbox'
+import { useLocale } from '../components/locale-provider'
 import { WorkspaceContextProvider } from '../components/workspace-context'
 
 export default function Home() {
+  const { t } = useLocale()
   const [session, setSession] = useState<Session | null>(null)
   const [loaded,setLoaded] = useState(!db)
   const [recovering, setRecovering] = useState(false)
@@ -24,5 +26,5 @@ export default function Home() {
   return loaded ? (session && !recovering ? <WorkspaceContextProvider key={session.user.id} user={session.user.id}>
     <Inbox user={session.user.id} />
   </WorkspaceContextProvider> : <Entry recovering={recovering} />) :
-    <main className="center-page"><Brand /><p role="status">Opening SecTalk…</p></main>
+    <main className="center-page"><Brand /><p role="status">{t('opening')}</p></main>
 }

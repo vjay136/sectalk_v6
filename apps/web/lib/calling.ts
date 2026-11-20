@@ -153,7 +153,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       stream.current?.getTracks().forEach(track => track.stop())
       displayStream.current?.getTracks().forEach(track => track.stop())
       const id = owned.current
-      if (id) void db!.rpc('st_v6_call_action', { p_call: id, p_action: 'end', p_device: device })
+      if (id) void db!.rpc('st_v6_call_action', { p_call: id, p_action: 'end', p_device: device }).then(() => undefined)
     }
   }, [user, refresh, applyCall, hints, device])
 

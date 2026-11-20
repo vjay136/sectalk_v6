@@ -3,14 +3,15 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
+import { ForwardMessageDialog } from './forward-message'
 import { ScopedTasks } from './scoped-tasks'
 import { QuietHoursSettings } from './quiet-hours'
 import { RoomPostReactions, RoomReactionSettings, useRoomReactionCounts, useWorkspaceReactionPolicy, type RoomReactionPolicy } from './room-reactions'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
-type Room={id:string;name:string;kind:Kind;template:Template;archived:boolean;locked:boolean;slow_seconds:number}
-type Post={id:string;sender:string;body:string;kind:'message'|'announcement';created_at:string;edited_at:string|null;removed_at:string|null}
+type Room={id:string;name:string;kind:Kind;template:Template;archived:boolean;locked:boolean;slow_seconds:number; forwarding_allowed:boolean}
+type Post={id:string;sender:string;body:string;kind:'message'|'announcement';created_at:string;edited_at:string|null;removed_at:string|null; forwarded:boolean}
 type Roster={user_id:string;role:Role}
 type Entry={user_id:string;kind:'invite'|'request';invited_role:Role;expires_at:string}
 type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:string;details:{from?:Kind;to?:Kind;previous_owners?:string[]}}
@@ -26,7 +27,7 @@ const templates={
 } as const
 type Template=keyof typeof templates
 const roleLabel=(value:string)=>value.replaceAll('_',' ')
-const postFields='id,sender,body,kind,created_at,edited_at,removed_at'
+const postFields='id,sender,body,kind,created_at,edited_at,removed_at,forwarded'
 
 async function call(name:string,input:Record<string,unknown>) {
   const result=await db!.rpc(name,input)
@@ -47,7 +48,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
   const [creating,setCreating]=useState(false)
   const newId=useRef<{key:string;id:string}|null>(null)
   const refresh=useCallback(async()=>{
-    const {data,error}=await db!.from('st_v6_rooms').select('id,name,kind,template,archived,locked,slow_seconds').eq('workspace_id',space).order('name')
+    const {data,error}=await db!.from('st_v6_rooms').select('id,name,kind,template,archived,locked,slow_seconds,forwarding_allowed').eq('workspace_id',space).order('name')
     if(error){setError('Could not load room directory.');return}
     setRooms(data as Room[])
   },[space])
@@ -155,13 +156,18 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const [view,setView]=useState<'messages'|'threads'|'pins'|'people'|'settings'|'audit'|'tasks'>('messages')
   const [taskSource,setTaskSource]=useState<string|null>(null)
   const [editingPost,setEditingPost]=useState<string|null>(null)
+  const [forwarding,setForwarding]=useState<string|null>(null)
   const [quietHours,setQuietHours]=useState(false)
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
   const [working,setWorking]=useState(false)
   const pending=useRef<{key:string;id:string}|null>(null)
+  const [typingPolicyBusy,setTypingPolicyBusy]=useState(false)
+  const [roomTyping,setRoomTyping]=useState<{parent:string|null;share:boolean;until:string|null}|null>(null)
+  const roomTypingPulse=useRef<{parent:string|null;sentAt:number;stopped:boolean}|null>(null)
   const staff=role==='moderator'||role==='owner'
   const canPost=role&&role!=='read_only'&&!room.archived&&(staff||(!room.locked&&!['announcement','broadcast'].includes(room.kind)))
+  const forwardingAvailable=room.kind==='public'&&room.forwarding_allowed&&!room.archived&&!room.locked&&(staff||role==='member')
   const refresh=useCallback(async()=>{
     const version=++refreshVersion.current
     const [identity,requests,members,messages,pinned,activity,blocked]=await Promise.all([
@@ -252,6 +258,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
       if(pending.current?.key!==key)pending.current={key,id:crypto.randomUUID()}
       await call('st_v6_room_post',{...input,p_id:pending.current.id})
       pending.current=null;form.reset()
+      void stopRoomTyping(parent)
     })
   }
   const invite=entries.some(entry=>entry.kind==='invite'&&entry.user_id===user)
@@ -259,6 +266,60 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const canManage=manager||staff
   const actualView=manager&&!role&&!['people','settings','audit'].includes(view)?'settings'
     :(!canManage&&(view==='settings'||view==='audit'))||(!manager&&role==='guest'&&view==='people')?'messages':view
+  const showTyping=Boolean(role&&!room.archived&&(actualView==='messages'||(actualView==='threads'&&thread)))
+  const typingParent=actualView==='threads'?thread:null
+  const activeTyping=showTyping&&roomTyping?.parent===typingParent?roomTyping:null
+  useEffect(()=>{
+    if(!showTyping)return
+    let active=true
+    let inFlight=false
+    const read=async()=>{
+      if(document.hidden||!navigator.onLine||inFlight)return
+      inFlight=true
+      const {data,error}=await db!.rpc('st_v6_room_typing_status',{p_room:room.id,p_parent:typingParent})
+      inFlight=false
+      if(active&&!error)setRoomTyping({parent:typingParent,share:data.share_own_typing===true,until:data.typing_until??null})
+    }
+    void read()
+    const timer=window.setInterval(read,2000)
+    document.addEventListener('visibilitychange',read)
+    return ()=>{active=false;window.clearInterval(timer);document.removeEventListener('visibilitychange',read)}
+  },[room.id,showTyping,typingParent])
+  useEffect(()=>{
+    const until=activeTyping?.until
+    if(!until)return
+    const timer=window.setTimeout(()=>setRoomTyping(current=>current?.parent===typingParent&&current?.until===until
+      ?{...current,until:null}:current),Math.max(0,Date.parse(until)-Date.now()))
+    return ()=>window.clearTimeout(timer)
+  },[activeTyping?.until,typingParent])
+
+  async function stopRoomTyping(parent:string|null){
+    const pulse=roomTypingPulse.current
+    if(!navigator.onLine||!pulse||pulse.parent!==parent||pulse.stopped||Date.now()-pulse.sentAt>=5000)return
+    pulse.stopped=true
+    await db!.rpc('st_v6_room_typing',{p_room:room.id,p_parent:parent,p_active:false})
+  }
+  async function sendRoomTyping(value:string){
+    if(!navigator.onLine||!activeTyping?.share||typingPolicyBusy)return
+    if(!value.trim()){
+      await stopRoomTyping(typingParent)
+      return
+    }
+    const now=Date.now()
+    if(roomTypingPulse.current&&now-roomTypingPulse.current.sentAt<=2200)return
+    roomTypingPulse.current={parent:typingParent,sentAt:now,stopped:false}
+    await db!.rpc('st_v6_room_typing',{p_room:room.id,p_parent:typingParent,p_active:true})
+  }
+  async function changeRoomTypingPolicy(){
+    if(!activeTyping)return
+    const share=!activeTyping.share
+    setTypingPolicyBusy(true)
+    try{
+      await call('st_v6_set_room_typing_policy',{p_room:room.id,p_share:share})
+      setRoomTyping(current=>current&&{...current,share})
+    }catch(error){setError(formatError(error,'Could not update typing privacy.'))}
+    finally{setTypingPolicyBusy(false)}
+  }
   const nextVisibility=room.kind==='public'?'private':'public'
   const canChangeVisibility=manager&&!room.archived&&(room.kind==='public'||room.kind==='private')
     &&(room.template==='blank'||room.template==='project')&&(!allowedRoomKinds||allowedRoomKinds.includes(nextVisibility))
@@ -296,9 +357,11 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     const senderRole=roster.find(person=>person.user_id===post.sender)?.role
     const senderIsStaff=room.kind==='admin'?workspaceAdminIds.includes(post.sender):senderRole==='owner'||senderRole==='moderator'
     const canRedact=canModify&&staff&&post.sender!==user&&(role==='owner'||!senderIsStaff)
+    const canForward=forwardingAvailable&&!post.removed_at&&post.kind==='message'
     return <article className="release-board-item" key={post.id}>
       <div className="release-row"><strong>{name(post.sender)}</strong><time dateTime={post.created_at}>{new Date(post.created_at).toLocaleString()}</time>
         {post.kind==='announcement'&&<span className="pill">Announcement</span>}
+        {post.forwarded&&!post.removed_at&&<span className="pill">Forwarded</span>}
         {post.edited_at&&!post.removed_at&&<span className="pill">Edited</span>}</div>
       <p className={post.removed_at?'meeting-agenda revoked-message':'meeting-agenda'}>{post.body}</p>
       {!post.removed_at&&<RoomPostReactions room={room.id} post={post.id} policy={reactionPolicy}
@@ -312,10 +375,11 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
           <button className="primary" disabled={working}>Save edit</button>
           <button className="secondary" type="button" onClick={()=>setEditingPost(null)}>Cancel edit</button>
         </div>
-      </form>:(canEdit||canDelete||canRedact)&&<details>
+      </form>:(canEdit||canDelete||canRedact||canForward)&&<details>
         <summary>Room message actions</summary>
         <div className="action-row">
           {canEdit&&<button className="secondary" type="button" onClick={()=>setEditingPost(post.id)}>Edit message</button>}
+          {canForward&&<button className="secondary" type="button" onClick={()=>setForwarding(post.id)}>Forward message</button>}
           {(canDelete||canRedact)&&<button className="danger" type="button" disabled={working} onClick={()=>{
             if(window.confirm('Remove this message? Replies and follows will remain.'))void updatePost(post,canDelete?'delete':'redact')
           }}>{canDelete?'Delete message':'Redact message'}</button>}
@@ -332,6 +396,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   }
 
   return <section className="panel release-panel" aria-label={room.name}>
+    {forwarding&&<ForwardMessageDialog key={forwarding} source={{kind:'room',conversation:room.id,message:forwarding}}
+      close={()=>setForwarding(null)} onSent={()=>setNotice('Message forwarded.')}/>}
     <h2>{room.name}</h2><p>{kinds[room.kind]}{room.template!=='blank'?' · '+templates[room.template].name+' template':''}{room.archived?' · Archived':room.locked?' · Locked':''}{role?' · '+roleLabel(role):''}</p>
     {role&&<div>
       <button type="button" className="secondary" aria-expanded={quietHours}
@@ -371,13 +437,18 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         moderator={staff} canCreate={Boolean(canPost)} onSourceUsed={()=>setTaskSource(null)}
         people={Object.fromEntries((room.kind==='admin'?workspaceAdminIds:roster.map(row=>row.user_id))
           .filter(id=>profiles[id]).map(id=>[id,profiles[id]]))}/>}
+      {activeTyping?.until&&Date.parse(activeTyping.until)>Date.now()&&<p className="thread-typing" role="status">Someone is typing…</p>}
       {canPost&&(actualView==='messages'||(actualView==='threads'&&thread&&room.kind!=='announcement'))&&
         <form className="release-form" onSubmit={send}>
-          <label>{actualView==='threads'?'Write a reply':'Write a room message'}<textarea name="body" required maxLength={4000} aria-describedby="room-mentions-help"/></label>
+          <label>{actualView==='threads'?'Write a reply':'Write a room message'}<textarea name="body" required maxLength={4000}
+            aria-describedby="room-mentions-help" onChange={event=>void sendRoomTyping(event.target.value)}
+            onBlur={()=>void stopRoomTyping(typingParent)}/></label>
           <p id="room-mentions-help">Use <code>@handle</code> to mention a room member.
             {staff&&<> Use <code>@group:"Group name"</code> for a group, <code>@channel</code> for the room, or <code>@here</code> for online members.</>}</p>
           {staff&&room.kind!=='announcement'&&actualView==='messages'&&<label className="task-check"><input type="checkbox" name="announce"/> Post as announcement</label>}
           <button className="primary" disabled={working}>Send</button>
+          <button className="secondary" type="button" disabled={!activeTyping||typingPolicyBusy}
+            aria-pressed={Boolean(activeTyping?.share)} onClick={()=>void changeRoomTypingPolicy()}>Share my typing</button>
         </form>}
       {actualView==='people'&&<>
         {room.kind==='admin'?<p>Workspace owners and admins have access.</p>:roster.map(person=><div className="release-row" key={person.user_id}>
@@ -420,6 +491,14 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         </>}
       </>}
       {actualView==='settings'&&<>
+        {staff&&room.kind==='public'&&!room.archived&&<div className="release-section">
+          <h3>Message forwarding</h3>
+          <p>Allow members to forward text messages between this room and eligible rooms in this workspace.</p>
+          <button className="secondary" type="button" disabled={working} aria-pressed={room.forwarding_allowed}
+            onClick={()=>void perform(async()=>{
+              await call('st_v6_set_room_forwarding',{p_room:room.id,p_allowed:!room.forwarding_allowed})
+            })}>Allow message forwarding</button>
+        </div>}
         {canChangeVisibility&&<div className="release-section">
           <h3>Room visibility</h3>
           <p>{room.kind==='public'?'Private rooms require admission for new members.':'Workspace members will be able to find and join this room.'} Current members keep access.</p>

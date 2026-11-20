@@ -18,6 +18,8 @@ import { Meetings } from './meetings'
 import { FilesLibrary } from './files-library'
 import { GlobalSearch, Notifications } from './discover'
 import { InProductHelp } from './in-product-help'
+import { ForwardMessageDialog, type ForwardDestination } from './forward-message'
+import { useLocale } from './locale-provider'
 import { meetingFromQuery } from '../lib/meeting-calendar'
 import { useWorkspaceContext } from './workspace-context'
 import { ScopedTasks } from './scoped-tasks'
@@ -41,9 +43,11 @@ export function Avatar({ name, tint = 'green', photo }: { name:string; tint?:str
 }
 
 type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id: string | null; latest_at: string | null }
-type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'; expires_at:string }
+type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'|'invisible'; expires_at:string }
+type PresenceSettings = { required: boolean; sharing: boolean }
 
 export function Inbox({ user }: { user: string }) {
+  const { t } = useLocale()
   const {reload:reloadWorkspaces,select:selectWorkspace}=useWorkspaceContext()
   const [profile, setProfile] = useState<Profile | null | undefined>()
   const [profiles, setProfiles] = useState<Record<string, Profile>>({})
@@ -73,6 +77,7 @@ export function Inbox({ user }: { user: string }) {
   const [broadcastOnline, setBroadcastOnline] = useState(false)
   const [working, setWorking] = useState(false)
   const [presence,setPresence] = useState<Record<string,Presence>>({})
+  const [presenceSettings,setPresenceSettings] = useState<PresenceSettings | null>(null)
   const [inboxStatus, setInboxStatus] = useState<Record<string, InboxStatus>>({})
   const activeChat = useRef<string | null>(null)
   const announced = useRef(new Map<string, string>())
@@ -117,13 +122,15 @@ export function Inbox({ user }: { user: string }) {
     setBlocks(muted.data.map(row => row.target))
     setStaff(role.data)
     const ids = [...new Set(list.map(row => peerId(row, user)))]
-    const [people,state] = await Promise.all([
+    const [people,state,settings] = await Promise.all([
       ids.length ? db!.from('st_profiles').select('*').in('id', ids) : Promise.resolve({data:[]}),
       db!.from('st_v3_presence').select('user_id,state,expires_at').in('user_id',[user,...ids]),
+      db!.rpc('st_v6_presence_settings'),
     ])
     if (version !== readVersion.current) return
     if (people.data) setProfiles(Object.fromEntries(people.data.map(person => [person.id, person])))
-    if (state.data) setPresence(Object.fromEntries((state.data as Presence[]).map(row=>[row.user_id,row])))
+    setPresence(Object.fromEntries(((state.data??[]) as Presence[]).map(row=>[row.user_id,row])))
+    setPresenceSettings(settings.data as PresenceSettings | null)
   }, [user])
 
   useEffect(() => {
@@ -151,7 +158,7 @@ export function Inbox({ user }: { user: string }) {
       .on('broadcast', { event: 'channel_activity' }, ({ payload }) => {
         if (typeof payload?.channel_id === 'string') setNotice('New activity in one of your workspace channels.')
       })
-      .on('broadcast', { event: 'workspace_memberships' }, () => void reloadWorkspaces())
+      .on('broadcast', { event: 'workspace_memberships' }, () => { void reloadWorkspaces(); void refresh() })
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))
       })
@@ -201,7 +208,7 @@ export function Inbox({ user }: { user: string }) {
   },[])
   useEffect(() => {
     if (!profile) return
-    const ping=()=>{if(document.visibilityState==='visible') void db!.rpc('st_v3_ping')}
+    const ping=async()=>{if(document.visibilityState==='visible') await db!.rpc('st_v3_ping')}
     ping()
     const timer=window.setInterval(ping,45000)
     const disconnect=onReconnect(ping)
@@ -211,7 +218,10 @@ export function Inbox({ user }: { user: string }) {
   const chat = chats.find(item => item.id === selected)
   const peer = chat ? profiles[peerId(chat, user)] : undefined
   const peerPresence = peer ? presence[peer.id] : undefined
-  const rawPeerState = peerPresence && Date.parse(peerPresence.expires_at)>Date.now() && peerPresence.state!=='offline' ? peerPresence.state : null
+  const rawPeerState = peerPresence && Date.parse(peerPresence.expires_at)>Date.now()
+    && peerPresence.state!=='offline' && peerPresence.state!=='invisible' ? peerPresence.state : null
+  const ownPresence = presence[user]?.state ?? 'offline'
+  const mustResumeSharing = presenceSettings?.required && (!presenceSettings.sharing || ownPresence==='invisible')
   const peerPresenceId=peerPresence?.user_id
   const peerExpiresAt=peerPresence?.expires_at
   useEffect(()=>{
@@ -232,7 +242,7 @@ export function Inbox({ user }: { user: string }) {
   const blocked = chat ? blocks.includes(peerId(chat, user)) : false
   const acceptedChat=chat?.status==='accepted'&&!blocked?chat.id:null
   const myExtras=useProfileExtras(profile?.id)
-  const peerExtras=useProfileExtras(acceptedChat?peer?.id:undefined)
+  const peerExtras=useProfileExtras(acceptedChat?peer?.id:undefined,true)
   const effectiveAvailability=useEffectiveAvailability(acceptedChat && tab==='inbox' ? peer?.id : undefined,hints)
   const peerState=rawPeerState && effectiveAvailability?.busy ? 'busy' : rawPeerState
   const statusMessage=effectiveAvailability?.status
@@ -241,14 +251,17 @@ export function Inbox({ user }: { user: string }) {
   useEffect(()=>{
     if(!acceptedChat) return
     let active=true
+    let sequence=0
     const check=async()=>{
+      const request=++sequence
       const {data,error}=await db!.rpc('st_v5_last_seen',{p_chat:acceptedChat})
-      if(active) setLastSeen(!error&&typeof data==='string'?{chat:acceptedChat,at:data}:null)
+      if(active&&request===sequence) setLastSeen(!error&&typeof data==='string'?{chat:acceptedChat,at:data}:null)
     }
     void check()
+    hints.addEventListener('presence',check)
     const timer=window.setInterval(check,12000)
-    return ()=>{active=false;window.clearInterval(timer)}
-  },[acceptedChat])
+    return ()=>{active=false;hints.removeEventListener('presence',check);window.clearInterval(timer)}
+  },[acceptedChat,hints])
   const lastSeenLabel=lastSeen&&lastSeen.chat===acceptedChat
     ? 'Last seen '+new Date(lastSeen.at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : ''
   const requests = chats.filter(item => item.status === 'pending' && item.requester !== user && !blocks.includes(peerId(item, user)))
@@ -347,25 +360,25 @@ export function Inbox({ user }: { user: string }) {
   if(onboarding) return <main className="discovery-onboarding"><Brand/><DiscoverySettings user={user} complete={()=>setOnboarding(false)}/></main>
 
   return <main className={'workspace ' + (selected && tab === 'inbox' ? 'thread-open' : '') + (tab !== 'inbox' ? ' full-panel' : '')}>
-    <nav className="rail" aria-label="SecTalk features">
+    <nav className="rail" aria-label={t('features')}>
       <Brand compact />
-      <button className={tab === 'inbox' || tab === 'saved' ? 'active' : ''} aria-current={tab === 'inbox' || tab === 'saved' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>Inbox</span></button>
-      <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>Friends</span></button>
-      <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>Calls</span></button>
-      <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>Workspaces</span></button>
-      <button className={tab==='rooms'?'active':''} aria-current={tab==='rooms'?'page':undefined} onClick={()=>{setRequestedRoom(null);setTab('rooms')}}><Hash size={19}/><span>Rooms</span></button>
-      <button className={tab==='tasks'?'active':''} aria-current={tab==='tasks'?'page':undefined} onClick={()=>setTab('tasks')}><ListChecks size={19}/><span>Tasks</span></button>
-      <button className={tab==='calendar'?'active':''} aria-current={tab==='calendar'?'page':undefined} onClick={()=>setTab('calendar')}><CalendarDays size={19}/><span>Calendar</span></button>
-      <button className={tab==='meetings'?'active':''} aria-current={tab==='meetings'?'page':undefined} onClick={()=>{setRequestedMeeting(null);setTab('meetings')}}><CalendarDays size={19}/><span>Meetings</span></button>
-      <button className={tab==='vault'?'active':''} aria-current={tab==='vault'?'page':undefined} onClick={()=>setTab('vault')}><Folder size={19}/><span>Files</span></button>
-      <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} onClick={()=>showSearch()}><Search size={19}/><span>Search</span></button>
-      <button className={tab==='notifications'?'active':''} aria-current={tab==='notifications'?'page':undefined} onClick={()=>setTab('notifications')}><Bell size={19}/><span>Notifications</span></button>
-      <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>Safety</span></button>
-      <div className="rail-end"><button className={tab === 'billing' ? 'active' : ''} aria-current={tab === 'billing' ? 'page' : undefined} onClick={() => setTab('billing')}><CreditCard size={19} /><span>Billing</span></button><button className={tab === 'profile' ? 'active' : ''} aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}><UserRound size={20} /><span>Profile</span></button>
-        <button onClick={async () => { await call.end(); void db!.auth.signOut({ scope: 'local' }) }}><LogOut size={19} /><span>Sign out</span></button></div>
+      <button className={tab === 'inbox' || tab === 'saved' ? 'active' : ''} aria-current={tab === 'inbox' || tab === 'saved' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>{t('inbox')}</span></button>
+      <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>{t('friends')}</span></button>
+      <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>{t('calls')}</span></button>
+      <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>{t('workspaces')}</span></button>
+      <button className={tab==='rooms'?'active':''} aria-current={tab==='rooms'?'page':undefined} onClick={()=>{setRequestedRoom(null);setTab('rooms')}}><Hash size={19}/><span>{t('rooms')}</span></button>
+      <button className={tab==='tasks'?'active':''} aria-current={tab==='tasks'?'page':undefined} onClick={()=>setTab('tasks')}><ListChecks size={19}/><span>{t('tasks')}</span></button>
+      <button className={tab==='calendar'?'active':''} aria-current={tab==='calendar'?'page':undefined} onClick={()=>setTab('calendar')}><CalendarDays size={19}/><span>{t('calendar')}</span></button>
+      <button className={tab==='meetings'?'active':''} aria-current={tab==='meetings'?'page':undefined} onClick={()=>{setRequestedMeeting(null);setTab('meetings')}}><CalendarDays size={19}/><span>{t('meetings')}</span></button>
+      <button className={tab==='vault'?'active':''} aria-current={tab==='vault'?'page':undefined} onClick={()=>setTab('vault')}><Folder size={19}/><span>{t('files')}</span></button>
+      <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} onClick={()=>showSearch()}><Search size={19}/><span>{t('search')}</span></button>
+      <button className={tab==='notifications'?'active':''} aria-current={tab==='notifications'?'page':undefined} onClick={()=>setTab('notifications')}><Bell size={19}/><span>{t('notifications')}</span></button>
+      <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>{t('safety')}</span></button>
+      <div className="rail-end"><button className={tab === 'billing' ? 'active' : ''} aria-current={tab === 'billing' ? 'page' : undefined} onClick={() => setTab('billing')}><CreditCard size={19} /><span>{t('billing')}</span></button><button className={tab === 'profile' ? 'active' : ''} aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}><UserRound size={20} /><span>{t('profile')}</span></button>
+        <button onClick={async () => { await call.end(); void db!.auth.signOut({ scope: 'local' }) }}><LogOut size={19} /><span>{t('signOut')}</span></button></div>
     </nav>
     <aside className="inbox-list">
-      <header><Brand /><div className="inbox-heading"><h1>Inbox</h1><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> Find Friends</button></div>
+      <header><Brand /><div className="inbox-heading"><h1>{t('inbox')}</h1><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> {t('findFriends')}</button></div>
         <div className="input-icon search"><Search size={17} /><input aria-label="Search contacts" placeholder="Search contacts" value={search} onChange={e => setSearch(e.target.value)} /></div>
       </header>
       <div className="tabs" aria-label="Conversation filters">
@@ -388,8 +401,8 @@ export function Inbox({ user }: { user: string }) {
       </div>
       <div className="list-footer"><Avatar name={profile.name} photo={myExtras.photo}/><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
     </aside>
-    {tab === 'profile' ? <section className="content-page"><h1>Profile</h1>
-      <SectionTabs label="Profile sections" value={profileTab} onChange={setProfileTab} options={ [['account','Account'],['availability','Availability'],['discovery','Discovery'],['activity','Activity & reports'],['blocked','Blocked contacts'],['help','Help']] }/>
+    {tab === 'profile' ? <section className="content-page"><h1>{t('profile')}</h1>
+      <SectionTabs label={t('profileSections')} value={profileTab} onChange={setProfileTab} options={ [['account',t('account')],['availability',t('availability')],['discovery',t('discovery')],['activity',t('activityReports')],['blocked',t('blockedContacts')],['help',t('help')]] }/>
       {profileTab === 'account' ? <><div className="profile-handle"><code>@{profile.handle}</code><button className="secondary" onClick={async () => {
         try { await navigator.clipboard.writeText(profile.handle); setNotice('Handle copied.') }
         catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
@@ -413,10 +426,18 @@ export function Inbox({ user }: { user: string }) {
         })}
       </div> :
       <div className="panel release-panel"><label>Availability for approved contacts
-        <select value={presence[user]?.state||'offline'} disabled={working} onChange={event=>void run('st_v3_set_presence',{p_state:event.target.value})}>
+        <select value={mustResumeSharing?'':ownPresence} disabled={working||!presenceSettings} onChange={event=>void run('st_v3_set_presence',{p_state:event.target.value})}>
+          {mustResumeSharing&&<option value="" disabled>Choose an availability state</option>}
           <option value="offline">Offline (hidden)</option><option value="online">Online</option><option value="away">Away</option><option value="busy">Busy</option>
+          {presenceSettings&&!presenceSettings.required&&<option value="invisible">Invisible</option>}
         </select></label>
-        <label className="task-check"><input type="checkbox" checked={myExtras.details?.share_last_seen||false} disabled={working}
+        {presenceSettings?.required
+          ? <p className="muted">{mustResumeSharing
+            ? 'A workspace requires availability sharing. Your availability stays private until you choose a state.'
+            : 'A workspace requires availability sharing.'}</p>
+          : <label className="task-check"><input type="checkbox" checked={presenceSettings?.sharing??false} disabled={working||!presenceSettings}
+            onChange={event=>void run('st_v6_set_presence_privacy',{p_share:event.target.checked})}/> Share availability and status with approved contacts</label>}
+        <label className="task-check"><input type="checkbox" checked={myExtras.details?.share_last_seen||false} disabled={working||!presenceSettings?.sharing||ownPresence==='invisible'}
           onChange={event=>void run('st_v5_set_last_seen',{p_enabled:event.target.checked},()=>void myExtras.refresh())}/> Share last seen</label>
         <p>Accepted contacts can see your last activity for up to seven days when both availability and last seen are shared.</p>
         <QuietHoursSettings chat={null} hints={hints}/></div>}
@@ -456,6 +477,11 @@ export function Inbox({ user }: { user: string }) {
         </header>
         {blockCheck && <div className="inline-warning"><span>{blocked ? 'Allow this contact to reach you again?' : 'Block new messages and calls from this contact?'}</span><button className="danger" disabled={working} onClick={() => void run('st_set_block', { p_chat: chat.id, p_block: !blocked }, () => { setBlockCheck(false); setNotice(blocked ? 'Contact unblocked.' : 'Contact blocked.') })}>{blocked ? 'Unblock' : 'Block'}</button><button className="secondary" onClick={() => setBlockCheck(false)}>Cancel</button></div>}
         {chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} selfName={profile.name} peerName={peer?.name||'Contact'} hints={hints} offlineMessages={offlineMessages}
+          forwardDestinations={chats.flatMap(conversation => {
+            const contact = profiles[peerId(conversation, user)]
+            if (conversation.id === chat.id || conversation.status !== 'accepted' || !contact || blocks.includes(contact.id)) return []
+            return [{ id: conversation.id, name: contact.name + ' (@' + contact.handle + ')' }]
+          })}
           blocked={blocked} inform={setNotice} onReport={(message,file) => setReport({ chat:chat.id,message,file })}
           onTask={id=>{setSourceTask(id);setChatTasks(true)}} taskPanel={chatTasks&&!blocked?<div className="feed">
             <ScopedTasks user={user} scope={{kind:'chat',id:chat.id}} source={sourceTask}
@@ -470,7 +496,7 @@ export function Inbox({ user }: { user: string }) {
             </div>}
           </div>}
       </section> : <section className="thread"><header className="thread-header default-header"><h2>Messages</h2><span className="pill"><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} />{online || broadcastOnline ? 'Live updates' : 'Syncing'}</span></header>
-        <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>Your conversations</h2><p>Choose a chat or add a contact to start talking.</p><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> Find Friends</button><button className="secondary" onClick={showHelp}>Getting started</button></div>
+        <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>{t('yourConversations')}</h2><p>{t('conversationWelcome')}</p><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> {t('findFriends')}</button><button className="secondary" onClick={showHelp}>{t('gettingStarted')}</button></div>
       </section>}
     {notice && <div className="toast" role="status"><CircleHelp size={18} /><span>{notice}</span><button className="icon" aria-label="Dismiss notice" onClick={() => setNotice('')}><X size={17}/></button></div>}
     {managedBlock&&<Dialog title={blocks.includes(peerId(managedBlock,user))?'Unblock contact?':'Block contact?'} close={()=>setManagedBlock(null)}>
@@ -582,6 +608,7 @@ function ProfileForm({ profile, onSave }: { profile: Profile | null; onSave: () 
 type Reaction = { message_id: string; user_id: string; reaction: string }
 type ChatActivity = {
   muted:boolean;read_sequence:number|null;typing_until:string|null
+  share_own_typing:boolean
   share_own_edit_history:boolean;share_peer_edit_history:boolean
 }
 type EditHistory={message:string;own:boolean;revisions:{id:number;body:string;created_at:string}[]}
@@ -599,11 +626,12 @@ const reactionOptions = [
   { emoji: '✅', label: 'Check mark' }, { emoji: '👀', label: 'Eyes' },
 ]
 
-function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, inform, onTask, taskPanel, offlineMessages }: {
+function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, inform, onTask, taskPanel, offlineMessages, forwardDestinations }: {
   chat: Chat; self: string; selfName:string; peerName:string; hints: EventTarget; blocked: boolean
   onReport: (message: Message,file?:ChatFile) => void; inform: (notice: string) => void
   onTask:(id:string)=>void;taskPanel:React.ReactNode
   offlineMessages:ReturnType<typeof useOfflineMessages>
+  forwardDestinations:ForwardDestination[]
 }) {
   const [messages, setMessages] = useState<DirectMessage[]>([])
   const [draft, setDraft] = useState('')
@@ -615,6 +643,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const [quietSettings, setQuietSettings] = useState(false)
   const [results, setResults] = useState<DirectMessage[] | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
+  const [forwarding, setForwarding] = useState<string | null>(null)
   const [removing,setRemoving]=useState<{message:Message;action:'hide'|'revoke'}|null>(null)
   const [hidden,setHidden]=useState<string[]>([])
   const [files,setFiles]=useState<Record<string,ChatFile>>({})
@@ -629,7 +658,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const [history,setHistory]=useState<EditHistory|null>(null)
   const [historySettings,setHistorySettings]=useState(false)
   const [clock, setClock] = useState(0)
-  const typingLast = useRef(0)
+  const typingPulse = useRef({ sentAt: 0, stopped: true })
+  const [typingPolicyBusy, setTypingPolicyBusy] = useState(false)
   const readLast = useRef('')
   const [older, setOlder] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -865,12 +895,37 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     return true
   }
 
-  function changeDraft(value: string) {
+  async function changeDraft(value: string) {
     setDraft(value)
+    if (blocked || !activity?.share_own_typing || typingPolicyBusy || !navigator.onLine) return
+    if (!value.trim()) {
+      await stopTyping()
+      return
+    }
     const now = Date.now()
-    if (!blocked && value.trim() && now - typingLast.current > 2200) {
-      typingLast.current = now
-      void db!.rpc('st_v2_typing', { p_chat: chat.id, p_active: true })
+    if (now - typingPulse.current.sentAt > 2200) {
+      typingPulse.current = { sentAt: now, stopped: false }
+      await db!.rpc('st_v2_typing', { p_chat: chat.id, p_active: true })
+    }
+  }
+
+  async function stopTyping() {
+    const pulse = typingPulse.current
+    if (!activity?.share_own_typing || !navigator.onLine || pulse.stopped || Date.now() - pulse.sentAt >= 5000) return
+    pulse.stopped = true
+    await db!.rpc('st_v2_typing', { p_chat: chat.id, p_active: false })
+  }
+
+  async function changeTypingPolicy() {
+    setTypingPolicyBusy(true)
+    try {
+      const { error } = await db!.rpc('st_v6_set_typing_policy', {
+        p_chat: chat.id, p_share: !activity?.share_own_typing,
+      })
+      if (error) inform(formatError(error, 'Could not update typing privacy.'))
+      else await loadActivity()
+    } finally {
+      setTypingPolicyBusy(false)
     }
   }
 
@@ -920,14 +975,14 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     }
     setDraft(previous=>previous.trim()===body?'':previous)
     setReplying(current=>current?.id===reply?null:current)
-    if(navigator.onLine)void db!.rpc('st_v2_typing',{p_chat:chat.id,p_active:false})
+    void stopTyping()
   }
 
   function pickEmoji(value:string) {
     const range=cursor.current??{start:draft.length,end:draft.length}
     const text=draft.slice(0,range.start)+value+draft.slice(range.end)
     if(text.length>4000){inform('The message exceeds the character limit.');return}
-    changeDraft(text);setEmoji(false)
+    void changeDraft(text);setEmoji(false)
     requestAnimationFrame(()=>{
       composerInput.current?.focus()
       composerInput.current?.setSelectionRange(range.start+value.length,range.start+value.length)
@@ -945,7 +1000,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     if(data==='failed'||data==='cancelled')throw new Error('This attempt has closed. Choose a new date and time.')
     pendingSchedule.current=null
     setDraft(previous=>previous.trim()===body?'':previous)
-    void db!.rpc('st_v2_typing',{p_chat:chat.id,p_active:false})
+    void stopTyping()
   }
 
   async function download(file:ChatFile) {
@@ -968,6 +1023,10 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       <button type="button" className="secondary" disabled={blocked} onClick={()=>setQuietSettings(true)}>Chat quiet hours</button>
       <button type="button" className="secondary" disabled={blocked||!activity}
         onClick={()=>setHistorySettings(true)}>Edit history settings</button>
+      <button type="button" className="secondary" disabled={blocked||!activity||typingPolicyBusy}
+        aria-pressed={Boolean(activity?.share_own_typing)} onClick={()=>void changeTypingPolicy()}>
+        Share my typing
+      </button>
     </div>
     {quietSettings && !blocked && <Dialog title="Chat quiet hours" close={()=>{setQuietSettings(false);void loadActivity()}}>
       <QuietHoursSettings chat={chat.id} hints={hints}/>
@@ -1037,6 +1096,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
             account={self} message={message.id} revision={message.edited_at||message.created_at} body={message.body} sender={message.sender}
             onReport={()=>onReport(message,file)}/>}
           <div className="message-meta"><time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
+            {message.forwarded&&!message.revoked_at&&<span>Forwarded</span>}
             {message.edited_at&&!message.revoked_at && (!blocked&&(own||activity?.share_peer_edit_history)?
               <button type="button" className="text-button" aria-label="View edit history" onClick={async () => {
               const { data, error } = await db!.from('st_v2_message_edits').select('id,body,created_at').eq('message_id', message.id).order('id', { ascending: false }).limit(25)
@@ -1057,6 +1117,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
                 <button type="button" className="text-button" onClick={()=>setReacting(message.id)}>More reactions</button>
                 <button type="button" className="text-button" onClick={() => void update('st_v2_pin', { p_chat: chat.id, p_message: message.id })}>Pin message</button>
                 <button type="button" className="text-button" onClick={() => setReplying(message)}>Reply</button>
+                {!file&&<button type="button" className="text-button" onClick={()=>setForwarding(message.id)}>Forward message</button>}
                 {own&&!file&&Date.now()-Date.parse(message.created_at)<86400000&&<button type="button" className="text-button" onClick={()=>setEditing(message)}>Edit message</button>}</>}
                 {file&&<button type="button" className="text-button" onClick={()=>void download(file)}>Download attachment</button>}
                 {!message.revoked_at&&<button type="button" className="text-button" onClick={async()=>{
@@ -1093,7 +1154,10 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         </div>
       </div>)}
     </div>
-    {activity?.typing_until && Date.parse(activity.typing_until) > clock && <p className="thread-typing" role="status">Contact is typing…</p>}
+    {!blocked && activity?.typing_until && Date.parse(activity.typing_until) > clock && <p className="thread-typing" role="status">Contact is typing…</p>}
+    {forwarding&&<ForwardMessageDialog key={forwarding}
+      source={{kind:'direct',conversation:chat.id,message:forwarding,destinations:forwardDestinations}}
+      close={()=>setForwarding(null)} onSent={()=>inform('Message forwarded.')}/>}
     {removing&&<Dialog title={removing.action==='hide'?'Delete for me?':'Revoke for everyone?'} close={()=>setRemoving(null)}>
       <p>{removing.action==='hide'?'This message will be hidden in your SecTalk chat.':'SecTalk will replace this message with a removal notice. Copies already saved and evidence already reported can remain.'}</p>
       <button type="button" className="danger" disabled={busy} onClick={async()=>{
@@ -1156,7 +1220,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         if(composerInput.current)cursor.current={start:composerInput.current.selectionStart,end:composerInput.current.selectionEnd}
         setEmoji(true)
       }}><Smile size={20}/></button>
-      <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => changeDraft(e.target.value)} onKeyDown={event => {
+      <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => void changeDraft(e.target.value)} onKeyDown={event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
       }} />
       <button type="button" className="icon" title="Scheduled messages" aria-label="Scheduled messages" onClick={()=>setScheduleOpen(true)}><CalendarClock size={19}/></button>

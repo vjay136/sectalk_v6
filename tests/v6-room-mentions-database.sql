@@ -30,6 +30,7 @@ declare
   channel_post constant uuid:=gen_random_uuid();
   member_post constant uuid:=gen_random_uuid();
   edge_post constant uuid:=gen_random_uuid();
+  hidden_post constant uuid:=gen_random_uuid();
   workspace uuid;
   other_workspace uuid;
 begin
@@ -83,6 +84,14 @@ begin
   if (select count(*) from realtime.messages where event='room_activity' and topic='st:account:'||online_id
     and payload->>'room_id'=room::text and payload->>'mention_kind'='mention.user' and private)<>1 then
     raise exception 'Expected one private direct-mention alert';
+  end if;
+
+  perform set_config('request.jwt.claim.sub',online_id::text,true);
+  perform public.st_v6_set_presence_privacy(false);
+  perform set_config('request.jwt.claim.sub',owner_id::text,true);
+  perform public.st_v6_room_post(room,hidden_post,'@here');
+  if exists(select 1 from public.st_v3_notifications where room_post_id=hidden_post) then
+    raise exception 'Online-only mention used a private availability state';
   end if;
 
   perform set_config('request.jwt.claim.sub',online_id::text,true);

@@ -6,8 +6,8 @@
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
-| Unit tests | 16 passed, including versioned warning scores, confidence and severity thresholds alongside existing file, calendar, readiness, vault and disclosure checks |
-| Supabase database integration | All 40 rollback suites passed, including workspace roster, room mentions, notification digest and private warning feedback |
+| Unit tests | 23 passed, including Unicode name comparison, ICU plural forms, scam classification and the existing warning score, file, calendar, readiness and vault checks |
+| Supabase database integration | All 44 rollback suites passed, including typing, presence privacy, impersonation watch and forwarding |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -57,9 +57,15 @@
 | Missed-call and mention digest | SQL verified recipient scope, room access removal and period boundaries. Browser verified the 24-hour and seven-day views and navigation to room and chat. |
 | Meeting network adaptation | Two browsers exchanged media over a real loopback LiveKit server while the test injected poor and recovered quality signals. The test verified lower video quality, continuous audio, and pause and resume of incoming and outgoing video. Impaired WAN and physical devices remain unverified. |
 | Warning score and feedback | Unit tests verified score, confidence and severity limits. Browser checked the warning evidence and feedback payload. SQL validated access, deduplication, and aggregate review. Staff reached Warning feedback after a real TOTP challenge. |
+| Presence privacy | Browser and SQL verified account visibility, Invisible, workspace-required disclosure, legacy preference preservation, and no hidden-presence disclosure through contact feeds or room mentions. |
+| Typing indicators | Browser verified direct and room-thread indicators and opt-out. Database tests verified separate conversations and threads, limits, expiry, blocks, timeouts and outsider denial. |
+| Message forwarding | SQL and browser verified live forwarded text and labels, same-workspace room policy, denied restricted destinations and sources, and no copied author identity or mention notification. |
+| Impersonation watch | SQL verified manager-only access and audited changes. Browser verified adding a VIP, seeing a possible lookalike in the workspace roster, and removing the watch entry. |
+| Scam classification | Unit fixtures exercised nine categories, benign texts and normalization. The browser displayed a job-scam warning, its reasons and rule confidence and verified the previous feedback payload stayed unchanged. Rules are English-only and indicate possible matches. |
+| Locale scaffold | Browser verified English and Arabic switching and persistence across reload, preserved form input, mobile signed-in navigation and the Help shortcut count. Unit tests exercised all six Arabic ICU plural forms. |
 | Local database security advisor | No warning or error reported for the isolated candidate at test time. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
-| Updated candidate | `npm run build` passed with roster controls, room mentions and digests, meeting network adaptation and warning feedback. |
+| Updated candidate | `npm run build` passed with typing and presence policy, locale support, impersonation watch, forwarding and scam classification. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |
 | Production npm dependency advisory check | 0 reported advisories at test time |

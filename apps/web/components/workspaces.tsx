@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import dynamic from 'next/dynamic'
 import { CalendarDays, Hash, ListChecks, MessageCircle, Plus, Send, Users } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
@@ -9,6 +10,10 @@ import { QuietHoursSettings } from './quiet-hours'
 import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
 import { WorkspaceGroups } from './workspace-groups'
 import { WorkspaceOnboarding } from './workspace-onboarding'
+
+const ImpersonationWatch = dynamic(() => import('./impersonation-watch').then(module => module.ImpersonationWatch), {
+  loading: () => <p role="status">Loading impersonation watch…</p>,
+})
 
 type Invite = { id: string; workspace_name: string }
 type Channel = {id:string;name:string;owner:string;visibility:'workspace'|'private';archived:boolean}
@@ -135,7 +140,7 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
 }
 
 function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;user:string;view:WorkspaceView;initialRoom?:string }) {
-  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'activity'>('people')
+  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'activity' | 'impersonation'>('people')
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
@@ -143,21 +148,24 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
   const [members, setMembers] = useState<Member[]>([])
   const [profiles, setProfiles] = useState<Record<string, Profile>>({})
   const [audit, setAudit] = useState<Audit[]>([])
+  const [presenceRequired,setPresenceRequired] = useState<boolean|null>(null)
   const [bulkResults, setBulkResults] = useState<BulkInviteResult[]>([])
   const [error, setError] = useState('')
   const activeMembers = members.filter(member => !member.suspended_at)
   const role = activeMembers.find(member => member.user_id === user)?.role
   const manager = role === 'owner' || role === 'admin'
   const load = useCallback(async () => {
-    const [channelResult, memberResult] = await Promise.all([
+    const [channelResult, memberResult, presencePolicy] = await Promise.all([
       db!.from('st_v2_channels').select('id,name,owner,visibility,archived').eq('workspace_id', space.id).order('name'),
       db!.from('st_v2_members').select('user_id,role,suspended_at').eq('workspace_id', space.id).order('joined_at').limit(500),
+      view==='workspaces' ? db!.rpc('st_v6_workspace_presence_policy',{p_workspace:space.id}) : null,
     ])
     if (channelResult.error || memberResult.error) { setError('Could not load the workspace.'); return }
     setError('')
     const people = memberResult.data as Member[]
     setMembers(people)
     setChannels(channelResult.data)
+    setPresenceRequired(typeof presencePolicy?.data==='boolean'?presencePolicy.data:null)
     setChannelId(previous => channelResult.data.some(channel => channel.id === previous) ? previous : channelResult.data[0]?.id ?? '')
     if (people.length) {
       const { data } = await db!.from('st_profiles').select('id,name,handle').in('id', people.map(member => member.user_id))
@@ -167,7 +175,7 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
       const { data } = await db!.from('st_v2_workspace_audit').select('id,event,actor,created_at').eq('workspace_id', space.id).order('id', { ascending: false }).limit(25)
       if (data) setAudit(data)
     }
-  }, [space.id, user])
+  }, [space.id, user, view])
 
   useEffect(() => {
     void load()
@@ -181,9 +189,10 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
 
   return <div className="panel release-panel">
     {view==='workspaces'&&space.policy&&<p className="muted">{space.policy.details?.label||space.policy.workspace_type} · {space.policy.template==='restricted'?'Restricted policy':'Standard policy'}</p>}
-    {view==='workspaces' && <SectionTabs label="Workspace sections" value={tab==='activity'&&!manager?'people':tab} onChange={setTab} options={[
+    {view==='workspaces' && <SectionTabs label="Workspace sections" value={(tab==='activity'||tab==='impersonation')&&!manager?'people':tab} onChange={setTab} options={[
       ['channels', <><Hash size={15}/> Channels</>], ['board', <><ListChecks size={15}/> Board</>],
-      ['people', <><Users size={15}/> People</>], ['teams','Groups & teams'], ...(manager ? [['activity','Activity'] as const] : []),
+      ['people', <><Users size={15}/> People</>], ['teams','Groups & teams'],
+      ...(manager ? [['activity','Activity'] as const,['impersonation','Impersonation watch'] as const] : []),
     ]}/>}
     {error && <p role="alert" className="error">{error}</p>}
     {view==='rooms'&&<SectionTabs label="Room sections" value={roomView} onChange={setRoomView} options={ [['rooms','Room directory'],['channels','Workspace channels']] }/>}
@@ -208,10 +217,22 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
         :<p>No {archivedChannels?'archived':'active'} channels.</p>}
     </div>}
     {view==='workspaces' && tab==='board' && <Board space={space.id} manager={manager} />}
+    {view==='workspaces' && tab==='impersonation' && manager && <ImpersonationWatch workspace={space.id}
+      accounts={activeMembers.flatMap(member => profiles[member.user_id] ? [profiles[member.user_id]] : [])} />}
     {view==='workspaces' && tab==='teams' && <WorkspaceGroups workspace={space.id} manager={manager} people={activeMembers} profiles={profiles}/>}
     {view==='tasks'&&<TaskList space={space.id} actor={user} manager={manager} members={members} profiles={profiles}/>}
     {view==='calendar'&&<WorkspaceCalendar space={space.id} />}
     {view==='workspaces'&&(tab==='people'||(tab==='activity'&&!manager)) && <div className="release-section">
+      {presenceRequired!==null&&<div>
+        {manager ? <QuickForm label="Workspace availability policy" button="Save availability policy" send={async fields => {
+          await rpc('st_v6_set_workspace_presence_policy',{p_workspace:space.id,p_required:fields.get('presence')==='required'})
+          await load()
+        }}><label>Availability sharing<select key={String(presenceRequired)} name="presence" defaultValue={presenceRequired?'required':'choice'}>
+          <option value="choice">Let members choose</option><option value="required">Require sharing</option>
+        </select></label>
+          <p className="muted">Requiring sharing disables Invisible and new changes to hide availability for active members. Existing private settings stay private until the member chooses a state.</p>
+        </QuickForm> : <p className="muted">{presenceRequired?'This workspace requires availability sharing.':'Members choose how to share their availability.'}</p>}
+      </div>}
       {manager && <QuickForm label="Invite a member" button="Send invitation" send={async fields => {
         if (!await rpc('st_v2_invite', { p_workspace: space.id, p_handle: fields.get('handle') })) throw new Error('This contact is unavailable or has already been invited.')
         await load()

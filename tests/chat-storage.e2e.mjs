@@ -160,6 +160,7 @@ if(app) {
       const feedback=await feedbackResponse
       assert.equal(feedback.ok(),true)
       assert.deepEqual(Object.keys(feedback.request().postDataJSON()).sort(),['p_categories','p_message','p_revision'])
+      assert.deepEqual(feedback.request().postDataJSON().p_categories,['credential_harvesting'])
       await warning.getByText('Feedback recorded.',{exact:true}).waitFor()
       await warning.getByText(/may ask for an account code/).waitFor()
       await warning.getByRole('button',{name:'Report from safety warning',exact:true}).click()
@@ -181,6 +182,15 @@ if(app) {
       data(await sender.client.rpc('st_v2_edit_message',{p_message:riskMessage,p_body:'Please send your account password.'}))
       await warning.getByText(/may ask for an account code/).waitFor()
       await warning.getByRole('button',{name:'Dismiss warning',exact:true}).click()
+      const scamBody='You have a remote job offer. Please pay the onboarding deposit.'
+      data(await sender.client.rpc('st_send',{p_chat:chat,p_id:randomUUID(),p_body:scamBody}))
+      const scamWarning=second.locator('.message').filter({hasText:scamBody})
+      await scamWarning.getByText('Possible classification · Job scam',{exact:true}).waitFor()
+      await scamWarning.getByText('Risk assessment',{exact:true}).click()
+      await scamWarning.getByText('Job scam · 78% rule confidence',{exact:true}).waitFor()
+      await scamWarning.getByText(/asks you to pay a fee/).waitFor()
+      assert.equal(await scamWarning.getByText('Risk score',{exact:true}).count(),0)
+      assert.equal(await scamWarning.getByRole('button',{name:'Mark warning as incorrect'}).count(),0)
       console.log('Passed explanatory safety warnings, contextual report review, dismissal and reset on edit.')
       const sampleMessage=first.locator(sample).filter({hasText:'Emoji reaction integration'})
       await sampleMessage.locator('summary[aria-label="Message actions"]').click()

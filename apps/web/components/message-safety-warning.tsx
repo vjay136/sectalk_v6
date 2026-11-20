@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { ShieldAlert } from 'lucide-react'
 import { evaluateMessageRisk, threatTaxonomy } from '../lib/safety.mjs'
+import { classifyScamMessage } from '../lib/message-scam.mjs'
 import { db } from '../lib/data'
 
 export function MessageSafetyWarning({account,message,revision,body,sender,onReport}:{
@@ -10,6 +11,7 @@ export function MessageSafetyWarning({account,message,revision,body,sender,onRep
 }){
   const key='sectalk.safety-dismissal.v1:'+account+':'+message+':'+revision
   const risk = evaluateMessageRisk(body)
+  const scamMatches = classifyScamMessage(body)
   const categories = risk.reasons.map(reason => reason.category)
   const preference = 'sectalk.safety-feedback.v1:' + account + ':' + sender + ':'
   const [dismissed,setDismissed]=useState(()=>{
@@ -17,12 +19,12 @@ export function MessageSafetyWarning({account,message,revision,body,sender,onRep
   })
   const [feedback,setFeedback]=useState<'idle'|'sending'|'saved'|'error'>('idle')
   const [repeatedLowRisk] = useState(() => {
-    try { return categories.length>0 && risk.severity==='low' &&
+    try { return scamMatches.length===0 && categories.length>0 && risk.severity==='low' &&
       categories.every(category => sessionStorage.getItem(preference+category)==='1') }
     catch { return false }
   })
   if(dismissed)return null
-  if(!risk.reasons.length)return null
+  if(!risk.reasons.length&&!scamMatches.length)return null
   async function submitFeedback(){
     setFeedback('sending')
     const {error}=await db!.rpc('st_v6_submit_risk_feedback',{
@@ -34,18 +36,25 @@ export function MessageSafetyWarning({account,message,revision,body,sender,onRep
     }catch{/* Feedback is already recorded. */}
     setFeedback('saved')
   }
-  const reasons=<ul>{risk.reasons.map(({category,reason})=><li key={category}>{reason}</li>)}</ul>
+  const reasons=risk.reasons.length>0&&<ul>{risk.reasons.map(({category,reason})=><li key={category}>{reason}</li>)}</ul>
+  const scamLabels = scamMatches.map(({category}) => threatTaxonomy[category]).join(', ')
   const evidence=<>
-    <dl>
+    {risk.reasons.length>0&&<dl>
       <dt>Risk score</dt><dd>{risk.score} / 100</dd>
       <dt>Severity</dt><dd>{risk.severity}</dd>
       <dt>Rule confidence</dt><dd>{Math.round(risk.confidence*100)}%</dd>
       <dt>Categories</dt><dd>{categories.map(category=>threatTaxonomy[category]).join(', ')}</dd>
-    </dl>
-    <p>SecTalk checked this message on your device. The score reflects the patterns found.</p>
-    <p>Feedback includes the warning categories and a message reference. It omits the message text.</p>
-    <button type="button" className="secondary" disabled={feedback==='sending'||feedback==='saved'}
-      onClick={()=>void submitFeedback()}>Mark warning as incorrect</button>
+    </dl>}
+    {scamMatches.map(({category,confidence,reasons:signals})=><div key={category}>
+      <strong>{threatTaxonomy[category]} · {Math.round(confidence*100)}% rule confidence</strong>
+      <ul>{signals.map(signal=><li key={signal}>{signal}</li>)}</ul>
+    </div>)}
+    <p>SecTalk checked this message on your device. Rule confidence reflects how closely the text matches known patterns.</p>
+    {risk.reasons.length>0&&<>
+      <p>Feedback includes the scored warning categories and a message reference. It omits the message text.</p>
+      <button type="button" className="secondary" disabled={feedback==='sending'||feedback==='saved'}
+        onClick={()=>void submitFeedback()}>Mark warning as incorrect</button>
+    </>}
     {feedback==='saved'&&<p role="status">Feedback recorded.</p>}
     {feedback==='error'&&<p role="alert">Feedback could not be recorded.</p>}
   </>
@@ -57,6 +66,7 @@ export function MessageSafetyWarning({account,message,revision,body,sender,onRep
   </details>
   return <aside className="risk-warning" aria-label="Message safety warning">
     <div className="release-row"><ShieldAlert size={16} aria-hidden="true"/><strong>Possible safety concern</strong></div>
+    {scamMatches.length>0&&<p>Possible classification · {scamLabels}</p>}
     {reasons}
     <details>
       <summary>Risk assessment</summary>

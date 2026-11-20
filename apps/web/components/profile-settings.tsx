@@ -6,22 +6,30 @@ import { db, formatError } from '../lib/data'
 type Extras = { status_message:string; photo_revision:string|null; share_last_seen:boolean }
 type Counts = { sent:number;received:number;reports:number;open_reports:number }
 
-export function useProfileExtras(user: string|undefined) {
+export function useProfileExtras(user: string|undefined, photoOnly=false) {
   const [details,setDetails]=useState<{user:string;value:Extras}|null>(null)
+  const [peerRevision,setPeerRevision]=useState<{user:string;value:string}|null>(null)
   const [photo,setPhoto]=useState<{user:string;url:string}|null>(null)
   const refresh=useCallback(async()=>{
     if(!user)return
+    if(photoOnly){
+      const {data,error}=await db!.rpc('st_v6_profile_photo_revision',{p_user:user})
+      setPeerRevision(!error&&typeof data==='string'?{user,value:data}:null)
+      return
+    }
     const {data,error}=await db!.from('st_v5_profile_details').select('status_message,photo_revision,share_last_seen').eq('user_id',user).maybeSingle()
     if(error)return
     setDetails(previous=>previous?.user===user&&previous.value.photo_revision===data?.photo_revision&&previous.value.status_message===data?.status_message&&previous.value.share_last_seen===data?.share_last_seen
       ? previous : data?{user,value:data}:null)
-  },[user])
+  },[user,photoOnly])
   useEffect(()=>{
     void refresh()
     const timer=window.setInterval(refresh,14000)
     return ()=>window.clearInterval(timer)
   },[refresh])
-  const revision=details?.user===user?details?.value.photo_revision:null
+  const revision=photoOnly
+    ? (peerRevision?.user===user?peerRevision?.value:null)
+    : (details?.user===user?details?.value.photo_revision:null)
   useEffect(()=>{
     setPhoto(null)
     if(!user||!revision)return

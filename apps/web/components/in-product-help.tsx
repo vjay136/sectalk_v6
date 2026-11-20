@@ -1,41 +1,47 @@
+'use client'
+
 import { CircleHelp, Keyboard } from 'lucide-react'
+import { LanguageSelect, useLocale } from './locale-provider'
 
 const shortcuts = [
-  { keys: [['Ctrl','K'],['Command','K']], action:'Open the command palette' },
-  { keys: [['↑'],['↓']], action:'Move between commands in the palette' },
-  { keys: [['Enter']], action:'Run the focused command or submit a palette search' },
-  { keys: [['Esc']], action:'Close the command palette' },
-  { keys: [['Enter']], action:'Send a message from the chat composer' },
-  { keys: [['Shift','Enter']], action:'Add a line break in the chat composer' },
-]
+  { keys: [['Ctrl','K'],['Command','K']], action: 'openPalette' },
+  { keys: [['↑'],['↓']], action: 'movePalette' },
+  { keys: [['Enter']], action: 'runPalette' },
+  { keys: [['Esc']], action: 'closePalette' },
+  { keys: [['Enter']], action: 'sendMessage' },
+  { keys: [['Shift','Enter']], action: 'addLineBreak' },
+] as const
 
 export function InProductHelp({ openFriends, openSafety }: {
   openFriends:()=>void; openSafety:()=>void
 }) {
+  const { t } = useLocale()
   return <div className="release-section">
     <section className="panel release-panel" aria-labelledby="help-getting-started">
-      <div className="release-row"><CircleHelp size={19} aria-hidden="true"/><h2 id="help-getting-started">Getting started</h2></div>
+      <div className="release-row"><CircleHelp size={19} aria-hidden="true"/><h2 id="help-getting-started">{t('gettingStarted')}</h2></div>
+      <LanguageSelect />
       <details className="release-create">
-        <summary>Connect with someone</summary>
-        <p>Open Find Friends and enter a SecTalk handle, or browse people who enabled discovery. You can message or call after the other person accepts your request.</p>
-        <button type="button" className="secondary" onClick={openFriends}>Open Find Friends</button>
+        <summary>{t('connectWithSomeone')}</summary>
+        <p>{t('connectHelp')}</p>
+        <button type="button" className="secondary" onClick={openFriends}>{t('openFriends')}</button>
       </details>
       <details className="release-create">
-        <summary>Block a contact or report a message</summary>
-        <p>Use Block contact in the conversation header to stop new messages and calls. Open a message’s actions menu to report it. Follow the report from Safety.</p>
-        <button type="button" className="secondary" onClick={openSafety}>Open Safety</button>
+        <summary>{t('blockOrReport')}</summary>
+        <p>{t('blockOrReportHelp')}</p>
+        <button type="button" className="secondary" onClick={openSafety}>{t('openSafety')}</button>
       </details>
       <details className="release-create">
-        <summary>Find a saved message</summary>
-        <p>Choose Save message in the message actions menu. Open Saved messages from Inbox to see your saved items.</p>
+        <summary>{t('findSaved')}</summary>
+        <p>{t('findSavedHelp')}</p>
       </details>
     </section>
     <section className="panel release-panel" aria-labelledby="help-keyboard-shortcuts">
-      <div className="release-row"><Keyboard size={19} aria-hidden="true"/><h2 id="help-keyboard-shortcuts">Keyboard shortcuts</h2></div>
+      <div className="release-row"><Keyboard size={19} aria-hidden="true"/><h2 id="help-keyboard-shortcuts">{t('keyboardShortcuts')}</h2></div>
+      <p>{t('keyboardShortcutCount', { count: shortcuts.length })}</p>
       <dl>{shortcuts.map(({keys,action})=><div className="release-row" key={action}>
-        <dt>{keys.map((combo,index)=><span key={combo.join('+')}>{index>0?' or ':''}{combo.map((key,position)=>
-          <span key={key}>{position>0?' + ':''}<kbd>{key}</kbd></span>)}</span>)}</dt>
-        <dd>{action}</dd>
+        <dt>{keys.map((combo,index)=><span key={combo.join('+')}>{index > 0 ? ` ${t('shortcutOr')} ` : ''}<bdi dir="ltr">{combo.map((key,position)=>
+          <span key={key}>{position>0?' + ':''}<kbd>{key}</kbd></span>)}</bdi></span>)}</dt>
+        <dd>{t(action)}</dd>
       </div>)}</dl>
     </section>
   </div>

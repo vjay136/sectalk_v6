@@ -54,6 +54,12 @@
 | P5 | Summarize missed incoming calls and room mentions in a private digest | Digest SQL and browser cases for both periods, links and permission changes |
 | P5 | Adapt meeting video quality and recover from audio-only mode | Two-browser LiveKit test with simulated quality ratings and actual audio and video tracks |
 | P9 | Score message warnings on-device and collect privacy-preserving feedback | Safety unit and browser tests, aggregate review SQL and TOTP browser access. Rule and threshold proposal workflows remain open. |
+| P5 | Add member and workspace controls for presence privacy and Invisible mode | Presence privacy SQL and two-browser settings, policy and contact views |
+| P5 | Add private typing controls to direct chats, rooms and threads | Typing SQL and two-browser checks for signal delivery, suppression and conversation isolation |
+| P5 | Forward text between eligible direct chats and public rooms | SQL and browser checks for labels, restricted destinations, moderator policy and protection of source identity |
+| P9 | Let workspace managers review possible executive and VIP impersonation | Unicode name comparison tests, SQL access and audit fixtures, and two-browser watch-list verification |
+| P9 | Classify scam and phishing patterns locally in message warnings | Nine category fixtures, benign cases, and a browser-verified scam warning |
+| P10 | Add an English and Arabic locale scaffold with ICU messages | Locale unit tests and production browser checks on public and signed-in screens |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.

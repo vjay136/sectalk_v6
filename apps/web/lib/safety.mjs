@@ -79,14 +79,19 @@ function suspiciousLink(raw) {
   }
 }
 
+/** @param {string} text */
+export function normalizeSafetyMessage(text) {
+  return text.slice(0, 16000).normalize('NFKC').replace(/[\u200B-\u200F\u2060\uFEFF]/g, '')
+    .replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, ' ')
+}
+
 /**
  * On-device evidence only. Confidence expresses rule strength, not the
  * probability that the sender intended harm. The result proposes no action.
  * @param {string} text
  */
 export function evaluateMessageRisk(text) {
-  const normalized = text.slice(0, 16000).normalize('NFKC').replace(/[\u200B-\u200F\u2060\uFEFF]/g, '')
-    .replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, ' ')
+  const normalized = normalizeSafetyMessage(text)
   const urls = normalized.match(/https?:\/\/[^\s<>"']+/gi) ?? []
   /** @type {Array<{category: ThreatCategory, score: number, confidence: number, reason: string}>} */
   const matches = textRules.filter(rule => rule.check.test(normalized))

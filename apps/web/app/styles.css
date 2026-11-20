@@ -49,12 +49,15 @@ label { display: grid; gap: 7px; font-size: .88rem; font-weight: 650; }
 }
 .landing { max-width: 1510px; margin: 0 auto; padding: 0 clamp(22px, 6.9vw, 116px); }
 .site-header { display: flex; align-items: center; gap: 25px; padding: 24px 0; border-bottom: 1px solid var(--line); }
-.header-link { display: flex; align-items: center; gap: 7px; color: var(--muted); margin-left: auto; font-size: .87rem; }
+.header-link { display: flex; align-items: center; gap: 7px; color: var(--muted); margin-inline-start: auto; font-size: .87rem; }
+.language-select { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .8rem; }
+.language-select select { width: auto; padding: 5px 7px; }
+[dir="rtl"] .landing :is(.lucide-arrow-left, .lucide-arrow-right) { transform: scaleX(-1); }
 .header-link:hover, .learn:hover { color: var(--accent); }
 .header-cta { background: transparent; }
 .benefits { display: grid; grid-template-columns: repeat(3,1fr); border: 1px solid var(--line); border-radius: 16px; background: #0d1728; scroll-margin: 20px; }
 .benefits > div { padding: clamp(17px, 2.7vw, 35px); }
-.benefits > div + div { border-left: 1px solid var(--line); }
+.benefits > div + div { border-inline-start: 1px solid var(--line); }
 .benefits svg { color: var(--accent); width: 21px; height: 21px; margin-bottom: 11px; }
 .benefits h2 { font-size: 1.05rem; margin-bottom: 5px; }
 .benefits p { font-size: .88rem; }
@@ -71,12 +74,12 @@ label { display: grid; gap: 7px; font-size: .88rem; font-weight: 650; }
 .site-footer > a { display: flex; align-items: center; gap: 5px; }
 .center-page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100dvh; padding: 22px; gap: 20px; }
 .workspace { display: grid; grid-template-columns: 70px minmax(245px, 310px) minmax(0,1fr); height: 100dvh; overflow: hidden; }
-.rail { background: #0b1322; border-right: 1px solid var(--line); padding: 16px 10px; display: flex; flex-direction: column; align-items: center; gap: 11px; }
+.rail { background: #0b1322; border-inline-end: 1px solid var(--line); padding: 16px 10px; display: flex; flex-direction: column; align-items: center; gap: 11px; }
 .rail-logo { width: 40px; height: 40px; margin-bottom: 12px; }
 .rail button { border: 0; border-radius: 10px; width: 44px; height: 44px; display: grid; place-items: center; color: var(--muted); background: transparent; }
 .rail button.active, .rail button:hover { background: var(--accent-soft); color: var(--accent); }
 .rail-end { margin-top: auto; display: grid; gap: 8px; }
-.inbox-list { min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: #0e1929; border-right: 1px solid var(--line); }
+.inbox-list { min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: #0e1929; border-inline-end: 1px solid var(--line); }
 .inbox-list > header { padding: 19px; }
 .inbox-list .brand { font-size: 1.18rem; }
 .inbox-list .brand-icon { width: 34px; height: 34px; border-radius: 9px; }
@@ -173,8 +176,8 @@ blockquote { margin: 0; width: 100%; border-left: 3px solid #6285ab; color: var(
 .risk-warning ul { margin: 0 0 7px; padding-inline-start: 18px; }
 @media (max-width: 700px) {
   .benefits { grid-template-columns: 1fr; }
-  .benefits > div + div { border-left: 0; border-top: 1px solid var(--line); }
-  .site-header { gap: 9px; padding: 14px 0; }
+  .benefits > div + div { border-inline-start: 0; border-top: 1px solid var(--line); }
+  .site-header { flex-wrap: wrap; gap: 9px; padding: 14px 0; }
   .site-footer > span { display: none; }
   .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) 55px; }
   .workspace .rail { grid-row: 2; grid-column: 1; flex-direction: row; justify-content: center; padding: 4px; border: 0; border-top: 1px solid var(--line); z-index: 2; }
@@ -439,7 +442,7 @@ body { background: var(--bg); }
   .header-link svg { width: 19px; height: 19px; }
   .header-cta { padding-inline: 10px; }
   .benefits { grid-template-columns: 1fr; }
-  .benefits > div + div { border-left: 0; border-top: 1px solid var(--line); }
+  .benefits > div + div { border-inline-start: 0; border-top: 1px solid var(--line); }
 }
 @media (max-width: 700px) {
   .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) auto; }
