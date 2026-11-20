@@ -33,6 +33,7 @@ begin
   perform set_config('request.jwt.claims',json_build_object('sub',sender,'role','authenticated')::text,true);
   perform public.st_send(chat,m,'First saved sample');
   perform public.st_send(chat,m2,'Second saved sample');
+  perform public.st_v2_pin(chat,m);
   perform public.st_send(chat,source,repeat('x',240)||' [SecTalk-QA] <b>plain text</b>');
   perform public.st_v2_send_reply(chat,reply,'Quoted reply',m);
   if not exists(select 1 from public.st_v6_reply_quotes(chat,array[m]) q where q.id=m and q.sender=auth.uid() and q.body='First saved sample')
@@ -58,6 +59,10 @@ begin
   if exists(select 1 from public.st_v6_search('[sectalk-qa]','direct')) then raise exception 'Search leaked a private snippet'; end if;
   if exists(select 1 from public.st_v6_reply_quotes(chat,array[m,m2])) then raise exception 'Quote API leaked a private message'; end if;
   begin
+    perform public.st_v2_pin(chat,m);
+    raise exception 'Outside account pinned a message' using errcode='P0004';
+  exception when raise_exception then null; end;
+  begin
     insert into public.st_v6_saved_messages(message_id) values(m);
     raise exception 'Outside account saved an inaccessible message' using errcode='P0004';
   exception when insufficient_privilege then null;
@@ -66,11 +71,16 @@ begin
   if not exists(select 1 from public.st_v6_saved_searches where query='Saved sample') then raise exception 'Other account removed owner saved search'; end if;
   perform public.st_v5_message_action(m,'revoke');
   perform public.st_v5_message_action(m2,'hide');
+  if exists(select 1 from public.st_v2_pins where chat_id=chat) then raise exception 'Revocation kept the pin'; end if;
   perform public.st_v2_send_reply(chat,reply,'Quoted reply',m);
   if exists(select 1 from public.st_v6_reply_quotes(chat,array[m,m2]))
     or not exists(select 1 from public.st_messages where id=reply and reply_to=m and body='Quoted reply')
     then raise exception 'Revocation or hiding leaked the quote or broke the reply'; end if;
   for target in select unnest(array[m,m2]) loop
+    begin
+      perform public.st_v2_pin(chat,target);
+      raise exception 'Unavailable source was pinned' using errcode='P0004';
+    exception when raise_exception then null; end;
     begin
       perform public.st_v2_send_reply(chat,gen_random_uuid(),'New reply to unavailable message',target);
       raise exception 'New reply was accepted for an unavailable source' using errcode='P0004';
@@ -89,6 +99,9 @@ begin
   perform set_config('request.jwt.claims',json_build_object('sub',receiver,'role','authenticated')::text,true);
   if (select array_agg(s.id) from public.st_v6_search('saved sample','direct') s) is distinct from array[m2]
     then raise exception 'Search hide was not private to the acting account'; end if;
+  perform public.st_v2_pin(chat,m2);
+  perform public.st_v2_pin(chat,null);
+  if exists(select 1 from public.st_v2_pins where chat_id=chat) then raise exception 'Contact failed to unpin'; end if;
 end $$;
 reset role;
 select 'passed: private saves and searches, idempotent writes, removal, inaccessible chats, hide, revoke, readiness' as result;

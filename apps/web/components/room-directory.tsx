@@ -7,7 +7,7 @@ import { ScopedTasks } from './scoped-tasks'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
-type Room={id:string;name:string;kind:Kind;archived:boolean;locked:boolean;slow_seconds:number}
+type Room={id:string;name:string;kind:Kind;template:Template;archived:boolean;locked:boolean;slow_seconds:number}
 type Post={id:string;sender:string;body:string;kind:'message'|'announcement';created_at:string}
 type Roster={user_id:string;role:Role}
 type Entry={user_id:string;kind:'invite'|'request';invited_role:Role;expires_at:string}
@@ -15,7 +15,14 @@ type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:
 type ThreadState={post_id:string;replies:number;following:boolean;excerpt:string}
 type DirectoryProps={space:string;user:string;manager:boolean;profiles:Record<string,Profile>;workspaceAdminIds:string[]}
 const kinds:Record<Kind,string>={public:'Workspace-wide',private:'Private',admin:'Admins only',announcement:'Announcements',broadcast:'Broadcast'}
-const templates={blank:'public',class:'private',incident:'admin',family:'private',project:'public'} as const
+const templates={
+  blank:{name:'Blank room',kinds:['public','private','admin','announcement','broadcast'],description:''},
+  class:{name:'Class',kinds:['private'],description:'Requires room admission and starts with a 15-second posting interval for members. Pins guidance for lessons and assignments.'},
+  incident:{name:'Incident',kinds:['admin'],description:'Workspace owners and admins can access this room. Pins a response guide for roles, status, and incident timelines.'},
+  family:{name:'Family',kinds:['private'],description:'Requires room admission. Pins guidance for household plans and sharing personal details.'},
+  project:{name:'Project',kinds:['public','private'],description:'Starts workspace-wide or can require room admission. Pins prompts for goals, ownership, and milestones.'},
+} as const
+type Template=keyof typeof templates
 const roleLabel=(value:string)=>value.replaceAll('_',' ')
 
 async function call(name:string,input:Record<string,unknown>) {
@@ -28,6 +35,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:Di
   const [rooms,setRooms]=useState<Room[]|null>(null)
   const [selected,setSelected]=useState('')
   const [filter,setFilter]=useState<'active'|'archived'>('active')
+  const [template,setTemplate]=useState<Template>('blank')
   const [kind,setKind]=useState<Kind>('public')
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
@@ -35,7 +43,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:Di
   const [creating,setCreating]=useState(false)
   const newId=useRef<{key:string;id:string}|null>(null)
   const refresh=useCallback(async()=>{
-    const {data,error}=await db!.from('st_v6_rooms').select('id,name,kind,archived,locked,slow_seconds').eq('workspace_id',space).order('name')
+    const {data,error}=await db!.from('st_v6_rooms').select('id,name,kind,template,archived,locked,slow_seconds').eq('workspace_id',space).order('name')
     if(error){setError('Could not load room directory.');return}
     setRooms(data as Room[])
   },[space])
@@ -56,6 +64,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:Di
 
   const visible=rooms?.filter(room=>room.archived===(filter==='archived'))
   const current=visible?.find(room=>room.id===selected)
+  const preset=templates[template]
 
   return <section aria-label="Room directory">
     <h2>Room directory</h2>
@@ -68,7 +77,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:Di
         event.preventDefault()
         const values=new FormData(event.currentTarget)
         void perform(async()=>{
-          const input={p_workspace:space,p_name:values.get('name'),p_kind:kind,p_template:values.get('template')}
+          const input={p_workspace:space,p_name:values.get('name'),p_kind:kind,p_template:template}
           const key=JSON.stringify(input)
           if(newId.current?.key!==key)newId.current={key,id:crypto.randomUUID()}
           const id=await call('st_v6_room_create',{...input,p_id:newId.current.id})
@@ -77,11 +86,15 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:Di
         })
       }}>
         <label>Room name<input name="name" required maxLength={64}/></label>
-        <label>Room template<select name="template" onChange={event=>setKind(templates[event.target.value as keyof typeof templates])}>
-          {Object.keys(templates).map(template=><option key={template} value={template}>{template}</option>)}
+        <label>Room template<select name="template" value={template} onChange={event=>{
+          const next=event.target.value as Template
+          setTemplate(next);setKind(templates[next].kinds[0])
+        }}>
+          {Object.entries(templates).map(([id,entry])=><option key={id} value={id}>{entry.name}</option>)}
         </select></label>
+        {preset.description&&<p aria-live="polite">{preset.description}</p>}
         <label>Room type<select value={kind} onChange={event=>setKind(event.target.value as Kind)}>
-          {Object.entries(kinds).map(([key,label])=><option key={key} value={key}>{label}</option>)}
+          {preset.kinds.map(option=><option key={option} value={option}>{kinds[option]}</option>)}
         </select></label>
         <button className="primary" disabled={working}>Create room</button>
       </form>
@@ -240,7 +253,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
   }
 
   return <section className="panel release-panel" aria-label={room.name}>
-    <h2>{room.name}</h2><p>{kinds[room.kind]}{room.archived?' · Archived':room.locked?' · Locked':''}{role?' · '+roleLabel(role):''}</p>
+    <h2>{room.name}</h2><p>{kinds[room.kind]}{room.template!=='blank'?' · '+templates[room.template].name+' template':''}{room.archived?' · Archived':room.locked?' · Locked':''}{role?' · '+roleLabel(role):''}</p>
     {error&&<p role="alert" className="error">{error}</p>}
     {notice&&<p role="status">{notice}</p>}
     {role===undefined&&!error&&<p role="status">Loading room…</p>}

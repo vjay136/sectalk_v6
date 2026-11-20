@@ -111,6 +111,10 @@ begin
     or not exists(select 1 from public.st_v6_room_pins where room_id=public_room and post_id=root_message)
     then raise exception 'Approved room or pin unavailable'; end if;
   begin
+    perform public.st_v6_room_settings(public_room,'pin',root_message);
+    raise exception 'A regular member changed a room pin' using errcode='P0004';
+  exception when raise_exception then null; end;
+  begin
     perform public.st_v6_room_post(private_room,gen_random_uuid(),'Muted post');
     raise exception 'Muted account wrote a message' using errcode='P0004';
   exception when raise_exception then null; end;

@@ -71,3 +71,19 @@ Reply stores a reference to the original message. The server resolves the quote 
 ## CALL-05 · Instant meetings
 
 A workspace owner or admin can use Meet now to open a meeting immediately. The server creates the live meeting and admits the host in the same transaction. Existing lobby permissions govern member entry, and other members receive a private meeting-started notice.
+
+## ROOM-11 and MSG-12 · Room templates and pins
+
+Workspace owners and admins can create from Class, Incident, Family or Project. Class and Family default to private, Incident uses an admin-only room, and Project offers public-within-workspace or private visibility. Class starts with a 15-second posting interval. Each template pins a starter guide. Accepted direct contacts can pin a visible message and either contact can unpin it. Room pins require a room manager. Revoking a direct message clears its pin.
+
+## PRES-01 · Contact availability
+
+Choose Online, Away, Busy or Offline in Profile Availability. Accepted contacts can see an opted-in state while its heartbeat remains current. Heartbeats are rate-limited. Expiry and a block both remove live availability from the contact’s view.
+
+## PLAT-12 · In-product help
+
+New accounts set up a profile and discovery preferences before entering the Inbox. The empty Inbox links to Getting started. The same Help section is available from Profile and the command palette, with shortcuts for finding people, using safety controls and retrieving saved messages.
+
+## SRCH-09 · Workspace audit search
+
+An active workspace owner or admin can open Audit logs from Search. Select a workspace, search by event, room name, actor ID or target ID, and filter by source and dates. Room events require the caller’s existing room audit permission. The query returns up to 100 events and runs against audit records separately from message search.

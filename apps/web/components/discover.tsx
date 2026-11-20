@@ -5,6 +5,7 @@ import { Bell, Check, Search } from 'lucide-react'
 import { db, liveChannel, onReconnect } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { TaskNotices } from './scoped-tasks'
+import { AuditSearch, type AuditWorkspace } from './audit-search'
 
 type Result = { kind:'direct'|'channel'|'board'|'meeting'; id:string; scope_id:string; title:string; snippet:string; at:string }
 type SearchKind=Result['kind']|'all'
@@ -26,13 +27,29 @@ export function GlobalSearch({ openChat,openMeeting,openPalette,initialQuery='' 
   const [results,setResults]=useState<Result[]|null>(null)
   const [kind,setKind]=useState<SearchKind>('all')
   const [query,setQuery]=useState(initialQuery)
-  const [view,setView]=useState<'search'|'saved'>('search')
+  const [view,setView]=useState<'search'|'saved'|'audit'>('search')
+  const [auditWorkspaces,setAuditWorkspaces]=useState<AuditWorkspace[]>([])
   const [matchedQuery,setMatchedQuery]=useState('')
   const [saved,setSaved]=useState<SavedSearch[]|null>(null)
   const [loading,setLoading]=useState(false)
   const [editing,setEditing]=useState(false)
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
+  useEffect(()=>{
+    let active=true
+    let version=0
+    const reload=async()=>{
+      const request=++version
+      const {data,error}=await db!.rpc('st_v6_audit_workspaces')
+      if(!active||request!==version)return
+      const spaces=error?[]:data as AuditWorkspace[]
+      setAuditWorkspaces(spaces)
+      if(!spaces.length)setView(previous=>previous==='audit'?'search':previous)
+    }
+    void reload()
+    const reconnect=onReconnect(reload)
+    return ()=>{active=false;reconnect()}
+  },[])
   const refreshSaved=useCallback(async()=>{
     const {data,error}=await db!.from('st_v6_saved_searches').select('id,query,kind').order('created_at',{ascending:false}).order('id',{ascending:false}).limit(100)
     if(error){setError('Saved searches could not be loaded.');return}
@@ -89,10 +106,10 @@ export function GlobalSearch({ openChat,openMeeting,openPalette,initialQuery='' 
       <button className="secondary" type="button" aria-keyshortcuts="Control+K Meta+K" onClick={openPalette}>Open command palette</button>
     </div></header>
     <SectionTabs label="Search tabs" value={view} onChange={next=>{if(!loading&&!editing){setView(next);setError('');setNotice('')}}}
-      options={ [['search','Search SecTalk'],['saved','Saved searches']] }/>
+      options={ [['search','Search SecTalk'],['saved','Saved searches'],...(auditWorkspaces.length?[['audit','Audit logs'] as const]:[])] }/>
     {error&&<p role="alert" className="error">{error}</p>}
     {notice&&<p role="status">{notice}</p>}
-    {view==='saved'?<div className="panel release-panel">
+    {view==='audit'?<AuditSearch workspaces={auditWorkspaces}/>:view==='saved'?<div className="panel release-panel">
       {!saved&&!error&&<p role="status">Loading your saved searches…</p>}
       {saved?.length===0&&<p>No saved searches yet.</p>}
       {saved?.map(item=><div className="release-row" key={item.id}>

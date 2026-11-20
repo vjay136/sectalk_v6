@@ -1,0 +1,72 @@
+// Uses a new verified test account in the isolated loopback Supabase project.
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { createClient } from '@supabase/supabase-js'
+
+const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
+const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
+assert.equal(app.hostname,'127.0.0.1')
+assert.equal(supabase.hostname,'127.0.0.1')
+assert.ok(process.env.SECTALK_STORAGE_TEST_SERVICE_KEY)
+const admin = createClient(supabase.href,process.env.SECTALK_STORAGE_TEST_SERVICE_KEY,{
+  auth:{persistSession:false,autoRefreshToken:false},
+})
+const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
+const handle = 'help_' + randomUUID().slice(0,8)
+const email = handle + '@example.org'
+const password = randomUUID() + '1!Q'
+const { error } = await admin.auth.admin.createUser({email,password,email_confirm:true})
+if(error)throw error
+
+const browser = await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER})
+try {
+  const page = await browser.newPage()
+  await page.goto(new URL('/#account',app).href)
+  await page.getByLabel('Email address',{exact:true}).fill(email)
+  await page.getByLabel('Password',{exact:true}).fill(password)
+  await page.locator('button.submit-auth').click()
+  await page.getByRole('heading',{name:'Set up your profile',exact:true}).waitFor()
+  await page.getByLabel('Display name',{exact:true}).fill('Help browser user')
+  await page.getByLabel('Handle',{exact:true}).fill(handle)
+  await page.getByRole('button',{name:'Save profile',exact:false}).click()
+  await page.getByRole('heading',{name:'Choose your interests',exact:true}).waitFor()
+  const stage = page.getByRole('combobox')
+  await stage.selectOption('professional')
+  await page.getByRole('button',{name:'Coding',exact:true}).click()
+  assert.equal(await page.getByLabel('Appear in Find Friends',{exact:true}).isChecked(),false)
+  await page.getByRole('button',{name:'Save and continue',exact:true}).click()
+  await page.getByText('No conversations yet',{exact:true}).waitFor()
+  await page.getByRole('button',{name:'Getting started',exact:true}).click()
+
+  const help = page.getByRole('group',{name:'Profile sections'}).getByRole('button',{name:'Help',exact:true})
+  assert.equal(await help.getAttribute('aria-pressed'),'true')
+  const shortcuts = page.getByRole('region',{name:'Keyboard shortcuts'})
+  await shortcuts.getByText('Add a line break in the chat composer',{exact:true}).waitFor()
+  await shortcuts.locator('kbd').filter({hasText:/^Ctrl$/}).waitFor()
+  await page.getByText('Connect with someone',{exact:true}).click()
+  await page.getByRole('button',{name:'Open Find Friends',exact:true}).click()
+  await page.getByRole('heading',{name:'Find Friends',exact:true}).waitFor()
+  await page.getByRole('button',{name:'My discovery profile',exact:true}).click()
+  await page.getByRole('button',{name:'Remove Coding',exact:true}).waitFor()
+  assert.equal(await stage.inputValue(),'professional')
+
+  await page.keyboard.press('Control+k')
+  const palette = page.getByRole('dialog',{name:'Command palette',exact:true})
+  await palette.getByRole('textbox').fill('keyboard shortcuts')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await palette.waitFor({state:'hidden'})
+  await shortcuts.waitFor()
+  await page.getByText('Block a contact or report a message',{exact:true}).click()
+  await page.getByRole('button',{name:'Open Safety',exact:true}).click()
+  await page.getByRole('heading',{name:'Safety center',exact:true}).waitFor()
+
+  await page.setViewportSize({width:390,height:844})
+  await page.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Profile',exact:true}).click()
+  await help.click()
+  await shortcuts.waitFor()
+  console.log('Passed new-profile onboarding, private discovery setup, empty Inbox guidance, help actions, keyboard shortcut navigation and mobile help.')
+} finally {
+  await browser.close()
+}

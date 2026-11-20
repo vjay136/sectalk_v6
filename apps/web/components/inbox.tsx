@@ -17,6 +17,7 @@ import { Billing } from './billing'
 import { Meetings } from './meetings'
 import { FilesLibrary } from './files-library'
 import { GlobalSearch, Notifications } from './discover'
+import { InProductHelp } from './in-product-help'
 import { ScopedTasks } from './scoped-tasks'
 import { SectionTabs } from './section-tabs'
 import { CommandPalette, type Command } from './command-palette'
@@ -53,7 +54,7 @@ export function Inbox({ user }: { user: string }) {
   const [paletteSearch,setPaletteSearch]=useState({query:'',sequence:0})
   const [chatTasks,setChatTasks]=useState(false)
   const [sourceTask,setSourceTask]=useState<string|null>(null)
-  const [profileTab, setProfileTab] = useState<'account' | 'availability' | 'discovery' | 'activity' | 'blocked'>('account')
+  const [profileTab, setProfileTab] = useState<'account' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help'>('account')
   const [managedBlock,setManagedBlock]=useState<Chat|null>(null)
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
@@ -129,6 +130,7 @@ export function Inbox({ user }: { user: string }) {
         }
       })
       .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
+      .on('broadcast', { event: 'presence' }, () => void refresh())
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))
       })
@@ -189,6 +191,23 @@ export function Inbox({ user }: { user: string }) {
   const peer = chat ? profiles[peerId(chat, user)] : undefined
   const peerPresence = peer ? presence[peer.id] : undefined
   const peerState = peerPresence && Date.parse(peerPresence.expires_at)>Date.now() && peerPresence.state!=='offline' ? peerPresence.state : null
+  const peerPresenceId=peerPresence?.user_id
+  const peerExpiresAt=peerPresence?.expires_at
+  useEffect(()=>{
+    if(!peerPresenceId||!peerExpiresAt)return
+    const expiresIn=Date.parse(peerExpiresAt)-Date.now()
+    if(expiresIn<=0)return
+    const timer=window.setTimeout(()=>{
+      setPresence(previous=>{
+        if(previous[peerPresenceId]?.expires_at!==peerExpiresAt)return previous
+        const next={...previous}
+        delete next[peerPresenceId]
+        return next
+      })
+      void refresh()
+    },expiresIn+20)
+    return ()=>window.clearTimeout(timer)
+  },[peerPresenceId,peerExpiresAt,refresh])
   const blocked = chat ? blocks.includes(peerId(chat, user)) : false
   const acceptedChat=chat?.status==='accepted'&&!blocked?chat.id:null
   const myExtras=useProfileExtras(profile?.id)
@@ -218,6 +237,11 @@ export function Inbox({ user }: { user: string }) {
     setTab('search')
   }
 
+  function showHelp() {
+    setProfileTab('help')
+    setTab('profile')
+  }
+
   const destinations=[
     ['inbox','Inbox','chats messages'],['friends','Friends','contacts people'],['calls','Calls','audio video history'],
     ['workspaces','Workspaces','organizations'],['rooms','Rooms','channels'],['tasks','Tasks','board assignments'],
@@ -233,6 +257,7 @@ export function Inbox({ user }: { user: string }) {
     {label:'Open saved messages',keywords:'bookmarks',run:()=>setTab('saved')},
     {label:'Review incoming contact requests',keywords:'friends',run:openRequests},
     {label:'Open advanced search',keywords:'find filters',run:()=>showSearch()},
+    {label:'Open help and keyboard shortcuts',keywords:'learn getting started',run:showHelp},
   ]
   if(acceptedChat)commands.push({label:'Open tasks for this chat',keywords:'assignments',run:()=>{
     setSourceTask(null);setChatTasks(true);setTab('inbox')
@@ -333,7 +358,7 @@ export function Inbox({ user }: { user: string }) {
       <div className="list-footer"><Avatar name={profile.name} photo={myExtras.photo}/><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
     </aside>
     {tab === 'profile' ? <section className="content-page"><h1>Profile</h1>
-      <SectionTabs label="Profile sections" value={profileTab} onChange={setProfileTab} options={ [['account','Account'],['availability','Availability'],['discovery','Discovery'],['activity','Activity & reports'],['blocked','Blocked contacts']] }/>
+      <SectionTabs label="Profile sections" value={profileTab} onChange={setProfileTab} options={ [['account','Account'],['availability','Availability'],['discovery','Discovery'],['activity','Activity & reports'],['blocked','Blocked contacts'],['help','Help']] }/>
       {profileTab === 'account' ? <><div className="profile-handle"><code>@{profile.handle}</code><button className="secondary" onClick={async () => {
         try { await navigator.clipboard.writeText(profile.handle); setNotice('Handle copied.') }
         catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
@@ -341,6 +366,7 @@ export function Inbox({ user }: { user: string }) {
       <ProfileForm profile={profile} onSave={refresh} /><ProfileAppearance user={user} profile={myExtras}/></> :
       profileTab==='discovery'?<DiscoverySettings user={user}/>:
       profileTab==='activity'?<ProfileActivity openReports={()=>setTab('safety')}/>:
+      profileTab==='help'?<InProductHelp openFriends={()=>setTab('friends')} openSafety={()=>setTab('safety')}/>:
       profileTab==='blocked'?<div className="panel release-panel"><h2>Contact controls</h2>
         <p>Blocking prevents new messages, audio calls, and video calls from the contact. Existing messages remain in your chat.</p>
         {!chats.length&&<p>No contacts to manage.</p>}
@@ -357,7 +383,7 @@ export function Inbox({ user }: { user: string }) {
       </div> :
       <div className="panel release-panel"><label>Availability for approved contacts
         <select value={presence[user]?.state||'offline'} disabled={working} onChange={event=>void run('st_v3_set_presence',{p_state:event.target.value})}>
-          <option value="offline">Hidden</option><option value="online">Online</option><option value="away">Away</option><option value="busy">Busy</option>
+          <option value="offline">Offline (hidden)</option><option value="online">Online</option><option value="away">Away</option><option value="busy">Busy</option>
         </select></label>
         <label className="task-check"><input type="checkbox" checked={myExtras.details?.share_last_seen||false} disabled={working}
           onChange={event=>void run('st_v5_set_last_seen',{p_enabled:event.target.checked},()=>void myExtras.refresh())}/> Share last seen</label>
@@ -382,7 +408,7 @@ export function Inbox({ user }: { user: string }) {
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
         <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={peerExtras.photo}/>
-          <div><h2>{peer?.name || 'Contact'}</h2><p>{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : lastSeenLabel || (chat.status === 'accepted' ? 'Accepted contact' : 'Contact request')}</p>
+          <div><h2>{peer?.name || 'Contact'}</h2><p aria-label="Contact availability">{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : chat.status==='accepted' ? ['Offline',lastSeenLabel].filter(Boolean).join(' · ') : 'Contact request'}</p>
             {peerExtras.details?.status_message&&<p className="thread-profile-status" title={peerExtras.details.status_message}>{peerExtras.details.status_message}</p>}</div>
           <div className="thread-actions">
             {chat.status === 'accepted' && !blocked && <>
@@ -412,7 +438,7 @@ export function Inbox({ user }: { user: string }) {
             </div>}
           </div>}
       </section> : <section className="thread"><header className="thread-header default-header"><h2>Messages</h2><span className="pill"><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} />{online || broadcastOnline ? 'Live updates' : 'Syncing'}</span></header>
-        <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>Your conversations</h2><p>Choose a chat or add a contact to start talking.</p><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> Find Friends</button></div>
+        <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>Your conversations</h2><p>Choose a chat or add a contact to start talking.</p><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> Find Friends</button><button className="secondary" onClick={showHelp}>Getting started</button></div>
       </section>}
     {notice && <div className="toast" role="status"><CircleHelp size={18} /><span>{notice}</span><button className="icon" aria-label="Dismiss notice" onClick={() => setNotice('')}><X size={17}/></button></div>}
     {managedBlock&&<Dialog title={blocks.includes(peerId(managedBlock,user))?'Unblock contact?':'Block contact?'} close={()=>setManagedBlock(null)}>

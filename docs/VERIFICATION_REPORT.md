@@ -7,7 +7,7 @@
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
 | Unit tests | 11 passed, including readiness failure handling, safety heuristics, vault authentication, emoji data and disclosure configuration validation |
-| Supabase database integration | All 12 rollback suites passed, including scoped rooms and tasks, call history, instant meetings, private scheduling, reply source permissions and meeting admission |
+| Supabase database integration | All 15 rollback suites passed, including pin permissions, audit search, room templates and presence expiry |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -22,6 +22,11 @@
 | Reply quotes | SQL verified caller visibility checks and denial of new replies to hidden or revoked sources. Both browsers showed a quote, then removed its original text after revocation and preserved the reply. |
 | Instant meetings | SQL and two browsers verified immediate host entry, private notices, member waiting and admission, and one meeting and one notification after concurrent retries. |
 | Database recovery | The isolated Docker drill verified a custom-format PostgreSQL archive and SHA-256 manifest, restored data and row policies, ran read-only assertions, and rejected a corrupt archive or invalid destination. Hosted recovery is pending. |
+| Direct-chat pinning | Two browsers verified live pin and unpin. SQL verified authorization, hidden and revoked source denial and cleanup on revocation. |
+| Audit search | SQL verified workspace admin authorization, private room and tenant isolation, and search filters. The browser verified a room audit result and showed no audit tab to a workspace member. |
+| Room templates | SQL and two browsers verified all four templates with starter pins, visibility defaults, Class slow mode and idempotent creation. |
+| Contact presence | SQL and two browsers verified all four availability states, heartbeat throttling, expiry, and permission changes when a contact is blocked. |
+| Onboarding and help | A fresh account completed profile and discovery setup. The browser verified the empty Inbox, the Help tab, keyboard shortcuts, help links, and mobile access. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
 | Updated candidate | `npm run build` passed after the rooms, search, status, PWA and thread changes. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
