@@ -55,3 +55,7 @@ The app manifest declares a standalone start URL and 192 and 512 pixel icons. Th
 ## CALL-06 · Meeting lobby
 
 Workspace members request admission before joining media. The active host can admit or decline a waiting participant or choose Admit all eligible attendees. Bulk admission fills available seats in request order, up to the 12-person meeting limit including the host. It checks current membership, account status and blocks. Individual and bulk decisions update attendance, record an audit entry and notify each affected attendee privately. The media-token route checks that the attendee is admitted, the meeting is live and the host and attendee remain eligible.
+
+## CALL-17 · Call history and callback
+
+Calls shows the latest 40 participant-visible calls, with filters for missed incoming calls, audio and video. An unanswered call becomes Missed for the recipient after its ring window expires. The server records declines and caller cancellations while ringing. Older records whose outcome was not captured display Ended. The Call back action uses the missed call’s audio or video mode and goes through the same consent, participant availability and block checks as a new call.

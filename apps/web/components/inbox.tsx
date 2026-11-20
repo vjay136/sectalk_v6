@@ -433,20 +433,31 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
   state: ReturnType<typeof useCalling>; openChat: (id: string) => void; openInbox: () => void
 }) {
   const [rows, setRows] = useState<Call[] | null>(null)
-  const [filter, setFilter] = useState<'all' | 'audio' | 'video'>('all')
+  const [filter, setFilter] = useState<'all' | 'missed' | 'audio' | 'video'>('all')
+  const [now,setNow]=useState(()=>Date.now())
   const [error, setError] = useState(false)
   const reload = useCallback(async () => {
     const { data, error } = await db!.from('st_calls').select('*')
-      .or('caller.eq.' + user + ',callee.eq.' + user).order('created_at', { ascending: false }).limit(40)
+      .or('caller.eq.' + user + ',callee.eq.' + user).order('created_at', { ascending: false }).order('id',{ascending:false}).limit(40)
     setError(!!error)
-    if (data) setRows(data as Call[])
+    if (data) {setRows(data as Call[]);setNow(Date.now())}
   }, [user])
   useEffect(() => { void reload() }, [reload, state.historyVersion])
-  const visibleCalls = rows?.filter(row => filter === 'all' || row.video === (filter === 'video'))
+  const nextExpiry=rows?.reduce((earliest,row)=>{
+    const expiry=Date.parse(row.expires_at)
+    return row.status!=='ended'&&expiry>now?Math.min(earliest,expiry):earliest
+  },Infinity)
+  useEffect(()=>{
+    if(nextExpiry===undefined||!Number.isFinite(nextExpiry))return
+    const timer=window.setTimeout(()=>setNow(Date.now()),Math.max(0,nextExpiry-Date.now())+10)
+    return ()=>window.clearTimeout(timer)
+  },[nextExpiry])
+  const missed=(row:Call)=>row.end_reason==='missed'||(row.status==='ringing'&&Date.parse(row.expires_at)<=now)
+  const visibleCalls = rows?.filter(row=>filter==='all'||(filter==='missed'?row.callee===user&&missed(row):row.video===(filter==='video')))
 
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Phone size={22} /></div><div><h1>Calls</h1><p>Start a call from an approved conversation or return a recent call.</p></div></header>
-    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['audio', 'Audio'], ['video', 'Video']] }/>
+    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['missed','Missed'], ['audio', 'Audio'], ['video', 'Video']] }/>
     <div className="panel">
       <div className="panel-header"><h2>Recent calls</h2><button className="secondary" onClick={openInbox}>Open inbox <ChevronRight size={16} /></button></div>
       {error && <div className="list-empty"><p role="alert">Could not load call history.</p><button className="secondary" onClick={reload}>Try again</button></div>}
@@ -457,12 +468,15 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
         const peer = incoming ? row.caller : row.callee
         const name = profiles[peer]?.name || 'Contact'
         const reachable = chats.some(chat => chat.id === row.chat_id && chat.status === 'accepted') && !blocks.includes(peer)
-        const status = row.status === 'active' && Date.parse(row.expires_at) > Date.now() ? 'In progress'
-          : row.status === 'ringing' ? Date.parse(row.expires_at) > Date.now() ? 'Ringing' : incoming ? 'Missed' : 'No answer' : 'Ended'
+        const status=missed(row)?(incoming?'Missed':'No answer'):
+          row.end_reason==='declined'?'Declined':row.end_reason==='cancelled'?'Cancelled':
+          row.status==='active'&&Date.parse(row.expires_at)>now?'In progress':row.status==='ringing'?'Ringing':'Ended'
         return <div className="report-row" key={row.id}>
           <Avatar name={name} />
           <div><strong>{name}</strong><small>{incoming ? 'Incoming' : 'Outgoing'} {row.video ? 'video' : 'audio'} · {new Date(row.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</small><span className="call-state">{status}</span></div>
           {reachable && <span className="call-history-controls">
+            {incoming&&missed(row)&&<button className="secondary" aria-label={'Call back '+name}
+              disabled={state.busy||!!state.call} onClick={()=>void state.start(row.chat_id,row.video)}>Call back</button>}
             <button className="icon" aria-label={'Open conversation with ' + name} title="Open conversation" onClick={() => openChat(row.chat_id)}><MessageCircle size={17} /></button>
             <button className="icon" aria-label={'Start audio call with ' + name} title="Audio call" disabled={state.busy || !!state.call} onClick={() => void state.start(row.chat_id, false)}><Phone size={17} /></button>
             <button className="icon" aria-label={'Start video call with ' + name} title="Video call" disabled={state.busy || !!state.call} onClick={() => void state.start(row.chat_id, true)}><Video size={17} /></button>

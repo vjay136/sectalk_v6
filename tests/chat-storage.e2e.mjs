@@ -60,7 +60,9 @@ const app=process.env.SECTALK_STORAGE_TEST_APP
 if(app) {
   assert.equal(new URL(app).hostname,'127.0.0.1')
   const {chromium}=await import(process.env.SECTALK_PLAYWRIGHT_MODULE||'playwright')
-  const browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER})
+  const browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER,args:[
+    '--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream',
+  ]})
   async function openChat(account,peerName) {
     const page=await browser.newPage({locale:'en-US'})
     await page.goto(app)
@@ -316,6 +318,21 @@ if(app) {
         assert.equal(claims.video.room,'sectalk-v3-'+meeting)
       }
       console.log('Passed two-browser waiting room, host bulk admission, and server media admission.')
+
+      const originalCall=data(await sender.client.rpc('st_place_call',{p_chat:chat,p_video:true}))
+      data(await admin.from('st_calls').update({expires_at:new Date(Date.now()-1000).toISOString()}).eq('id',originalCall))
+      await second.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Calls',exact:true}).click()
+      await second.getByRole('group',{name:'Call history'}).getByRole('button',{name:'Missed',exact:true}).click()
+      const history=second.locator('.report-row').filter({hasText:'Sender'})
+      await history.getByText('Missed',{exact:true}).waitFor()
+      await history.getByRole('button',{name:'Call back Sender',exact:true}).click()
+      const incomingCall=first.getByRole('region',{name:'Video call',exact:true})
+      await incomingCall.getByText('Video · Incoming call',{exact:true}).waitFor()
+      await incomingCall.getByRole('button',{name:'Decline',exact:true}).click()
+      await incomingCall.waitFor({state:'hidden'})
+      await second.getByRole('group',{name:'Call history'}).getByRole('button',{name:'Video',exact:true}).click()
+      await second.locator('.report-row').filter({hasText:'Outgoing video'}).getByText('Declined',{exact:true}).waitFor()
+      console.log('Passed missed call history, same-mode video callback, live ringing and declined outcome.')
       await first.getByRole('button',{name:'Inbox',exact:true}).click()
     }
     await first.getByRole('button',{name:'Find Friends',exact:true}).first().click()
