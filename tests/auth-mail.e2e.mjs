@@ -32,7 +32,7 @@ async function delivered(subjectPart) {
 async function signIn(page, password, expected) {
   await page.getByLabel('Email address', { exact: true }).fill(email)
   await page.getByLabel('Password', { exact: true }).fill(password)
-  const response = page.waitForResponse(result => result.url().includes('/auth/v1/token?grant_type=password'))
+  const response = page.waitForResponse(result => result.url().endsWith('/api/auth/sign-in'))
   await page.locator('button.submit-auth').click()
   assert.equal((await response).status(), expected)
 }
@@ -95,7 +95,7 @@ try {
   await reset.getByRole('button', { name: 'Update password' }).click()
   await reset.getByText('Password updated. Sign in with your new password.').waitFor()
   await page.getByText('There is new activity in your account security settings.', {exact:true}).waitFor()
-  await signIn(reset, original, 400)
+  await signIn(reset, original, 401)
   await signIn(reset, changed, 200)
   await reset.getByRole('navigation', {name:'SecTalk features'}).getByRole('button',{name:'Profile',exact:true}).click()
   await reset.getByRole('button',{name:'Security',exact:true}).click()

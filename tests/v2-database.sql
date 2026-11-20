@@ -1,5 +1,27 @@
 begin;
 
+-- Set up a fresh TOTP session for a roster mutation in this SQL fixture.
+create function pg_temp.set_verified_member(p_workspace uuid,p_member uuid,p_role text)
+returns void language plpgsql security definer set search_path='' as $$
+declare actor uuid:=auth.uid(); session_id uuid:=gen_random_uuid(); factor_id uuid;
+  prior text:=current_setting('request.jwt.claims',true);
+begin
+  select f.id into factor_id from auth.mfa_factors f
+    where f.user_id=actor and f.status='verified' and f.factor_type='totp' limit 1;
+  if factor_id is null then
+    factor_id:=gen_random_uuid();
+    insert into auth.mfa_factors(id,user_id,factor_type,status,created_at,updated_at)
+      values(factor_id,actor,'totp','verified',now(),now());
+  end if;
+  insert into auth.sessions(id,user_id,aal,factor_id) values(session_id,actor,'aal2',factor_id);
+  insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at)
+    values(gen_random_uuid(),session_id,'totp',now(),now());
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',actor,'role','authenticated','session_id',session_id,'aal','aal2')::text,true);
+  perform public.st_v2_set_member(p_workspace,p_member,p_role);
+  perform set_config('request.jwt.claims',coalesce(prior,''),true);
+end $$;
+
+
 insert into auth.users(id,email,aud,role) values
  ('20000000-0000-4000-8000-000000000001','st-v2-owner@example.invalid','authenticated','authenticated'),
  ('20000000-0000-4000-8000-000000000002','st-v2-member@example.invalid','authenticated','authenticated'),
@@ -45,7 +67,7 @@ begin
   perform public.st_v2_edit_message(test_message,'Revised body');
   if (select count(*) from public.st_v2_search_messages(chat,'Revised'))<>1 then raise exception 'Search did not find edit'; end if;
   perform public.st_v2_pin(chat,test_message);
-  perform public.st_v2_set_member(space,member_id,'remove');
+  perform pg_temp.set_verified_member(space,member_id,'remove');
 
   perform set_config('request.jwt.claims',json_build_object('sub',member_id,'role','authenticated','aal','aal1')::text,true);
   if exists(select 1 from public.st_v2_posts where channel_id=channel) then raise exception 'Removed member retained access'; end if;

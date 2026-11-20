@@ -141,11 +141,21 @@
 | P10 | Notify customers during time-boxed emergency access and post-access review | Edge verified real private Realtime alerts, durable read acknowledgment and exact evidence and access history for the current owner |
 | P5 | Add encrypted direct voice notes with optional transcription | Two Edge browsers and a real isolated speech worker verified microphone, waveform, audio playback, opt-in transcript, access denial and physical purge |
 | P4 | Add contact key comparison, QR and live change warnings | Real Edge and SQL verified symmetric signed keys, wrong-code handling, approved-key changes and scoped notifications |
+| P4 | Require stronger proof for risky sign-ins | Real Edge, Mailpit and SQL verified uniform sign-in failures, protected operations, native TOTP, trusted-device proof and session invalidation |
+| P5 | Add group chats with membership-triggered key rotation | Four Edge contexts and SQL verified signed messages, plan limits, approved device wraps, join history boundaries and removal |
+| P4 | Score sessions before issuing app sign-in credentials | Chromium and SQL verified a signed test reputation provider, step-up, safe owner risk summaries and session revocation |
+| P10 | Add scoped workspace user management and separate account operations | Edge and SQL verified scoped roles, suspension, fresh TOTP, independent reset approval, target notices and two-device sign-out |
+| P10 | Guard extractive meeting summary drafts | Two Edge browsers, unit tests and SQL verified opt-in, output shape, prompt isolation and filtering of representative secrets and PII |
+| P10 | Require a per-response script nonce, verify browser origins and harden the language cookie | Actual HTTPS Edge verified inline script blocking, UI hydration, voice worklet initialization, mutation boundaries and limited CORS. Signup and password recovery still passed. |
+| P10 | Add local safety warnings and optional evidence reporting for encrypted groups | Four Edge contexts, network inspection and SQL verified metadata-only reporting by default, exact consented disclosure and private review |
+| P10 | Run scoped isolation acceptance as one repeatable QA command | Seven rollback suites and nine Edge workflows verified role, tenant, storage, API, private Realtime and cache boundaries |
+| P10 | Add global domain, file digest and network rules | Real Edge, file bytes and rollback SQL verified fresh operator proof, three rule types, enforceable existing surfaces, release and retained audit |
+| P4 | Add account recovery keys and trusted-device approval | Chromium and SQL verified key issuance, revocation, signed device approval, private alerts, delay and native session and factor reset |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 157 verified features. The next checkpoint is due at 167, and the matrix records evidence as each feature passes.
+Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 167 verified features and 72 pending. The next checkpoint is due at 177 verified features.
 
 ## Remaining work by dependency
 

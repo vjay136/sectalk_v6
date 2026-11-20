@@ -8,10 +8,68 @@ import { Brand } from './entry'
 import { useLocale } from './locale-provider'
 import { AccountSecurityChanges } from './account-security-changes'
 import { LoginAnomalies } from './login-anomalies'
+import { verifyAccountCredential } from '../lib/account-credential'
 
 type RecoveryStatus = 'staff' | 'ready' | 'missing'
 type Setup = { id: string; qr: string; secret: string }
 const authenticatorName = 'SecTalk account'
+
+function AccountRecoveryKey() {
+  const [status, setStatus] = useState('')
+  const [action, setAction] = useState<'issue'|'revoke'|null>(null)
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let active=true
+    void db!.rpc('st_v7_manage_recovery_key',{p_action:'status'}).then(result=>{
+      if (active) setStatus(result.error ? 'unavailable' : result.data)
+    })
+    return ()=>{active=false}
+  },[])
+  async function submit(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!action || busy) return
+    const form=event.currentTarget
+    setBusy(true)
+    setError('')
+    try {
+      await verifyAccountCredential(String(new FormData(form).get('recovery-key-otp') ?? ''),true)
+      const {data,error}=await db!.rpc('st_v7_manage_recovery_key',{p_action:action})
+      if (error || (action==='issue' ? !/^[0-9A-F]{64}$/.test(data) : data!=='revoked')) throw new Error()
+      setKey(action==='issue' ? data : '')
+      setStatus(action==='issue' ? 'configured' : 'missing')
+      setAction(null)
+    } catch {
+      setError('Could not update your recovery key. Check your authenticator code.')
+    } finally {
+      form.reset()
+      setBusy(false)
+    }
+  }
+  if (status!=='missing' && status!=='configured') return null
+  return <section className="panel mfa-panel" aria-label="Account recovery key">
+    <h3>Account recovery key</h3>
+    <p>{status==='configured' ? 'A recovery key is active.' : 'Create a key to recover access if you lose your authenticator.'}</p>
+    {key && <div>
+      <p>Save this key somewhere safe. It is shown only once.</p>
+      <output aria-label="Your recovery key" dir="ltr">{key}</output>
+      <button type="button" className="secondary" onClick={()=>setKey('')}>I saved my recovery key</button>
+    </div>}
+    {!action && !key && <div className="actions">
+      <button type="button" className="secondary" onClick={()=>setAction('issue')}>{status==='configured'?'Replace recovery key':'Create recovery key'}</button>
+      {status==='configured' && <button type="button" className="secondary" onClick={()=>setAction('revoke')}>Revoke recovery key</button>}
+    </div>}
+    {action && <form onSubmit={submit}>
+      {status==='configured' && <p>This invalidates your previous key and cancels any pending recovery using it.</p>}
+      <label>Authenticator code for recovery key<input name="recovery-key-otp" inputMode="numeric" pattern="[0-9]{6}"
+        autoComplete="one-time-code" maxLength={6} required/></label>
+      <button disabled={busy}>Verify and {action==='revoke'?'revoke':'save a new'} recovery key</button>
+      <button className="secondary" type="button" disabled={busy} onClick={()=>setAction(null)}>Cancel key change</button>
+    </form>}
+    {error && <p role="alert">{error}</p>}
+  </section>
+}
 
 export function AccountMfa({hints}: {hints: EventTarget}) {
   const { t } = useLocale()
@@ -139,6 +197,7 @@ export function AccountMfa({hints}: {hints: EventTarget}) {
     </div>}
     {error && <p role="alert">{error}</p>}
   </div>{factors && status && <>
+    {totp && verified.length===1 && status!=='staff' && <AccountRecoveryKey/>}
     <AccountSecurityChanges hints={hints} hasAuthenticator={Boolean(totp)} staff={status === 'staff'}/>
     <LoginAnomalies hints={hints} hasFactor={Boolean(totp)}/>
   </>}</>
@@ -149,7 +208,7 @@ export function SignInMfa({ retry, recovered }: { retry: () => void; recovered: 
   const [factors, setFactors] = useState<Factor[]>([])
   const [factorId, setFactorId] = useState('')
   const [status, setStatus] = useState<RecoveryStatus | null>(null)
-  const [recovery, setRecovery] = useState(false)
+  const [recovery, setRecovery] = useState<'code'|'key'|'device'|null>(null)
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -176,12 +235,16 @@ export function SignInMfa({ retry, recovered }: { retry: () => void; recovered: 
     setError('')
     try {
       if (recovery) {
-        const { data, error } = await db!.rpc('st_v7_recovery_security_reset', { p_code: code })
+        const { data, error } = await db!.rpc('st_v7_recovery_security_reset', { p_code: recovery==='device'?'device-approval':code })
         if (error || data === 'unavailable') {
           setError(t(error?.code === 'PT429' ? 'recoveryRateLimit' : 'recoveryCodeError'))
           return
         }
         if (data === 'pending') {
+          if (recovery==='device') {
+            setRecoveryPending('Open Account security changes on your previously trusted device and approve the request. After 24 hours, sign in and continue with this method.')
+            return
+          }
           const pending = await db!.rpc('st_v7_account_security_status')
           const ready = pending.data?.pending?.ready_at
           setRecoveryPending(ready
@@ -213,18 +276,25 @@ export function SignInMfa({ retry, recovered }: { retry: () => void; recovered: 
       {!recovery && factors.length > 1 && <label>{t('authenticatorTitle')}<select value={factorId} onChange={event => setFactorId(event.target.value)}>
         {factors.map((factor, index) => <option value={factor.id} key={factor.id}>{factor.friendly_name || `${t('authenticatorTitle')} ${index + 1}`}</option>)}
       </select></label>}
-      <label>{t(recovery ? 'recoveryCode' : 'authenticatorCode')}
+      {recovery!=='device' && <label>{recovery==='key'?'Recovery key':t(recovery==='code'?'recoveryCode':'authenticatorCode')}
         <input value={code} onChange={event => setCode(event.target.value)} autoComplete={recovery ? 'off' : 'one-time-code'} dir="ltr"
           inputMode={recovery ? 'text' : 'numeric'} pattern={recovery ? undefined : '[0-9]{6}'} maxLength={recovery ? 64 : 6} spellCheck={false} required />
-      </label>
-      <button disabled={busy || (!recovery && !factorId)}>{t(recovery ? 'recoveryReset' : 'authenticatorVerify')}</button>
+      </label>}
+      <button disabled={busy || (!recovery && !factorId)}>{recovery==='device'?'Request or continue device recovery':t(recovery ? 'recoveryReset' : 'authenticatorVerify')}</button>
     </form>
     {error && <p role="alert">{error}</p>}
     {recoveryPending && <p role="status">{recoveryPending}</p>}
     {status === 'staff' && <p>{t('recoveryStaff')}</p>}
-    {status === 'ready' && <button type="button" className="secondary" disabled={busy} onClick={() => { setRecovery(!recovery); setCode(''); setError('') }}>
-      {t(recovery ? 'authenticatorUseCode' : 'recoveryUseCode')}
-    </button>}
+    {status && status!=='staff' && <div className="actions">
+      {status==='ready' && recovery!=='code' && <button type="button" className="secondary" disabled={busy}
+        onClick={()=>{setRecovery('code');setCode('');setError('');setRecoveryPending('')}}>{t('recoveryUseCode')}</button>}
+      {recovery!=='key' && <button type="button" className="secondary" disabled={busy}
+        onClick={()=>{setRecovery('key');setCode('');setError('');setRecoveryPending('')}}>Use a recovery key</button>}
+      {recovery!=='device' && <button type="button" className="secondary" disabled={busy}
+        onClick={()=>{setRecovery('device');setCode('');setError('');setRecoveryPending('')}}>Recover with a trusted device</button>}
+      {recovery && <button type="button" className="secondary" disabled={busy}
+        onClick={()=>{setRecovery(null);setCode('');setError('');setRecoveryPending('')}}>{t('authenticatorUseCode')}</button>}
+    </div>}
     <button type="button" className="secondary" disabled={busy} onClick={() => void db!.auth.signOut({ scope: 'local' })}>{t('signOut')}</button>
   </section></main>
 }

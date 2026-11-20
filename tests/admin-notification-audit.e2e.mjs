@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
+import { fixtureAuthenticator, totpCode } from './workspace-admin-fixture.mjs'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
@@ -34,6 +35,7 @@ const [owner, receiver, offline] = await Promise.all([
   account('admin_owner'), account('admin_receiver'), account('admin_offline'),
 ])
 const workspace = data(await owner.client.rpc('st_v2_create_workspace', { p_name: 'Admin alert audit workspace' }))
+const { secret: ownerSecret } = await fixtureAuthenticator(owner.client)
 for (const person of [receiver, offline]) {
   data(await owner.client.rpc('st_v2_invite', { p_workspace: workspace, p_handle: person.handle }))
   const invite = data(await person.client.from('st_v2_invites').select('id').eq('workspace_id', workspace).single())
@@ -53,6 +55,10 @@ try {
     await page.getByLabel('Email address', { exact: true }).fill(person.email)
     await page.getByLabel('Password', { exact: true }).fill(password)
     await page.locator('button.submit-auth').click()
+    if (person === owner) {
+      await page.getByLabel('Authenticator code', { exact: true }).fill(await totpCode(ownerSecret))
+      await page.getByRole('button', { name: 'Verify authenticator', exact: true }).click()
+    }
     await page.getByRole('navigation', { name: 'SecTalk features' }).waitFor()
     await page.getByText('Live updates', { exact: true }).waitFor()
     return page

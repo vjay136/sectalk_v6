@@ -1,5 +1,27 @@
 begin;
 
+-- Set up a fresh TOTP session for a roster mutation in this SQL fixture.
+create function pg_temp.set_verified_member(p_workspace uuid,p_member uuid,p_role text)
+returns void language plpgsql security definer set search_path='' as $$
+declare actor uuid:=auth.uid(); session_id uuid:=gen_random_uuid(); factor_id uuid;
+  prior text:=current_setting('request.jwt.claims',true);
+begin
+  select f.id into factor_id from auth.mfa_factors f
+    where f.user_id=actor and f.status='verified' and f.factor_type='totp' limit 1;
+  if factor_id is null then
+    factor_id:=gen_random_uuid();
+    insert into auth.mfa_factors(id,user_id,factor_type,status,created_at,updated_at)
+      values(factor_id,actor,'totp','verified',now(),now());
+  end if;
+  insert into auth.sessions(id,user_id,aal,factor_id) values(session_id,actor,'aal2',factor_id);
+  insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at)
+    values(gen_random_uuid(),session_id,'totp',now(),now());
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',actor,'role','authenticated','session_id',session_id,'aal','aal2')::text,true);
+  perform public.st_v2_set_member(p_workspace,p_member,p_role);
+  perform set_config('request.jwt.claims',coalesce(prior,''),true);
+end $$;
+
+
 insert into auth.users(id,email) values
   ('7b000000-0000-4000-8000-000000000001','audit-admin-owner@example.invalid'),
   ('7b000000-0000-4000-8000-000000000002','audit-admin-recipient@example.invalid'),
@@ -78,7 +100,7 @@ begin
     is distinct from acknowledged_at then raise exception 'Receipt replay changed its timestamp'; end if;
 
   perform set_config('request.jwt.claim.sub',owner_id::text,true);
-  perform public.st_v2_set_member(workspace,quiet_id,'member');
+  perform pg_temp.set_verified_member(workspace,quiet_id,'member');
   perform public.st_v6_room_post(admin_room,small_post,'Small audience');
   select r.id into receipt_id from sectalk_private.st_v6_admin_notification_receipts r
   where r.room_id=admin_room and r.post_id=small_post and r.recipient=recipient_id;

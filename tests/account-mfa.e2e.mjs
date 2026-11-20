@@ -118,7 +118,7 @@ try {
   await recoveryPage.getByLabel('Recovery code', { exact: true }).fill(replacement[0].toLowerCase())
   await button(recoveryPage, 'Reset authenticator').click()
   await recoveryPage.getByText(/Your authenticator was reset and your sessions ended/).waitFor()
-  assert.equal(data(await alternate.rpc('st_v7_recover_authenticator', { p_code: replacement[0] })), false)
+  assert.equal((await alternate.rpc('st_v7_recover_authenticator', { p_code: replacement[0] })).error?.code, 'PT401')
   assert.ok((await alternate.auth.getUser(beforeRecovery.access_token)).error)
 
   await signInBrowser(recoveryPage)
@@ -142,7 +142,7 @@ try {
   endCoolingOff()
   const claimant = results.findIndex(result => result.data === 'pending')
   const completions = await Promise.all(contenders.map(client => client.rpc('st_v7_recovery_security_reset', {p_code: nextBatch[claimant]})))
-  assert.deepEqual(completions.map(data).sort(), ['completed', 'unavailable'])
+  assert.deepEqual(completions.map(result=>result.error?.code==='PT401'?'unavailable':data(result)).sort(), ['completed', 'unavailable'])
   console.log('Account MFA browser enrollment, rotation, sign-in, reset, session revocation, replay, and concurrent recovery checks passed.')
 } finally {
   await browser.close()

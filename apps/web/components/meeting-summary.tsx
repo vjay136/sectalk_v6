@@ -55,7 +55,10 @@ export function MeetingSummary({meeting}:{meeting:string}) {
       const next=await request(meeting,action,enabled)
       ++generation.current
       setView(next)
-      if (next.draft && next.revision) setDraft({
+      if (next.draft && !next.draft.summary.length && !next.draft.actions.length) {
+        setDraft(null)
+        setNotice('No eligible text remained after filtering the transcript.')
+      } else if (next.draft && next.revision) setDraft({
         revision:next.revision,summary:next.draft.summary.join('\n'),actions:next.draft.actions,
       })
     } catch { setError('The summary action could not be completed.') }
@@ -87,6 +90,7 @@ export function MeetingSummary({meeting}:{meeting:string}) {
   const canEdit=Boolean(view.eligible && view.consented && view.policy && draft?.revision===view.revision)
   return <section className="release-section" aria-label="Meeting summary">
     <h3>Meeting summary draft</h3>
+    <p>Drafts extract text from opted-in captions. Suggested actions stay in the editor.</p>
     {view.owner && <button type="button" className="secondary" disabled={busy}
       onClick={()=>void act('policy',!view.policy)}>{view.policy?'Disable workspace summaries':'Allow workspace summaries'}</button>}
     {!view.policy && <p>Meeting summaries are disabled for this workspace.</p>}

@@ -107,7 +107,10 @@ try {
   sql(`update auth.sessions s set ip='192.0.2.123',user_agent='Firefox/130.0'
       from sectalk_private.st_v7_device_sessions b join sectalk_private.st_v7_devices d on d.id=b.device_id
       where s.id=b.session_id and s.user_id='${owner.user.id}' and d.state='trusted';`)
-  const unusual=await opening(owner)
+  const unusual=await browser.newPage()
+  await unusual.goto(app+'/#account')
+  await login(unusual,owner)
+  await unusual.getByRole('heading',{name:'Verify this sign-in',exact:true}).waitFor()
   const oldBearer=await token(unusual)
   runDetector()
   await controller.getByText(toast,{exact:true}).waitFor()
@@ -119,7 +122,7 @@ try {
   assert.deepEqual(data(await outsider.api.rpc('st_v7_list_login_anomalies')),[])
   assert.equal((await scoped(oldBearer).rpc('st_v7_review_login_anomaly',{
     p_anomaly:projection[0].id,p_action:'recognize',
-  })).error?.code,'42501')
+  })).error?.code,'PT403')
 
   await alerts.getByRole('button',{name:'This wasn’t me',exact:true}).click()
   await alerts.getByLabel('Current password',{exact:true}).fill(initial)

@@ -11,6 +11,8 @@ import { UsageMetrics } from './usage-metrics'
 import { ReleaseControls } from './release-controls'
 import { RiskFeedback } from './risk-feedback'
 import { TenantOperations } from './tenant-operations'
+import { AccountAdministration, useAccountOperator } from './account-administration'
+import { GlobalAbuseBlocklists, useAbuseBlocklistAccess } from './global-abuse-blocklists'
 import { useAnalyticsStream } from '../lib/live-analytics'
 import { ThreatTrends } from './threat-trends'
 import { OperationalMetrics } from './operational-metrics'
@@ -88,7 +90,9 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 export function Safety({ staff, refresh, hints }: { staff: string; refresh: () => Promise<void>; hints: EventTarget }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports' | 'account-admin' | 'abuse-blocklists'>('mine')
+  const accountOperator = useAccountOperator()
+  const abuseBlocks = useAbuseBlocklistAccess()
   const [roomReviewAccess,setRoomReviewAccess]=useState('none')
   const [incidentRole, setIncidentRole] = useState('none')
   const [incidentReport, setIncidentReport] = useState<string | null>(null)
@@ -201,7 +205,8 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
   const visibleView=((view==='overview'||view==='latency'||view==='usage'||view==='feedback'||view==='trends'||view==='operations')&&staff!=='verified')||(view==='queue'&&!staffAccess)
     ||(view==='release'&&!releaseAccess)||(view==='tenants'&&tenantStatus==='none')||(view==='delivery-queue'&&queueAccess==='none')
     ||(view==='holds'&&!holdAccess)||(view==='quarantine'&&!scanAccess)||(view==='incidents'&&!incidentAccess)
-    ||(view==='workspace-reports'&&roomReviewAccess==='none')?'mine':view
+    ||(view==='workspace-reports'&&roomReviewAccess==='none')||(view==='account-admin'&&accountOperator.access==='none')
+    ||(view==='abuse-blocklists'&&abuseBlocks.access==='none')?'mine':view
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
@@ -213,6 +218,8 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
         ['feedback','Warning feedback'] as const,['trends','Threat trends'] as const,['operations','Operational metrics'] as const]:[]),
       ...(releaseAccess?[['release','Release controls'] as const]:[]),
       ...(tenantStatus!=='none'?[['tenants','Tenant operations'] as const]:[]),
+      ...(accountOperator.access !== 'none' ? [['account-admin','Account administration'] as const] : []),
+      ...(abuseBlocks.access !== 'none' ? [['abuse-blocklists','Global abuse blocklists'] as const] : []),
       ...(holdAccess?[['holds','Attachment holds'] as const]:[]),
       ...(scanAccess?[['quarantine','Attachment quarantine'] as const]:[]),
       ...(queueAccess!=='none'?[['delivery-queue','Queue operations'] as const]:[]),
@@ -223,6 +230,8 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
       visibleView==='feedback'?<RiskFeedback/>:
       visibleView==='trends'?<ThreatTrends/>:
       visibleView==='operations'?<OperationalMetrics/>:
+      visibleView==='account-admin'?<AccountAdministration {...accountOperator}/>:
+      visibleView==='abuse-blocklists'?<GlobalAbuseBlocklists {...abuseBlocks}/>:
       visibleView==='holds'?<DirectAttachmentHolds targets={holdTargets}/>:
       visibleView==='quarantine'?<AttachmentQuarantine/>:
       visibleView==='incidents'?<SecurityIncidents report={incidentReport} onLinked={()=>setIncidentReport(null)}/>:

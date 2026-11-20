@@ -17,6 +17,7 @@ import { WorkspaceAdminOverview } from './workspace-admin-overview'
 import { WorkspaceFiles } from './workspace-files'
 import { WorkspaceIntegrations } from './workspace-integrations'
 import { WorkspaceFeatures } from './workspace-features'
+import { WorkspacePeople } from './workspace-people'
 
 const ImpersonationWatch = dynamic(() => import('./impersonation-watch').then(module => module.ImpersonationWatch), {
   loading: () => <p role="status">Loading impersonation watch…</p>,
@@ -277,21 +278,13 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
           <ul>{bulkResults.map(result => <li key={result.handle}>@{result.handle} · {result.sent ? 'Sent' : 'Unavailable or already invited'}</li>)}</ul>
         </div>}
       </details>}
-      <h2>Members</h2>
-      {members.map(member => <div className="release-row" key={member.user_id}>
-        <strong>{profiles[member.user_id]?.name || 'Workspace member'}</strong><span className="pill">{member.role}</span>
-        {member.suspended_at && <span className="pill">Suspended</span>}
-        {role === 'owner' && member.role !== 'owner' && <QuickForm label="Manage member" button="Apply" send={async fields => {
-          await rpc('st_v2_set_member', { p_workspace: space.id, p_member: member.user_id, p_role: fields.get('role') })
-          await load()
-        }}><label>Change access<select key={member.role} name="role" defaultValue={member.role}><option value="member">Member</option><option value="admin">Admin</option><option value="remove">Remove access</option></select></label></QuickForm>}
-        {(role === 'owner' && member.role !== 'owner' || role === 'admin' && member.role === 'member') &&
-          <QuickForm label={(member.suspended_at ? 'Restore ' : 'Suspend ') + (profiles[member.user_id]?.name || 'workspace member')}
-            button={member.suspended_at ? 'Restore access' : 'Suspend access'} send={async () => {
-              await rpc('st_v2_set_member', { p_workspace:space.id, p_member:member.user_id, p_role:member.suspended_at ? 'restore' : 'suspend' })
-              await load()
-            }}/>}
-      </div>)}
+      {role === 'owner' || role === 'admin' ? <WorkspacePeople key={space.id} workspace={space.id} role={role} user={user} onChanged={load}/> : <>
+        <h2>Members</h2>
+        {members.map(member => <div className="release-row" key={member.user_id}>
+          <strong>{profiles[member.user_id]?.name || 'Workspace member'}</strong><span className="pill">{member.role}</span>
+          {member.suspended_at && <span className="pill">Suspended</span>}
+        </div>)}
+      </>}
     </div>}
     {view==='workspaces'&&tab==='activity'&&manager&&<div className="release-section"><h2>Recent workspace activity</h2>{audit.length===0&&<p>No activity yet.</p>}
       {audit.map(event => <div className="release-row" key={event.id}><strong>{event.event.replace('.', ' ')}</strong><span>{profiles[event.actor]?.name || 'Workspace member'}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></div>)}

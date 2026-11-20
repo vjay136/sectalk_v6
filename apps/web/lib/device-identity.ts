@@ -1,5 +1,5 @@
 import { db } from './data'
-import { binaryToBase64url, deviceBindingTranscript, deviceBundleTranscript, type DeviceChallenge } from './device-bundle'
+import { binaryToBase64url, deviceBindingTranscript, deviceBundleTranscript, deviceRecoveryTranscript, type DeviceChallenge } from './device-bundle'
 
 export type LocalDevice = {
   id: string
@@ -51,12 +51,13 @@ async function persistDevice(database: IDBDatabase, candidate: LocalDevice) {
   })
 }
 
-async function localDevice(owner: string) {
+async function localDevice(owner: string, existingOnly: boolean) {
   if (!window.isSecureContext || !crypto.subtle || !window.indexedDB) throw new Error('Secure device storage is unavailable')
   const database=await openDeviceStore()
   try {
     const existing=await readDevice(database,owner)
     if (existing) return existing
+    if (existingOnly) throw new Error('No registered device keys were found in this browser')
     const [signing,agreement]=await Promise.all([
       crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']),
       crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveBits']),
@@ -65,10 +66,19 @@ async function localDevice(owner: string) {
   } finally {database.close()}
 }
 
-export async function enrollCurrentDevice() {
+export async function refreshVerifiedSignIn() {
+  // GoTrue stamps access tokens in whole seconds. The proof must precede the new token.
+  await new Promise(resolve=>window.setTimeout(resolve,1100))
+  const refreshed=await db!.auth.refreshSession()
+  if (refreshed.error) throw new Error('Could not refresh the verified session')
+  const status=await db!.rpc('st_v7_login_risk_status')
+  if (status.error||status.data!=='clear') throw new Error('The session still requires verification')
+}
+
+export async function enrollCurrentDevice({existingOnly=false,recoveryRequest}: {existingOnly?:boolean; recoveryRequest?:string} = {}) {
   const session=await db!.auth.getSession()
   if (session.error || !session.data.session) throw new Error('Sign in to register this device')
-  const local=await localDevice(session.data.session.user.id)
+  const local=await localDevice(session.data.session.user.id,existingOnly||Boolean(recoveryRequest))
   const [signing,agreement]=await Promise.all([
     crypto.subtle.exportKey('raw',local.signing.publicKey).then(binaryToBase64url),
     crypto.subtle.exportKey('raw',local.agreement.publicKey).then(binaryToBase64url),
@@ -82,9 +92,14 @@ export async function enrollCurrentDevice() {
     crypto.subtle.sign(params,local.signing.privateKey,deviceBundleTranscript(challenge)).then(binaryToBase64url),
     crypto.subtle.sign(params,local.signing.privateKey,deviceBindingTranscript(challenge)).then(binaryToBase64url),
   ])
+  const recoverySignature=recoveryRequest
+    ? binaryToBase64url(await crypto.subtle.sign(params,local.signing.privateKey,deviceRecoveryTranscript(challenge,recoveryRequest)))
+    : undefined
   const result=await fetch('/api/account/devices/bundle',{
     method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.data.session.access_token},
-    body:JSON.stringify({challenge:challenge.challenge,signature,binding}),cache:'no-store',
+    body:JSON.stringify({challenge:challenge.challenge,signature,binding,recoveryRequest,recoverySignature}),cache:'no-store',
   })
   if (!result.ok) throw new Error(result.status===409 ? 'This device is unavailable for registration' : 'Could not verify this device')
+  const risk=await db!.rpc('st_v7_login_risk_status')
+  if (risk.data==='refresh') await refreshVerifiedSignIn()
 }

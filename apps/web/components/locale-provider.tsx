@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, type ReactNode } from 'react'
-import { formatMessage, localeCookie, locales, resolveLocale, type Locale, type Message } from '../lib/locale'
+import { formatMessage, locales, resolveLocale, type Locale, type Message } from '../lib/locale'
 
 const LocaleContext = createContext<{
   locale: Locale
@@ -16,8 +16,6 @@ export function LocaleProvider({ initialLocale, children }: { initialLocale: Loc
     const root = document.documentElement
     root.lang = next
     root.dir = locales[next].direction
-    const secure = location.protocol === 'https:' ? '; Secure' : ''
-    document.cookie = `${localeCookie}=${next}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`
     setLocale(next)
   }
 
@@ -34,12 +32,32 @@ export function useLocale() {
 
 export function LanguageSelect() {
   const { locale, changeLocale, t } = useLocale()
+  const [saving, setSaving] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  async function saveLanguage(next: Locale) {
+    setSaving(true)
+    setFailed(false)
+    try {
+      const response = await fetch('/api/preferences/language', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locale: next }),
+      })
+      if (!response.ok) throw new Error('The language preference was not saved.')
+      changeLocale(next)
+    } catch {
+      setFailed(true)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return <label className="language-select">
     {t('language')}
-    <select value={locale} onChange={event => changeLocale(resolveLocale(event.target.value))}>
+    <select value={locale} aria-busy={saving} disabled={saving} onChange={event => void saveLanguage(resolveLocale(event.target.value))}>
       {(Object.keys(locales) as Locale[]).map(value =>
         <option key={value} value={value} lang={value} dir={locales[value].direction}>{locales[value].name}</option>
       )}
     </select>
+    {failed && <span role="alert">{locale === 'ar' ? 'تعذّر حفظ اللغة. حاول مجددًا.' : 'Could not save the language. Try again.'}</span>}
   </label>
 }

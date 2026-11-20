@@ -37,12 +37,19 @@ export async function POST(request:Request) {
     }
     const raw=await command(action==='generate'?'source':action)
     if (!raw) return fail(403)
-    const {source,language,...state}=raw
-    if (action!=='generate') return Response.json(state,{headers})
-    if (typeof language!=='string' || typeof state.revision!=='string' || !source?.length) return fail(409)
-    const draft=draftMeetingSummary(source,language)
-    const current=await command('view')
-    if (!current?.revision || current.revision!==state.revision) return fail(409)
-    return Response.json({...state,draft},{headers})
+    const state = {
+      owner: raw.owner === true,
+      policy: raw.policy === true,
+      eligible: raw.eligible === true,
+      consented: raw.consented === true,
+      revision: typeof raw.revision === 'string' ? raw.revision : null,
+    }
+    if (action !== 'generate') return Response.json(state, { headers })
+    if (!state.policy || !state.eligible || !state.consented || !state.revision ||
+        typeof raw.language !== 'string' || !Array.isArray(raw.source) || !raw.source.length) return fail(409)
+    const draft = draftMeetingSummary(raw.source, raw.language)
+    const current = await command('view')
+    if (!current?.policy || !current.eligible || !current.consented || current.revision !== state.revision) return fail(409)
+    return Response.json({ ...state, draft }, { headers })
   } catch { return fail(503) }
 }

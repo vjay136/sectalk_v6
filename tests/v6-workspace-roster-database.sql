@@ -1,5 +1,27 @@
 begin;
 
+-- Set up a fresh TOTP session for a roster mutation in this SQL fixture.
+create function pg_temp.set_verified_member(p_workspace uuid,p_member uuid,p_role text)
+returns void language plpgsql security definer set search_path='' as $$
+declare actor uuid:=auth.uid(); session_id uuid:=gen_random_uuid(); factor_id uuid;
+  prior text:=current_setting('request.jwt.claims',true);
+begin
+  select f.id into factor_id from auth.mfa_factors f
+    where f.user_id=actor and f.status='verified' and f.factor_type='totp' limit 1;
+  if factor_id is null then
+    factor_id:=gen_random_uuid();
+    insert into auth.mfa_factors(id,user_id,factor_type,status,created_at,updated_at)
+      values(factor_id,actor,'totp','verified',now(),now());
+  end if;
+  insert into auth.sessions(id,user_id,aal,factor_id) values(session_id,actor,'aal2',factor_id);
+  insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at)
+    values(gen_random_uuid(),session_id,'totp',now(),now());
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',actor,'role','authenticated','session_id',session_id,'aal','aal2')::text,true);
+  perform public.st_v2_set_member(p_workspace,p_member,p_role);
+  perform set_config('request.jwt.claims',coalesce(prior,''),true);
+end $$;
+
+
 insert into auth.users(id,email,aud,role)
 select ('63000000-0000-4000-8000-00000000000'||i)::uuid,
   'roster-'||i||'@example.invalid','authenticated','authenticated'
@@ -42,8 +64,8 @@ begin
   space_b:=public.st_v2_create_workspace('Roster tenant B');
 
   perform set_config('request.jwt.claim.sub',owner_id::text,true);
-  perform public.st_v2_set_member(space_a,admin_id,'admin');
-  perform public.st_v2_set_member(space_a,second_admin,'admin');
+  perform pg_temp.set_verified_member(space_a,admin_id,'admin');
+  perform pg_temp.set_verified_member(space_a,second_admin,'admin');
   perform public.st_v6_manage_channel(channel,'transfer_owner',member_id,null);
 
   perform set_config('request.jwt.claim.sub',admin_id::text,true);
@@ -65,8 +87,8 @@ begin
   exception when raise_exception then
     if sqlerrm<>'Workspace member unavailable' then raise; end if;
   end;
-  perform public.st_v2_set_member(space_a,member_id,'suspend');
-  perform public.st_v2_set_member(space_a,member_id,'suspend');
+  perform pg_temp.set_verified_member(space_a,member_id,'suspend');
+  perform pg_temp.set_verified_member(space_a,member_id,'suspend');
   if (select count(*) from public.st_v2_workspace_audit where workspace_id=space_a and event='member.suspend')<>1
     then raise exception 'Repeated suspension created duplicate audit entries'; end if;
 
@@ -98,17 +120,17 @@ begin
   end;
 
   perform set_config('request.jwt.claim.sub',owner_id::text,true);
-  perform public.st_v2_set_member(space_a,admin_id,'suspend');
+  perform pg_temp.set_verified_member(space_a,admin_id,'suspend');
   perform set_config('request.jwt.claim.sub',admin_id::text,true);
   if exists(select 1 from public.st_v6_audit_workspaces() w where w.id=space_a)
     then raise exception 'Suspended administrator saw the audit workspace'; end if;
 
   perform set_config('request.jwt.claim.sub',owner_id::text,true);
-  perform public.st_v2_set_member(space_a,admin_id,'restore');
+  perform pg_temp.set_verified_member(space_a,admin_id,'restore');
   perform set_config('request.jwt.claim.sub',admin_id::text,true);
   if not exists(select 1 from public.st_v6_audit_workspaces() w where w.id=space_a)
     then raise exception 'Restored administrator lost their role'; end if;
-  perform public.st_v2_set_member(space_a,member_id,'restore');
+  perform pg_temp.set_verified_member(space_a,member_id,'restore');
 
   perform set_config('request.jwt.claim.sub',member_id::text,true);
   if not exists(select 1 from public.st_v2_posts where id=history)

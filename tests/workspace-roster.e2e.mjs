@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
 import {createClient} from '@supabase/supabase-js'
+import {verifyStaffPanel} from './workspace-admin-fixture.mjs'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
@@ -63,12 +64,16 @@ try {
   await switcher.getByRole('option',{name:tenantName,exact:true}).waitFor({state:'attached'})
   assert.equal(await switcher.inputValue(), workspace)
 
-  await ownerPage.getByRole('form',{name:'Suspend ' + member.name,exact:true}).getByRole('button',{name:'Suspend access'}).click()
-  await ownerPage.getByText('Suspended',{exact:true}).waitFor()
+  const directory = ownerPage.getByRole('region',{name:'Manage workspace members',exact:true})
+  await directory.getByRole('button',{name:'Verify to manage members',exact:true}).click()
+  await verifyStaffPanel(directory)
+  await directory.getByRole('button',{name:member.name + ' (@' + member.handle + ')',exact:true}).click()
+  await directory.getByRole('button',{name:'Suspend access',exact:true}).click()
+  await directory.locator('.pill').getByText('Suspended',{exact:true}).waitFor()
   await switcher.waitFor({state:'detached',timeout:25000})
 
-  await ownerPage.getByRole('form',{name:'Restore ' + member.name,exact:true}).getByRole('button',{name:'Restore access'}).click()
-  await ownerPage.getByText('Suspended',{exact:true}).waitFor({state:'detached'})
+  await directory.getByRole('button',{name:'Restore access',exact:true}).click()
+  await directory.locator('.pill').getByText('Suspended',{exact:true}).waitFor({state:'detached'})
   await switcher.getByRole('option',{name:tenantName,exact:true}).waitFor({state:'attached',timeout:25000})
   assert.equal(await switcher.inputValue(), workspace)
   console.log('Passed CSV invitation, browser acceptance, tenant suspension and restore.')

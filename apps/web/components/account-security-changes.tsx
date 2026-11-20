@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
 import { verifyAccountCredential } from '../lib/account-credential'
+import { enrollCurrentDevice } from '../lib/device-identity'
 
 type Kind = 'email' | 'authenticator' | 'recovery'
-type Pending = {kind: Kind; ready_at: string; expires_at: string; provider_pending: boolean}
-type SecurityEvent = {id: string; kind: Kind | 'password'; action: 'requested' | 'cancelled' | 'completed'; occurred_at: string}
-const changes = {email: 'Email change', authenticator: 'Authenticator reset', recovery: 'Authenticator recovery', password: 'Password change'}
+type Pending = {kind: Kind; ready_at: string; expires_at: string; provider_pending: boolean; support_requested?: boolean}
+type SecurityEvent = {id: string; kind: Kind | 'password' | 'sessions'; action: 'requested' | 'cancelled' | 'completed'; occurred_at: string}
+const changes = {email: 'Email change', authenticator: 'Authenticator reset', recovery: 'Authenticator recovery', password: 'Password change', sessions: 'Account session revocation'}
 const actions = {requested: 'requested', cancelled: 'cancelled', completed: 'completed'}
 
 export function AccountSecurityChanges({hasAuthenticator, staff, hints}: {
@@ -21,11 +22,14 @@ export function AccountSecurityChanges({hasAuthenticator, staff, hints}: {
   const [error, setError] = useState('')
   const [feedback, setFeedback] = useState('')
   const [clock, setClock] = useState(Date.now)
+  const [deviceRequest, setDeviceRequest] = useState<string|null>(null)
 
   const load = useCallback(async () => {
-    const [status, history] = await Promise.all([
+    const [status, history, approval] = await Promise.all([
       db!.rpc('st_v7_account_security_status'), db!.rpc('st_v7_account_security_events'),
+      db!.rpc('st_v7_device_recovery_to_approve'),
     ])
+    setDeviceRequest(approval.error ? null : approval.data)
     if (status.error || !status.data || history.error) {
       setError('Account security changes are unavailable.')
       return
@@ -96,6 +100,22 @@ export function AccountSecurityChanges({hasAuthenticator, staff, hints}: {
     setBusy(false)
   }
 
+  async function approveDeviceRecovery() {
+    if (!deviceRequest || busy) return
+    setBusy(true)
+    setError('')
+    setFeedback('')
+    try {
+      await enrollCurrentDevice({recoveryRequest:deviceRequest})
+      setFeedback('Recovery approved. The 24-hour cooling-off period still applies.')
+      await load()
+    } catch {
+      setError('Approval requires the browser keys of the previously trusted, verified device.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const ready = pending && Date.parse(pending.ready_at)<=clock && Date.parse(pending.expires_at)>clock
   return <section className="panel mfa-panel" aria-label="Account security changes">
     <h2>Account security changes</h2>
@@ -109,12 +129,18 @@ export function AccountSecurityChanges({hasAuthenticator, staff, hints}: {
     </div>}
     {pending && <article className="release-board-item">
       <strong>{changes[pending.kind]}</strong>
-      {pending.provider_pending ? <p>Waiting for confirmation from both email addresses.</p> : <>
+      {pending.support_requested ? <p>An account operator requested this reset. A separate reviewer can approve it after{' '}
+        <time dateTime={pending.ready_at}>{new Date(pending.ready_at).toLocaleString()}</time>. Cancel it if you did not ask for help.</p>
+        : pending.provider_pending ? <p>Waiting for confirmation from both email addresses.</p> : <>
         <p>Available to continue at <time dateTime={pending.ready_at}>{new Date(pending.ready_at).toLocaleString()}</time>.</p>
         {ready && !kind && pending.kind !== 'recovery' && <button className="primary" type="button" onClick={() => {
           if (pending.kind !== 'recovery') setKind(pending.kind)
         }}>Continue security change</button>}
-        {ready && pending.kind === 'recovery' && <p>Sign in with your password and submit the same recovery code to finish.</p>}
+        {ready && pending.kind === 'recovery' && <p>Sign in with your password and continue with the same recovery method.</p>}
+      </>}
+      {deviceRequest && <>
+        <p>Approve only if you started recovery on another device. You can still cancel during the cooling-off period.</p>
+        <button type="button" className="secondary" disabled={busy} onClick={()=>void approveDeviceRecovery()}>Approve recovery from this device</button>
       </>}
       <button className="secondary" type="button" onClick={() => void cancel()} disabled={busy}>Cancel security request</button>
     </article>}

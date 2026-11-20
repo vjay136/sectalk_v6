@@ -1,0 +1,47 @@
+import { isIP } from 'node:net'
+import { createClient } from '@supabase/supabase-js'
+import { sessionRiskGateway } from '../../../../lib/session-risk-server'
+
+export const runtime='nodejs'
+const headers={'Cache-Control':'no-store'}
+export async function POST(request:Request) {
+  const started=performance.now()
+  async function unavailable() {
+    const remaining=500-(performance.now()-started)
+    if (remaining>0) await new Promise(resolve=>setTimeout(resolve,remaining))
+    return Response.json({error:'invalid_credentials'},{status:401,headers})
+  }
+  const url=process.env.SECTALK_AUTH_PASSWORD_UPSTREAM||process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  if (!url||!key) return unavailable()
+  try {
+    if (Number(request.headers.get('content-length')||0)>2048) return unavailable()
+    const raw=await request.text()
+    if (raw.length>2048) return unavailable()
+    const values=JSON.parse(raw)
+    if (!values||typeof values.email!=='string'||typeof values.password!=='string') return unavailable()
+    const email=values.email.trim()
+    if (email.length<1||email.length>254||values.password.length<1||values.password.length>256)
+      return unavailable()
+
+    const forwarded:Record<string,string>={}
+    const browser=request.headers.get('user-agent')
+    if (browser) forwarded['User-Agent']=browser.slice(0,512)
+    // Vercel supplies this header at its ingress. A self-hosted proxy must
+    // configure its upstream Auth server to trust only its ingress network.
+    const ip=process.env.VERCEL==='1'?request.headers.get('x-vercel-forwarded-for'):null
+    if (ip&&isIP(ip)) forwarded['X-Forwarded-For']=ip
+    const auth=createClient(url,key,{
+      auth:{persistSession:false,autoRefreshToken:false},global:{headers:forwarded},
+    })
+    const risk=sessionRiskGateway(url,email)
+    const signed=await auth.auth.signInWithPassword({email,password:values.password})
+    if (signed.error||!signed.data.session||!signed.data.user) {
+      if (signed.error?.code==='invalid_credentials') await risk?.failure()
+      return unavailable()
+    }
+    const {access_token,refresh_token}=signed.data.session
+    await risk?.assess(signed.data.user.id,access_token)
+    return Response.json({access_token,refresh_token},{headers})
+  } catch {return unavailable()}
+}

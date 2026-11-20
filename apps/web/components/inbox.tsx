@@ -26,6 +26,7 @@ import { ScopedTasks } from './scoped-tasks'
 import { SectionTabs } from './section-tabs'
 import { NetworkDiagnostics } from './network-diagnostics'
 import { GroupCalls } from './group-calls'
+import { GroupChat } from './group-chat'
 import { ContactKeyVerification } from './contact-key-verification'
 import { VoiceNotePlayer, VoiceNoteRecorder } from './voice-note'
 import { CommandPalette, type Command } from './command-palette'
@@ -67,7 +68,7 @@ export function Inbox({ user }: { user: string }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [requestedMeeting,setRequestedMeeting] = useState<string|null>(()=>typeof window==='undefined'?null:meetingFromQuery(window.location.search))
   const [requestedRoom,setRequestedRoom] = useState<{workspace:string;id:string}|null>(null)
-  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
+  const [tab, setTab] = useState<'inbox' | 'group-chats' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
     requestedMeeting?'meetings':pendingWorkspaceInvite()?'workspaces':
       typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
@@ -363,7 +364,7 @@ export function Inbox({ user }: { user: string }) {
   }
 
   const destinations=[
-    ['inbox','Inbox','chats messages'],['friends','Friends','contacts people'],['calls','Calls','audio video history'],
+    ['inbox','Inbox','chats messages'],['group-chats','Group chats','group encrypted messages'],['friends','Friends','contacts people'],['calls','Calls','audio video history'],
     ['workspaces','Workspaces','organizations'],['rooms','Rooms','channels'],['tasks','Tasks','board assignments'],
     ['calendar','Calendar','schedule'],['meetings','Meetings','video'],['vault','Files','attachments vault'],
     ['notifications','Notifications','updates'],['safety','Safety','reports'],['billing','Billing','plans subscription'],
@@ -444,6 +445,7 @@ export function Inbox({ user }: { user: string }) {
     <nav className="rail" aria-label={t('features')}>
       <Brand compact />
       <button className={tab === 'inbox' || tab === 'saved' ? 'active' : ''} aria-current={tab === 'inbox' || tab === 'saved' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>{t('inbox')}</span></button>
+      <button className={tab === 'group-chats' ? 'active' : ''} aria-current={tab === 'group-chats' ? 'page' : undefined} onClick={() => setTab('group-chats')}><Users size={19}/><span>Group chats</span></button>
       <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>{t('friends')}</span></button>
       <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>{t('calls')}</span></button>
       <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>{t('workspaces')}</span></button>
@@ -542,6 +544,9 @@ export function Inbox({ user }: { user: string }) {
       tab === 'search' ? <GlobalSearch key={paletteSearch.sequence} initialQuery={paletteSearch.query} openChat={select} openMeeting={openMeeting}
         openRoom={openRoom} openPalette={()=>setPaletteOpen(true)}/> :
       tab === 'notifications' ? <Notifications user={user} hints={hints} openMeeting={openMeeting} openRoom={openRoom} openChat={select}/> :
+      tab === 'group-chats' ? <GroupChat user={user} openDeviceSettings={() => { setProfileTab('sessions'); setTab('profile') }}
+        contacts={chats.filter(chat => chat.status === 'accepted' && !blocks.includes(peerId(chat,user)))
+          .map(chat => ({ id: peerId(chat,user), name: profiles[peerId(chat,user)]?.name || 'Contact' }))} /> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
         <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={peerExtras.photo}/>

@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 import { base64urlToBinary, binaryToBase64url, deviceBindingTranscript,
-  deviceBundleContract, deviceBundleTranscript, type DeviceChallenge } from '../../../../../lib/device-bundle'
+  deviceBundleContract, deviceBundleTranscript, deviceRecoveryTranscript, type DeviceChallenge } from '../../../../../lib/device-bundle'
 
-export const runtime = 'edge'
+export const runtime = 'nodejs'
 const headers = {'Cache-Control':'no-store'}
 const auth = {persistSession:false,autoRefreshToken:false}
 
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   const identity=await scoped.auth.getUser(bearer.slice(7))
   if (identity.error || !identity.data.user) return new Response(null,{status:401,headers})
 
-  let proof: {challenge?: unknown; signature?: unknown; binding?: unknown}
+  let proof: {challenge?: unknown; signature?: unknown; binding?: unknown; recoveryRequest?: unknown; recoverySignature?: unknown}
   try {
     if (Number(request.headers.get('content-length')||0)>1024) return new Response(null,{status:413,headers})
     const raw=await request.text()
@@ -29,6 +29,11 @@ export async function POST(request: Request) {
   if (typeof proof.challenge!=='string' || !deviceBundleContract.uuid.test(proof.challenge)
     || typeof proof.signature!=='string' || !deviceBundleContract.signature.test(proof.signature)
     || typeof proof.binding!=='string' || !deviceBundleContract.signature.test(proof.binding))
+    return new Response(null,{status:400,headers})
+  const {recoveryRequest,recoverySignature}=proof
+  const recovery=recoveryRequest!==undefined || recoverySignature!==undefined
+  if (recovery && (typeof recoveryRequest!=='string' || !deviceBundleContract.uuid.test(recoveryRequest)
+    || typeof recoverySignature!=='string' || !deviceBundleContract.signature.test(recoverySignature)))
     return new Response(null,{status:400,headers})
 
   const result=await scoped.rpc('st_v7_pending_device_bundle',{p_challenge:proof.challenge})
@@ -52,11 +57,17 @@ export async function POST(request: Request) {
       crypto.subtle.verify(params,verifier,base64urlToBinary(proof.binding),deviceBindingTranscript(challenge)),
     ])
     if (!validBundle || !validBinding) return new Response(null,{status:403,headers})
+    if (typeof recoveryRequest==='string' && typeof recoverySignature==='string' &&
+      !await crypto.subtle.verify(params,verifier,base64urlToBinary(recoverySignature),deviceRecoveryTranscript(challenge,recoveryRequest)))
+      return new Response(null,{status:403,headers})
   } catch {return new Response(null,{status:400,headers})}
 
   const service=createClient(supabase,serviceKey,{auth})
-  const finished=await service.rpc('st_v7_finish_device_bundle',{
+  const args={
     p_owner:challenge.owner,p_session:challenge.session,p_challenge:challenge.challenge,p_signature:proof.signature,
-  })
+  }
+  const finished=typeof recoveryRequest==='string'
+    ? await service.rpc('st_v7_finish_device_recovery_approval',{...args,p_recovery:recoveryRequest})
+    : await service.rpc('st_v7_finish_device_bundle',args)
   return new Response(null,{status:finished.error?503:finished.data?204:409,headers})
 }

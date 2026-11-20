@@ -2,7 +2,8 @@ import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
 import { LocaleProvider } from '../components/locale-provider'
 import { OfflineRegistration } from '../components/offline-registration'
-import { localeCookie, locales, resolveLocale } from '../lib/locale'
+import { locales, resolveLocale } from '../lib/locale'
+import { loopbackLocaleCookie, securedLocaleCookie } from '../lib/browser-request-policy'
 import './styles.css'
 
 export const metadata: Metadata = {
@@ -11,7 +12,9 @@ export const metadata: Metadata = {
 }
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  const locale = resolveLocale((await cookies()).get(localeCookie)?.value)
+  const preferences = await cookies()
+  const local = process.env.SECTALK_APP_URL?.startsWith('http://127.0.0.1:') || process.env.NODE_ENV !== 'production'
+  const locale = resolveLocale(preferences.get(securedLocaleCookie)?.value ?? (local ? preferences.get(loopbackLocaleCookie)?.value : undefined))
   return <html lang={locale} dir={locales[locale].direction}><body>
     <LocaleProvider initialLocale={locale}>{children}</LocaleProvider>
     <OfflineRegistration/>

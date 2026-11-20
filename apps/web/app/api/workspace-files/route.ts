@@ -79,6 +79,9 @@ async function handle(request: Request) {
   if (!bytes?.length) return fileFailure(400, 'Choose a file that contains data.')
   if (!allowedFileType(filename, mime, bytes)) return fileFailure(415, 'The file contents do not match a supported attachment type.')
   const hash = digestWorkspaceBytes(bytes)
+  const blocked = await auth.storage.rpc('st_v7_upload_digest_blocked', { p_hash: hash })
+  if (blocked.error) return fileFailure(503, 'The platform file policy could not be checked.')
+  if (blocked.data === true) return fileFailure(422, 'The workspace file was blocked by platform policy.')
   const scan = await scanAttachment(bytes, hash, attachmentDocumentFormat(filename))
   if (scan.verdict === 'malware') {
     await command('malware', null, hash)

@@ -107,7 +107,7 @@ try {
     const invitation = data(await member.client.from('st_v2_invites').select('id').eq('workspace_id', workspace).single())
     data(await member.client.rpc('st_v2_reply_invite', { p_invite: invitation.id, p_accept: true }))
   }
-  data(await owner.client.rpc('st_v2_set_member', { p_workspace: workspace, p_member: admin.id, p_role: 'admin' }))
+  sql(`update public.st_v2_members set role='admin' where workspace_id='${workspace}' and user_id='${admin.id}';`)
   const first = await upload(uploader)
   assert.equal(first.status, 200, await first.text())
   assert.equal(data(await history(owner.client)), null)

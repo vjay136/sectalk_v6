@@ -6,7 +6,6 @@ export const locales = {
 } as const
 
 export type Locale = keyof typeof locales
-export const localeCookie = 'sectalk_locale'
 
 export function resolveLocale(value: string | undefined): Locale {
   return value && Object.hasOwn(locales, value) ? value as Locale : 'en'

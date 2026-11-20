@@ -7,6 +7,7 @@ import {
   LockKeyhole, Mail, Phone, Send, Shield, ShieldCheck, Video,
 } from 'lucide-react'
 import { db, transientAuthClient } from '../lib/data'
+import { signInWithAppPassword } from '../lib/account-credential'
 import type { PlainMessageKey } from '../lib/locale'
 import { LanguageSelect, useLocale } from './locale-provider'
 
@@ -29,10 +30,10 @@ const steps = {
 } as const
 
 function authMessage(error: { code?: string; status?: number }, step: Step): PlainMessageKey {
+  if (step === 'sign-in') return 'invalidSignIn'
   if (error.code === 'over_email_send_rate_limit') return 'emailRateLimit'
   if (error.status === 429) return 'tooManyRequests'
   if (error.code === 'weak_password') return 'weakPassword'
-  if (step === 'sign-in') return 'invalidSignIn'
   if (step === 'recover') return 'invalidRecoveryCode'
   if (step === 'new-password') return error.code === 'same_password' ? 'samePassword' : 'passwordUpdateFailed'
   return 'verificationSendFailed'
@@ -104,12 +105,7 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
     try {
       switch (current) {
         case 'sign-in': {
-          const { error } = await db.auth.signInWithPassword({ email: address, password })
-          if (error?.code === 'email_not_confirmed') {
-            go('confirm', 'verificationReminder')
-            return
-          }
-          if (error) throw error
+          await signInWithAppPassword(address,password)
           break
         }
         case 'sign-up': {

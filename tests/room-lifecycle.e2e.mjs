@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
 import {createClient} from '@supabase/supabase-js'
+import { fixtureAuthenticator } from './workspace-admin-fixture.mjs'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
@@ -38,6 +39,7 @@ for(const person of [admin,member]) {
   const invite = data(await person.client.from('st_v2_invites').select('id').eq('workspace_id',workspace).single())
   data(await person.client.rpc('st_v2_reply_invite',{p_invite:invite.id,p_accept:true}))
 }
+await fixtureAuthenticator(owner.client)
 data(await owner.client.rpc('st_v2_set_member',{p_workspace:workspace,p_member:admin.id,p_role:'admin'}))
 const room = randomUUID()
 const roomName = 'Lifecycle room '+suffix

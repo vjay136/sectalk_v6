@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
+import { fixtureAuthenticator, totpCode } from './workspace-admin-fixture.mjs'
 
 const app=new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase=new URL(process.env.SECTALK_STORAGE_TEST_URL)
@@ -133,6 +134,7 @@ try{
     const url=new URL(response.url())
     return response.status()===200&&url.pathname.endsWith('/st_v2_members')&&url.searchParams.get('user_id')==='eq.'+member.id
   },{timeout:8000})
+  const { secret } = await fixtureAuthenticator(otherOwner.client)
   data(await otherOwner.client.rpc('st_v2_set_member',{p_workspace:second.id,p_member:member.id,p_role:'remove'}))
   await membershipRefresh
   await selected(first)
@@ -145,6 +147,8 @@ try{
   await page.getByLabel('Email address',{exact:true}).fill(otherOwner.email)
   await page.getByLabel('Password',{exact:true}).fill(password)
   await page.locator('button.submit-auth').click()
+  await page.getByLabel('Authenticator code',{exact:true}).fill(await totpCode(secret))
+  await page.getByRole('button',{name:'Verify authenticator',exact:true}).click()
   await feature('Workspaces').click()
   await selected(second)
   assert.equal(await chooser.locator('option').count(),1)

@@ -27,6 +27,9 @@ async function handlePost(request:Request){
   if(!allowedFileType(pending.data.filename,input.mime,bytes))
     return fileFailure(415,'The file contents do not match an allowed attachment type.')
   const hash=createHash('sha256').update(bytes).digest('hex')
+  const blocked=await auth.storage.rpc('st_v7_upload_digest_blocked',{p_hash:hash})
+  if(blocked.error)return fileFailure(503,'The platform file policy could not be checked.')
+  if(blocked.data===true)return fileFailure(422,'The attachment was blocked by platform policy.')
   const scanState=pending.data.scan_state
   if(scanState==='malware')return fileFailure(422,'The attachment was blocked by security scanning.')
   const localReason=inspectAttachment(pending.data.filename,bytes)
@@ -55,6 +58,7 @@ async function handlePost(request:Request){
   if(publication.error?.code==='PT413')return fileFailure(413,publication.error.message)
   if(publication.error?.code==='PT409')return fileFailure(409,publication.error.message)
   if(publication.error?.code==='PT423')return fileFailure(423,'The attachment remains quarantined.')
+  if(publication.error?.code==='PT422')return fileFailure(422,'The attachment was blocked by platform policy.')
   if(publication.error)return fileFailure(409,'The attachment could not be published.')
   return Response.json(publication.data,{headers:fileHeaders})
 }

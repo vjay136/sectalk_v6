@@ -10,9 +10,10 @@ import { WorkspaceContextProvider } from '../components/workspace-context'
 import { SignInMfa } from '../components/account-mfa'
 import { DeviceLockScreen, useDeviceProtection } from '../components/device-lock-screen'
 import { AccountLockdownScreen, type AccountLock } from '../components/login-anomalies'
+import { LoginStepUp } from '../components/login-step-up'
 import { unsubscribeBrowserPush } from '../components/web-push-settings'
 
-type Access = { user: string; state: 'allowed' | 'challenge' | 'error'; lockdown?: AccountLock }
+type Access = { user: string; state: 'allowed' | 'challenge' | 'error'; lockdown?: AccountLock; risk?: 'email' | 'refresh' }
 
 export default function Home() {
   const { t } = useLocale()
@@ -50,15 +51,18 @@ export default function Home() {
       client.auth.mfa.getAuthenticatorAssuranceLevel(token),
       client.rpc('st_v7_current_session_valid'),
       client.rpc('st_v7_account_lock_status'),
-    ]).then(([assurance, validation, lockdown]) => {
+      client.rpc('st_v7_login_risk_status'),
+    ]).then(([assurance, validation, lockdown, risk]) => {
       if (!active) return
       if (!validation.error && validation.data === false) {
         void client.auth.signOut({scope:'local'})
         return
       }
       const {data,error}=assurance
-      setAccess({ user, state: error || validation.error || lockdown.error || !data.currentLevel ? 'error' : data.nextLevel === 'aal2' && data.currentLevel !== 'aal2' ? 'challenge' : 'allowed',
-        lockdown:(lockdown.data as AccountLock|null)??undefined })
+      setAccess({ user, state: error || validation.error || lockdown.error || risk.error || !data.currentLevel ? 'error'
+        : risk.data==='authenticator'||(data.nextLevel==='aal2'&&data.currentLevel!=='aal2') ? 'challenge' : 'allowed',
+        lockdown:(lockdown.data as AccountLock|null)??undefined,
+        risk:(risk.data==='email'||risk.data==='refresh')?risk.data:undefined })
     }).catch(() => { if (active) setAccess({ user, state: 'error' }) })
     return () => { active = false }
   }, [user, token, recovering, attempt])
@@ -103,6 +107,8 @@ export default function Home() {
     setStartRecovery(true)
     void db!.auth.signOut({scope:'local'})
   }}/>
+  if (access?.risk) return <LoginStepUp key={user} email={session?.user.email??null} refreshNeeded={access.risk==='refresh'}
+    hasLocalDevice={Boolean(protection.value&&!protection.value.locked&&!protection.value.unavailable)} complete={retry}/>
   if (protection.value && (protection.value.locked || protection.value.unavailable))
     return <DeviceLockScreen device={protection.value.device} unavailable={protection.value.unavailable} refresh={protection.refresh}/>
   return <WorkspaceContextProvider key={user} user={user}><Inbox user={user} /></WorkspaceContextProvider>

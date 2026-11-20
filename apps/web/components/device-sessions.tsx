@@ -12,19 +12,32 @@ type Session = {
   current_device: boolean
 }
 
+const signalLabels: Record<string, string> = {
+  unfamiliar_device: 'Unfamiliar browser',
+  impossible_travel: 'Unusually fast location change',
+  asn_reputation: 'Network reputation warning',
+  tor: 'Tor network',
+  vpn: 'VPN detected',
+  sign_in_velocity: 'Several recent sign-ins',
+  failed_sign_ins: 'Several recent failed attempts',
+}
+type Risk = {session_id: string; band: 'high'|'elevated'|'low'; signals: string[]; provider: 'matched'|'unavailable'}
+
 function SessionDate({value}: {value: string}) {
   return <time dateTime={value}>{new Date(value).toLocaleString()}</time>
 }
 
 export function DeviceSessions({hints}: {hints: EventTarget}) {
   const [rows, setRows] = useState<Session[] | null>(null)
+  const [risks, setRisks] = useState<Risk[]>([])
   const [selected, setSelected] = useState<Session | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [feedback, setFeedback] = useState('')
   const load = useCallback(async () => {
-    const {data, error} = await db!.rpc('st_v7_list_sessions')
+    const [{data, error}, risk] = await Promise.all([db!.rpc('st_v7_list_sessions'), db!.rpc('st_v7_list_session_risk')])
     setRows(error ? null : data as Session[])
+    setRisks(risk.error ? [] : risk.data as Risk[])
     setError(error ? 'Could not load your signed-in devices.' : '')
   }, [])
 
@@ -78,6 +91,10 @@ export function DeviceSessions({hints}: {hints: EventTarget}) {
         <div><dt>Last token refresh</dt><dd><SessionDate value={session.refreshed_at}/></dd></div>
         <div><dt>Expires</dt><dd><SessionDate value={session.expires_at}/></dd></div>
       </dl>
+      {risks.filter(risk => risk.session_id===session.id).map(risk => <div key={risk.session_id}>
+        <p>Sign-in risk: {risk.band}{risk.provider==='unavailable' && ' · Network reputation unavailable'}</p>
+        {risk.signals.length>0 && <p>{risk.signals.map(signal=>signalLabels[signal]).filter(Boolean).join(' · ')}</p>}
+      </div>)}
       {selected?.id===session.id && <div className="actions">
         <button className="danger" type="button" disabled={busy} onClick={()=>void revoke(session)}>Confirm sign-out</button>
         <button className="secondary" type="button" disabled={busy} onClick={()=>setSelected(null)}>Cancel</button>
