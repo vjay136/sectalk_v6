@@ -1,6 +1,7 @@
 import { withOperationalMetrics } from '../../../../lib/operational-metrics-server'
 import type Stripe from 'stripe'
 import { billingWriter, legacyOfferForPrice, stripe, webhookSecret } from '../../../../lib/stripe-server'
+import { readBoundedBody } from '../../../../lib/request-body'
 
 export const runtime = 'nodejs'
 
@@ -10,7 +11,10 @@ async function handlePost(request: Request) {
   if (!signature) return new Response('Missing signature', { status: 400 })
   let event: Stripe.Event
   try {
-    event = stripe.webhooks.constructEvent(await request.text(), signature, webhookSecret)
+    const payload = await readBoundedBody(request, 1024 * 1024)
+    if (payload === undefined) return new Response('Webhook payload too large', { status: 413 })
+    if (!payload?.length) return new Response('Missing webhook payload', { status: 400 })
+    event = stripe.webhooks.constructEvent(payload, signature, webhookSecret)
   } catch {
     return new Response('Invalid signature', { status: 400 })
   }

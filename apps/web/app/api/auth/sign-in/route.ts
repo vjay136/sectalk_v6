@@ -1,6 +1,7 @@
 import { isIP } from 'node:net'
 import { createClient } from '@supabase/supabase-js'
 import { sessionRiskGateway } from '../../../../lib/session-risk-server'
+import { readBoundedText } from '../../../../lib/request-body'
 
 export const runtime='nodejs'
 const headers={'Cache-Control':'no-store'}
@@ -15,9 +16,8 @@ export async function POST(request:Request) {
   const key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
   if (!url||!key) return unavailable()
   try {
-    if (Number(request.headers.get('content-length')||0)>2048) return unavailable()
-    const raw=await request.text()
-    if (raw.length>2048) return unavailable()
+    const raw=await readBoundedText(request,2048)
+    if (!raw) return unavailable()
     const values=JSON.parse(raw)
     if (!values||typeof values.email!=='string'||typeof values.password!=='string') return unavailable()
     const email=values.email.trim()
@@ -35,6 +35,10 @@ export async function POST(request:Request) {
       auth:{persistSession:false,autoRefreshToken:false},global:{headers:forwarded},
     })
     const risk=sessionRiskGateway(url,email)
+    const retryAfter=await risk?.admit(ip&&isIP(ip)?ip:null)
+    if (retryAfter) {
+      return Response.json({error:'try_again_later'},{status:429,headers:{...headers,'Retry-After':String(retryAfter)}})
+    }
     const signed=await auth.auth.signInWithPassword({email,password:values.password})
     if (signed.error||!signed.data.session||!signed.data.user) {
       if (signed.error?.code==='invalid_credentials') await risk?.failure()

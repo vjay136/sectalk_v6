@@ -15,7 +15,7 @@ async function handle(request: Request) {
   const room = query.get('room')?.toLowerCase()
   const file = query.get('file')?.toLowerCase()
   if (!validFileId(room) || (file !== undefined && !validFileId(file))) return fileFailure(400, 'Choose a valid room file.')
-  const auth = await authenticateFileRequest(request)
+  const auth = await authenticateFileRequest(request,{type:'room',id:room})
   if (auth instanceof Response) return auth
   const filename = readUploadFilename(request)
   const command = (action: string, size: number | null = null, hash: string | null = null) =>

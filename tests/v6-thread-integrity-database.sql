@@ -8,11 +8,17 @@ insert into public.st_profiles(id,handle,name) values
   ('69100000-0000-4000-8000-000000000001','thread_fixture_owner','Thread owner'),
   ('69100000-0000-4000-8000-000000000002','thread_fixture_member','Thread member'),
   ('69100000-0000-4000-8000-000000000003','thread_fixture_outsider','Thread outsider');
+insert into auth.sessions(id,user_id,aal) values
+  ('69100000-0000-4000-8000-000000000011','69100000-0000-4000-8000-000000000001','aal1');
+insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at) values
+  (gen_random_uuid(),'69100000-0000-4000-8000-000000000011','password',now(),now());
 
 set local role authenticated;
 do $$
 declare
   owner_id constant uuid:='69100000-0000-4000-8000-000000000001';
+  owner_claims constant text:=json_build_object('sub',owner_id,'role','authenticated','aal','aal1',
+    'session_id','69100000-0000-4000-8000-000000000011')::text;
   member_id constant uuid:='69100000-0000-4000-8000-000000000002';
   outsider_id constant uuid:='69100000-0000-4000-8000-000000000003';
   room constant uuid:=gen_random_uuid();
@@ -25,7 +31,7 @@ declare
   invite_id uuid;
   original_at timestamptz;
 begin
-  perform set_config('request.jwt.claims',json_build_object('sub',owner_id,'role','authenticated')::text,true);
+  perform set_config('request.jwt.claims',owner_claims,true);
   workspace:=public.st_v2_create_workspace('Thread integrity fixture');
   perform public.st_v2_invite(workspace,'thread_fixture_member');
   perform public.st_v6_room_create(room,workspace,'Thread integrity room','public','blank');
@@ -40,7 +46,7 @@ begin
   insert into public.st_v6_thread_follows(room_id,post_id) values(room,root),(room,deleted_root);
   perform public.st_v6_task_create(task,room,null,'Task sourced to parent',root);
 
-  perform set_config('request.jwt.claims',json_build_object('sub',owner_id,'role','authenticated')::text,true);
+  perform set_config('request.jwt.claims',owner_claims,true);
   perform public.st_v6_room_post(room,reply,'An existing reply','message',root);
   perform public.st_v6_room_post(room,retained_reply,'Reply on deleted root','message',deleted_root);
   perform public.st_v6_room_settings(room,'pin',root);
@@ -63,7 +69,7 @@ begin
     where post_id=deleted_root and replies=1 and following and excerpt='Message removed')
     then raise exception 'Author deletion removed thread identity or exposed the original'; end if;
 
-  perform set_config('request.jwt.claims',json_build_object('sub',owner_id,'role','authenticated')::text,true);
+  perform set_config('request.jwt.claims',owner_claims,true);
   perform public.st_v6_room_post_action(room,root,'redact');
   perform public.st_v6_room_post_action(room,root,'redact');
   if (select count(*) from public.st_v6_room_audit where room_id=room and target=root and action='post.edited')<>1

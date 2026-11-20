@@ -5,6 +5,7 @@ import { db, formatError } from '../lib/data'
 import { RoomRetentionPolicy } from './room-retirement'
 import { WorkspacePolicyVersions } from './workspace-policy-versions'
 import { EmergencyAccess } from './emergency-access'
+import { EvidenceVault } from './evidence-vault'
 
 type Hold = {
   id: string
@@ -138,6 +139,7 @@ export function WorkspaceLegalHolds({ workspace, members, owner }: { workspace: 
         <summary>Emergency access approvals</summary>
         {showEmergency && <EmergencyAccess workspace={workspace}/>}
       </details>}
+      <EvidenceVault key={workspace} workspace={workspace}/>
       <p>Preserve matching workspace posts and protected versions during edits or removal. Date boundaries use your device’s time zone.</p>
       <details className="release-create">
         <summary>Place a preservation hold</summary>

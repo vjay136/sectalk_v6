@@ -69,10 +69,18 @@ async function open(actor, selected) {
   return page
 }
 const settings = page => page.getByRole('region', { name: 'Room role permissions' })
-async function save(panel, role, values) {
+async function save(panel, role, values, verify=false) {
   await panel.getByLabel('Room role').selectOption(role.toLowerCase())
   for (const [label, value] of Object.entries(values)) await panel.getByLabel(label, { exact: true }).selectOption(value)
   await panel.getByRole('button', { name: 'Save room permissions' }).click()
+  if (verify) {
+    const confirmation=panel.getByRole('form',{name:'Verify your current sign-in'})
+    await confirmation.getByLabel('Current password',{exact:true}).fill('incorrect-'+password)
+    await confirmation.getByRole('button',{name:'Verify and continue',exact:true}).click()
+    await panel.getByText('Verification failed. Check your credentials and try again.',{exact:true}).waitFor()
+    await confirmation.getByLabel('Current password',{exact:true}).fill(password)
+    await confirmation.getByRole('button',{name:'Verify and continue',exact:true}).click()
+  }
   await panel.getByText(role + ' permissions saved.', { exact: true }).waitFor()
 }
 
@@ -134,11 +142,20 @@ try {
   const ownerPage = await open(owner, 'Settings')
   const panel = settings(ownerPage)
   await panel.getByLabel('Room role').waitFor()
+  const token=await ownerPage.evaluate(()=>{
+    const saved=Object.keys(localStorage).find(key=>key.endsWith('-auth-token'))
+    return JSON.parse(localStorage.getItem(saved)).access_token
+  })
+  const {session_id}=JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString())
+  assert.match(session_id,/^[a-f0-9-]{36}$/)
+  sql("update auth.mfa_amr_claims set updated_at=now()-interval '6 minutes' where session_id='"+session_id+"';")
+  const aged=createClient(supabase.origin,process.env.SECTALK_STORAGE_TEST_PUBLIC_KEY,{...options,accessToken:async()=>token})
+  assert.equal((await aged.rpc('st_v6_set_room_role_overrides',{p_room:room,p_role:'member',p_rules:{}})).error?.code,'42501')
   assert.deepEqual(await panel.getByLabel('Room role').locator('option').allTextContents(), ['Owner', 'Moderator', 'Member'])
   await save(panel, 'Member', {
     'Post messages and replies': 'inherit', 'Add reactions': 'allow', 'Upload files': 'inherit',
     'Mention the room or online members': 'allow', 'Start a room call': 'allow',
-  })
+  },true)
   await save(panel, 'Moderator', { 'Mention the room or online members': 'deny' })
   await tab(memberPage, 'Messages').click()
   await memberPage.getByLabel('Write a room message').waitFor()

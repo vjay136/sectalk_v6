@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
 import { Dialog } from './inbox'
+import { useDlpPublishWarning } from './dlp-publish-warning'
 
 export type ForwardDestination = { id: string; name: string }
 
@@ -20,6 +21,7 @@ export function ForwardMessageDialog({ source, close, onSent }: {
   const [working, setWorking] = useState(false)
   const [error, setError] = useState('')
   const requests = useRef(new Map<string, string>())
+  const { publish: publishWithDlp, prompt: dlpPrompt } = useDlpPublishWarning()
   const destinations = source.kind === 'direct' ? source.destinations : roomDestinations
 
   useEffect(() => {
@@ -43,10 +45,18 @@ export function ForwardMessageDialog({ source, close, onSent }: {
     requests.current.set(destination, id)
     const target = { p_source_message: source.message, p_destination: destination, p_id: id }
     try {
-      const result = source.kind === 'direct'
-        ? await db!.rpc('st_v6_forward_direct', { ...target, p_source_chat: source.conversation })
-        : await db!.rpc('st_v6_forward_room', { ...target, p_source_room: source.conversation })
-      if (result.error) throw result.error
+      if (source.kind === 'direct') {
+        const result = await db!.rpc('st_v6_forward_direct', { ...target, p_source_chat: source.conversation })
+        if (result.error) throw result.error
+      } else {
+        const original = await db!.from('st_v6_room_posts').select('body').eq('room_id', source.conversation)
+          .eq('id', source.message).is('removed_at', null).maybeSingle()
+        if (original.error || !original.data) throw new Error('The source message is no longer available.')
+        await publishWithDlp('room', destination, id, original.data.body, async () => {
+          const result = await db!.rpc('st_v6_forward_room', { ...target, p_source_room: source.conversation })
+          if (result.error) throw result.error
+        })
+      }
     } catch (failure) {
       setError(formatError(failure, 'Could not forward the message.'))
       setWorking(false)
@@ -57,6 +67,7 @@ export function ForwardMessageDialog({ source, close, onSent }: {
   }
 
   return <Dialog title="Forward message" close={close}>
+    {dlpPrompt}
     {error && <p className="error" role="alert">{error}</p>}
     {!destinations && !error && <p role="status">Loading eligible rooms…</p>}
     {destinations?.length === 0 && <p>{source.kind === 'direct' ? 'No eligible conversations.' : 'No eligible rooms in this workspace.'}</p>}

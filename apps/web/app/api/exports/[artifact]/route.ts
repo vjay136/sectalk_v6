@@ -21,6 +21,8 @@ export async function GET(request: Request, context: { params: Promise<{ artifac
   const unavailable = (status: number) => new Response(null, { status, headers: fileHeaders })
   const viewer = await operationalReportViewer(request)
   if (!viewer) return unavailable(401)
+  const proof=await viewer.client.rpc('st_v7_sensitive_action_status',{p_kind:'export'})
+  if (proof.error||proof.data!=='verified') return unavailable(404)
   const { artifact } = await context.params
   if (!exportIdPattern.test(artifact)) return unavailable(404)
   const storage = exportStorage()

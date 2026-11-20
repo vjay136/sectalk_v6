@@ -5,9 +5,11 @@
 | Check | Result |
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
-| Clean source snapshot | The staged 177-feature snapshot passed a production build on checksum-verified Node 24.22.3, source and browser secret checks, and the production dependency audit. Edge and the snapshot's own local services verified encrypted group search and reports, managed search, operator session and device controls, compliance exports, workspace AI controls, active rule promotion and rollback, and signup confirmation and recovery email. A group-index account-switch race found in this pass was fixed and retested. |
-| Unit tests | 43 passed, including the synthetic rule benchmark, encrypted message warnings, meeting summary guardrails, webhook transport, export payloads, SMTP, VAPID and readiness. |
-| Supabase database integration | A fresh local Supabase project installed the exact staged migrations and passed all 119 rollback suites. The room classification fixture was updated to carry native authenticator proof before its final pass. |
+| Clean source snapshot | The staged 187-feature snapshot built on checksum-verified Node 24.22.3. Source and browser secret checks passed, and the production dependency audit reported zero vulnerabilities. The snapshot used an isolated local Supabase project and connected real Edge, Auth, Realtime, Storage and Mailpit for acceptance. |
+| Unit tests | 47 passed, including the request body limits, safety threshold actions, synthetic rule benchmark, signature-related helpers, export payloads, SMTP, VAPID and readiness. |
+| Supabase database integration | A fresh local project installed the exact staged migrations. All 128 rollback suites passed. Two earlier room fixtures needed a genuine-format native password assurance claim to pass the new sensitive role-mutation gate. |
+| Staged browser and HTTP acceptance | The staged app verified sign-in, scoped workspace review and moderator decisions, private immutable evidence and custody, opt-in browser signal sharing, managed attachment quarantine, room DLP and live redaction, and signed synthetic Stripe and LiveKit webhook bytes. |
+| Staged email acceptance | Mailpit delivered the signup confirmation link at the exact candidate origin and the six-digit recovery code. Edge verified a passive link preview, the confirmation success page and sign-in action, single-use token enforcement, a password update and the other signed-in browser's password-change alert. Hosted mail delivery remains pending. |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |

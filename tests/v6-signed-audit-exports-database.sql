@@ -9,6 +9,8 @@ insert into auth.mfa_factors(id,user_id,factor_type,status,created_at,updated_at
   ('39c4a3a6-8d36-482a-a216-d44e6ed65511','39c4a3a6-8d36-482a-a216-d44e6ed65501','totp','verified',now(),now());
 insert into auth.sessions(id,user_id,aal,factor_id) values
   ('39c4a3a6-8d36-482a-a216-d44e6ed65521','39c4a3a6-8d36-482a-a216-d44e6ed65501','aal2','39c4a3a6-8d36-482a-a216-d44e6ed65511');
+insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at) values
+  (gen_random_uuid(),'39c4a3a6-8d36-482a-a216-d44e6ed65521','totp',now(),now());
 
 do $$
 declare
@@ -47,6 +49,14 @@ begin
   if not exists(select 1 from public.st_v2_workspace_audit where workspace_id=workspace and event='workspace.audit_export_requested') then
     raise exception 'Export authorization was not audited'; end if;
 
+  reset role;
+  update auth.mfa_amr_claims set updated_at=now()-interval '6 minutes'
+    where auth.mfa_amr_claims.session_id='39c4a3a6-8d36-482a-a216-d44e6ed65521';
+  set local role authenticated;
+  begin
+    perform public.st_v6_record_audit_export(workspace);
+    raise exception 'An expired TOTP step could still authorize an export';
+  exception when insufficient_privilege then null; end;
   reset role;
   alter table public.st_v2_workspace_audit disable trigger st_v6_audit_capture;
   update public.st_v2_workspace_audit set target=gen_random_uuid() where id=audit_id;

@@ -14,6 +14,9 @@ insert into auth.mfa_factors(id,user_id,factor_type,status,created_at,updated_at
 insert into auth.sessions(id,user_id,aal,factor_id) values
   ('7f320000-0000-4000-8000-000000000001','7f300000-0000-4000-8000-000000000001','aal2','7f310000-0000-4000-8000-000000000001'),
   ('7f320000-0000-4000-8000-000000000002','7f300000-0000-4000-8000-000000000002','aal2','7f310000-0000-4000-8000-000000000002');
+insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at) values
+  (gen_random_uuid(),'7f320000-0000-4000-8000-000000000001','totp',now(),now()),
+  (gen_random_uuid(),'7f320000-0000-4000-8000-000000000002','totp',now(),now());
 insert into sectalk_private.st_v6_operation_rollups values
   ('2020-02-01 15:50+00','file_upload',10,2,1,0,1,3,array[4,0,0,5,0,1,0,0,0]),
   ('2020-02-01 15:50+00','billing_webhook',9,0,0,0,0,1,array[9,0,0,0,0,0,0,0,0]),

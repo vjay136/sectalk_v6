@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { base64urlToBinary, deviceBundleContract, deviceCommandTranscript } from '../../../../../lib/device-bundle'
+import { readBoundedText } from '../../../../../lib/request-body'
 
 export const runtime='nodejs'
 const headers={'Cache-Control':'no-store'}
@@ -11,9 +12,9 @@ export async function POST(request: Request) {
   if (!url||!key) return new Response(null,{status:503,headers})
   let value:Record<string,unknown>
   try {
-    if (Number(request.headers.get('content-length')||0)>1024) return new Response(null,{status:413,headers})
-    const body=await request.text()
-    if (body.length>1024) return new Response(null,{status:413,headers})
+    const body=await readBoundedText(request,1024)
+    if (body===undefined) return new Response(null,{status:413,headers})
+    if (body===null) return new Response(null,{status:400,headers})
     value=JSON.parse(body)
     if (!value||Array.isArray(value)||typeof value!=='object') throw new Error()
   } catch {return new Response(null,{status:400,headers})}

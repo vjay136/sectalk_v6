@@ -68,7 +68,7 @@ const textRules = [
 ]
 
 /** @param {string} raw */
-function suspiciousLink(raw) {
+export function isSuspiciousSafetyLink(raw) {
   try {
     const url = new URL(raw)
     return url.protocol === 'http:' || !!url.username || !!url.password || url.hostname.includes('xn--') ||
@@ -102,7 +102,7 @@ export function evaluateMessageRisk(text) {
       reason: 'This message may be spam or a misleading promotion.',
     })
   }
-  if (urls.some(suspiciousLink)) {
+  if (urls.some(isSuspiciousSafetyLink)) {
     matches.push({
       category: 'suspicious_link', score: 32, confidence: 0.46,
       reason: 'This link has characteristics worth checking before opening it.',

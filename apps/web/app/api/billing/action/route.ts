@@ -3,11 +3,13 @@ import { billingIdentity, billingWriter, catalogPriceId, origin, stripe } from '
 import { isBillingCurrency, isPaidPlan } from '../../../../lib/billing'
 
 async function handlePost(request: Request) {
-  if (!stripe || !origin || !billingWriter) return Response.json({ error: 'Payment checkout is unavailable on this deployment.' }, { status: 503 })
   const identity = await billingIdentity(request)
   if (!identity) return Response.json({ error: 'Sign in first.' }, { status: 401 })
-  const payload = await request.json().catch(() => null)
   const { user, client } = identity
+  const proof=await client.rpc('st_v7_sensitive_action_status',{p_kind:'billing'})
+  if (proof.error || proof.data!=='verified') return Response.json({error:'Verify your current sign-in to continue to billing.'},{status:403})
+  if (!stripe || !origin || !billingWriter) return Response.json({ error: 'Payment checkout is unavailable on this deployment.' }, { status: 503 })
+  const payload = await request.json().catch(() => null)
   const { data: subscription, error } = await client.from('st_v2_subscriptions').select('customer_id,status').eq('user_id', user.id).maybeSingle()
   if (error) return Response.json({ error: 'Could not load your subscription.' }, { status: 503 })
   try {

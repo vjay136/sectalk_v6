@@ -28,6 +28,10 @@ type Report = {
   can_acknowledge?: boolean
   can_route?: boolean
   can_decide?: boolean
+  can_delegate?: boolean
+  assigned_at?: string
+  decision_scope?: 'workspace' | 'platform' | null
+  decided_at?: string | null
 }
 
 export function RoomPostReport({room, post, close}: {room: string; post: string; close: () => void}) {
@@ -71,12 +75,18 @@ function useRoomReports(scope: 'mine' | 'platform' | 'workspace') {
   const [rows, setRows] = useState<Report[] | null>(null)
   const [error, setError] = useState('')
   const load = useCallback(async () => {
-    const result = scope === 'mine' ? await db!.rpc('st_v6_my_room_reports')
+    const result = scope === 'mine' ? await db!.rpc('st_v7_my_room_report_status')
+      : scope === 'workspace' ? await db!.rpc('st_v7_workspace_room_review_queue')
       : await db!.rpc('st_v6_room_report_queue', {p_scope: scope})
     setRows(result.error ? null : result.data as Report[])
     setError(result.error ? 'Room reports are unavailable.' : '')
   }, [scope])
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    void load()
+    if (scope !== 'mine') return
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load() }, 5000)
+    return () => window.clearInterval(timer)
+  }, [load, scope])
   return {rows, error, load}
 }
 
@@ -91,6 +101,8 @@ export function MyRoomReports() {
     {rows?.map(row => <article className="release-board-item" key={row.id}>
       <strong>{categories[row.category]}</strong><p>{statuses[row.status]}</p>
       <time dateTime={row.created_at}>{new Date(row.created_at).toLocaleString()}</time>
+      {row.decision_scope && row.decided_at && <p>{row.decision_scope === 'workspace' ? 'Decided by your workspace reviewer' : 'Decided by Platform Safety'}
+        {' · '}<time dateTime={row.decided_at}>{new Date(row.decided_at).toLocaleString()}</time></p>}
       <p>{row.handed_off_at ? 'Shared with authorized workspace admins' :
         row.share_with_workspace ? 'You allowed workspace sharing' : 'Platform review only'}</p>
     </article>)}
@@ -103,9 +115,21 @@ export function RoomReportQueue({scope}: {scope: 'platform' | 'workspace'}) {
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState('')
   const [feedback, setFeedback] = useState('')
+  const [action, setAction] = useState('')
+  const [candidate, setCandidate] = useState('')
+  const [reviewers, setReviewers] = useState<Array<{ id: string; name: string; handle: string }>>([])
   const selected = rows?.find(row => row.id === active)
   const title = scope === 'platform' ? 'Platform room reports' : 'Workspace room reports'
 
+  const assignable = scope === 'workspace' && selected?.can_delegate ? selected.id : null
+  useEffect(() => {
+    const request = new AbortController()
+    setReviewers([])
+    setCandidate('')
+    if (assignable) void db!.rpc('st_v7_workspace_room_reviewers', { p_report: assignable }).abortSignal(request.signal)
+      .then(result => { if (!request.signal.aborted && !result.error) setReviewers(result.data ?? []) })
+    return () => request.abort()
+  }, [assignable])
   async function review(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!selected || busy) return
@@ -114,13 +138,20 @@ export function RoomReportQueue({scope}: {scope: 'platform' | 'workspace'}) {
     setBusy(true)
     setActionError('')
     setFeedback('')
-    const {error} = await db!.rpc('st_v6_review_room_report', {
-      p_report: selected.id, p_scope: scope, p_action: fields.get('action'), p_reason: fields.get('reason'),
+    const chosen = fields.get('action')
+    const workspaceAction = scope === 'workspace' && (chosen === 'resolved' || chosen === 'dismissed' || chosen === 'delegate')
+    const {error} = workspaceAction ? await db!.rpc('st_v7_workspace_room_case_action', {
+      p_report: selected.id, p_action: chosen, p_reason: fields.get('reason'),
+      p_expected_assignment: selected.assigned_at, p_reviewer: chosen === 'delegate' ? candidate : null,
+    }) : await db!.rpc('st_v6_review_room_report', {
+      p_report: selected.id, p_scope: scope, p_action: chosen, p_reason: fields.get('reason'),
       p_expected_stage: selected.stage ?? 0,
     })
     if (error) setActionError(formatError(error, 'Could not update this room report.'))
     else {
       form.reset()
+      setAction('')
+      setCandidate('')
       await load()
       setFeedback('Room report updated.')
     }
@@ -137,7 +168,7 @@ export function RoomReportQueue({scope}: {scope: 'platform' | 'workspace'}) {
     {!error && !rows && <p role="status">Loading room reports…</p>}
     {rows?.length === 0 && <p>No room reports to review.</p>}
     {selected ? <article className="release-board-item">
-      <button className="secondary" disabled={busy} type="button" onClick={() => {setActive('');setActionError('');setFeedback('')}}>Back to room reports</button>
+      <button className="secondary" disabled={busy} type="button" onClick={() => {setActive('');setAction('');setActionError('');setFeedback('')}}>Back to room reports</button>
       <h4>{categories[selected.category]}</h4>
       <p>{statuses[selected.status]} · {selected.room_name || 'Room unavailable'}</p>
       <p>{selected.workspace_name}</p>
@@ -154,16 +185,22 @@ export function RoomReportQueue({scope}: {scope: 'platform' | 'workspace'}) {
         {selected.acknowledged_at && <div><dt>Acknowledged</dt><dd>{new Date(selected.acknowledged_at).toLocaleString()}</dd></div>}
       </dl>}
       {actionError && <p role="alert" className="error">{actionError}</p>}
-      {(selected.can_decide || selected.can_acknowledge || selected.can_route) && <form key={selected.id} className="release-form" onSubmit={review}>
-        <label>Review action<select name="action" required>
+      {(selected.can_decide || selected.can_acknowledge || selected.can_route || reviewers.length > 0) && <form key={selected.id} className="release-form" onSubmit={review}>
+        <label>Review action<select name="action" required onChange={event => setAction(event.target.value)}>
           {selected.can_route && <option value="route">Route to {stages[(selected.stage ?? 0) + 1]}</option>}
           {selected.can_acknowledge && <option value="acknowledge">Acknowledge stage</option>}
           {selected.can_decide && <>
-            <option value="reviewing">Mark in review</option>
+            {scope === 'platform' && <option value="reviewing">Mark in review</option>}
             <option value="resolved">Resolve</option>
             <option value="dismissed">Dismiss</option>
           </>}
+          {reviewers.length > 0 && <option value="delegate">Reassign to another workspace reviewer</option>}
         </select></label>
+        {action === 'delegate' && <label>Workspace reviewer<select value={candidate} required
+          onChange={event => setCandidate(event.target.value)}>
+          <option value="">Choose a verified reviewer</option>
+          {reviewers.map(reviewer => <option key={reviewer.id} value={reviewer.id}>{reviewer.name} (@{reviewer.handle})</option>)}
+        </select></label>}
         <label>Review reason<textarea name="reason" maxLength={500} rows={2} required/></label>
         <button className="primary" disabled={busy}>Update room report</button>
       </form>}

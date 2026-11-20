@@ -10,11 +10,17 @@ insert into public.st_profiles(id,handle,name) values
  ('61000000-0000-4000-8000-000000000002','room_fixture_member','Room member'),
  ('61000000-0000-4000-8000-000000000003','room_fixture_outside','Outside account'),
  ('61000000-0000-4000-8000-000000000004','room_fixture_guest','Room guest');
+insert into auth.sessions(id,user_id,aal) values
+ ('61000000-0000-4000-8000-000000000011','61000000-0000-4000-8000-000000000001','aal1');
+insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at) values
+ (gen_random_uuid(),'61000000-0000-4000-8000-000000000011','password',now(),now());
 
 set local role authenticated;
 do $$
 declare
   owner_id constant uuid:='61000000-0000-4000-8000-000000000001';
+  owner_claims constant text:=json_build_object('sub',owner_id,'role','authenticated','aal','aal1',
+    'session_id','61000000-0000-4000-8000-000000000011')::text;
   member_id constant uuid:='61000000-0000-4000-8000-000000000002';
   outside_id constant uuid:='61000000-0000-4000-8000-000000000003';
   guest_id constant uuid:='61000000-0000-4000-8000-000000000004';
@@ -29,7 +35,7 @@ declare
   workspace uuid;
   invitation uuid;
 begin
-  perform set_config('request.jwt.claims',json_build_object('sub',owner_id,'role','authenticated')::text,true);
+  perform set_config('request.jwt.claims',owner_claims,true);
   workspace:=public.st_v2_create_workspace('Room acceptance');
   perform public.st_v2_invite(workspace,'room_fixture_member');
   perform public.st_v2_invite(workspace,'room_fixture_guest');
@@ -89,7 +95,7 @@ begin
   perform set_config('request.jwt.claims',json_build_object('sub',guest_id,'role','authenticated')::text,true);
   select id into invitation from public.st_v2_invites where invitee=guest_id;
   perform public.st_v2_reply_invite(invitation,true);
-  perform set_config('request.jwt.claims',json_build_object('sub',owner_id,'role','authenticated')::text,true);
+  perform set_config('request.jwt.claims',owner_claims,true);
   if exists(select 1 from public.st_v6_room_thread_state(public_room,array[root_message]) where following)
     or exists(select 1 from public.st_v6_thread_follows) then raise exception 'Another participant saw a private follow'; end if;
   perform public.st_v6_room_membership(private_room,'approve',member_id);
@@ -99,7 +105,7 @@ begin
   if public.st_v6_room_my_role(public_room) is distinct from 'moderator'
     or not exists(select 1 from public.st_v6_room_audit where room_id=public_room)
     then raise exception 'Promoted moderator permissions not applied'; end if;
-  perform set_config('request.jwt.claims',json_build_object('sub',owner_id,'role','authenticated')::text,true);
+  perform set_config('request.jwt.claims',owner_claims,true);
   perform public.st_v6_room_membership(public_room,'role',member_id,'member');
   perform public.st_v6_room_settings(public_room,'pin',root_message);
   perform public.st_v6_room_settings(public_room,'slow',null,5);

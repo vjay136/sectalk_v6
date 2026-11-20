@@ -2,16 +2,15 @@
 
 import { useState } from 'react'
 import { ShieldAlert } from 'lucide-react'
-import { evaluateMessageRisk, threatTaxonomy } from '../lib/safety.mjs'
-import { classifyScamMessage } from '../lib/message-scam.mjs'
+import { threatTaxonomy } from '../lib/safety.mjs'
+import { messageSafetyAction } from '../lib/message-safety-action.mjs'
 import { db } from '../lib/data'
 
 export function MessageSafetyWarning({account,message,revision,body,sender,onReport}:{
   account:string;message:string;revision:string;body:string;sender:string;onReport:()=>void
 }){
   const key='sectalk.safety-dismissal.v1:'+account+':'+message+':'+revision
-  const risk = evaluateMessageRisk(body)
-  const scamMatches = classifyScamMessage(body)
+  const { risk, scam: scamMatches, level } = messageSafetyAction(body)
   const categories = risk.reasons.map(reason => reason.category)
   const preference = 'sectalk.safety-feedback.v1:' + account + ':' + sender + ':'
   const [dismissed,setDismissed]=useState(()=>{
@@ -64,8 +63,8 @@ export function MessageSafetyWarning({account,message,revision,body,sender,onRep
     {evidence}
     <button type="button" className="secondary" onClick={onReport}>Report this message</button>
   </details>
-  return <aside className="risk-warning" aria-label="Message safety warning">
-    <div className="release-row"><ShieldAlert size={16} aria-hidden="true"/><strong>Possible safety concern</strong></div>
+  return <aside className={level === 'hint' ? 'risk-warning risk-hint' : 'risk-warning'} aria-label="Message safety warning">
+    <div className="release-row"><ShieldAlert size={16} aria-hidden="true"/><strong>{level === 'hint' ? 'Safety hint' : 'Possible safety concern'}</strong></div>
     {scamMatches.length>0&&<p>Possible classification · {scamLabels}</p>}
     {reasons}
     <details>

@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
+import {useSensitiveAction} from './sensitive-action'
 
 export type AuditWorkspace={id:string;name:string}
 type AuditResult={source:'workspace'|'room';id:number;event:string;actor:string;target:string|null;room_name:string|null;at:string}
@@ -16,6 +17,7 @@ function auditDate(value:FormDataEntryValue|null,exclusiveEnd=false){
 }
 
 export function AuditSearch({workspaces}:{workspaces:AuditWorkspace[]}){
+  const {authorize,confirmation}=useSensitiveAction()
   const [rows,setRows]=useState<AuditResult[]|null>(null)
   const [integrity,setIntegrity]=useState<Integrity|null>(null)
   const [filters,setFilters]=useState<Filters|null>(null)
@@ -92,6 +94,7 @@ export function AuditSearch({workspaces}:{workspaces:AuditWorkspace[]}){
       <button className="primary" disabled={busy}>{busy?'Searching…':'Search audit logs'}</button>
     </form>
     {error&&<p role="alert" className="error">{error}</p>}
+    {confirmation}
     {integrity&&<div className="panel release-panel">
       <h2>Journal integrity</h2>
       <p role="status">{integrity.state==='matched'?'Displayed entries match the local audit journal.':
@@ -99,7 +102,7 @@ export function AuditSearch({workspaces}:{workspaces:AuditWorkspace[]}){
       {integrity.last_local_checkpoint&&<p>Last local journal checkpoint <time dateTime={integrity.last_local_checkpoint}>
         {new Date(integrity.last_local_checkpoint).toLocaleString()}</time>.</p>}
       {integrity.can_export&&integrity.state!=='unavailable'?
-        <button className="secondary" type="button" onClick={()=>void download()} disabled={busy}>Download signed audit</button>:
+        <button className="secondary" type="button" onClick={()=>void authorize('export',download)} disabled={busy}>Download signed audit</button>:
         !integrity.can_export&&<p>Verify your authenticator in Profile → Security to export.</p>}
     </div>}
     {rows?.length===0&&<p role="status">No matching audit entries.</p>}

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
+import {useSensitiveAction} from './sensitive-action'
 
 type Cadence = 'daily' | 'weekly'
 type Run = {id: string; cadence: Cadence; period_end: string; state: 'pending' | 'sent' | 'failed' | 'cancelled'}
@@ -11,6 +12,7 @@ const statuses: Record<Run['state'], string> = {
 }
 
 export function ScheduledOperationalReports() {
+  const {authorize,confirmation}=useSensitiveAction()
   const [settings, setSettings] = useState<Settings | null>(null)
   const [configured, setConfigured] = useState(false)
   const [cadence, setCadence] = useState<Cadence>('daily')
@@ -85,6 +87,7 @@ export function ScheduledOperationalReports() {
   }
 
   return <section className="release-section" aria-label="Scheduled operational reports">
+    {confirmation}
     <div className="panel-header">
       <h3>Scheduled operational reports</h3>
       <button type="button" className="secondary" disabled={busy} onClick={() => void load()}>Refresh reports</button>
@@ -110,7 +113,7 @@ export function ScheduledOperationalReports() {
           <strong>{run.cadence === 'weekly' ? 'Weekly report' : 'Daily report'}</strong>
           <time dateTime={run.period_end}>{new Date(run.period_end).toLocaleString()}</time>
           <span>{statuses[run.state]}</span>
-          <button className="secondary" type="button" disabled={busy} onClick={() => void download(run)}>Download CSV</button>
+          <button className="secondary" type="button" disabled={busy} onClick={() => void authorize('export',()=>download(run))}>Download CSV</button>
         </div>
       </article>)}
     </>}

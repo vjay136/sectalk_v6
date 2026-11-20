@@ -1,5 +1,20 @@
 begin;
 
+-- Use an authoritative native session for this ownership-transfer fixture.
+create function pg_temp.refresh_owner_proof()
+returns void language plpgsql security definer set search_path='' as $$
+declare actor uuid:=auth.uid(); native_session uuid:=gen_random_uuid(); factor uuid;
+begin
+  select id into factor from auth.mfa_factors f where f.user_id=actor and f.status='verified'
+    and f.factor_type='totp' limit 1;
+  insert into auth.sessions(id,user_id,aal,factor_id,created_at)
+    values(native_session,actor,case when factor is null then 'aal1'::auth.aal_level else 'aal2'::auth.aal_level end,factor,now());
+  insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at)
+    values(gen_random_uuid(),native_session,case when factor is null then 'password' else 'totp' end,now(),now());
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',actor,'role','authenticated',
+    'session_id',native_session,'aal',case when factor is null then 'aal1' else 'aal2' end)::text,true);
+end $$;
+
 -- Set up a fresh TOTP session for a roster mutation in this SQL fixture.
 create function pg_temp.set_verified_member(p_workspace uuid,p_member uuid,p_role text)
 returns void language plpgsql security definer set search_path='' as $$
@@ -95,6 +110,7 @@ begin
     or public.st_v6_room_my_role(room) is not null then
     raise exception 'Manager directory, audit, or room content boundaries failed';
   end if;
+  perform pg_temp.refresh_owner_proof();
   begin
     perform public.st_v6_manage_room(room,'transfer_owner',p_target=>admin_id);
     raise exception 'Expected transfer to non-member rejection';
@@ -102,6 +118,7 @@ begin
     if sqlerrm<>'Choose an active room member as the new owner' then raise; end if;
   end;
   perform public.st_v6_manage_room(room,'transfer_owner',p_target=>member_id);
+  perform set_config('request.jwt.claims','',true);
   if not exists(select 1 from public.st_v6_room_members where room_id=room and user_id=owner_id and role='moderator')
     or (select count(*) from public.st_v6_room_members where room_id=room and role='owner')<>1
     or not exists(select 1 from public.st_v6_room_management_audit(room) where action='membership.transfer_owner'

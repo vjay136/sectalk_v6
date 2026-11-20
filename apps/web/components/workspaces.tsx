@@ -20,6 +20,9 @@ import { WorkspaceFeatures } from './workspace-features'
 import { ComplianceExports } from './compliance-exports'
 import { WorkspacePeople } from './workspace-people'
 import { WorkspaceAISettings } from './workspace-ai-settings'
+import { WorkspaceDlp } from './workspace-dlp'
+import { useDlpPublishWarning } from './dlp-publish-warning'
+import {useSensitiveAction} from './sensitive-action'
 
 const ImpersonationWatch = dynamic(() => import('./impersonation-watch').then(module => module.ImpersonationWatch), {
   loading: () => <p role="status">Loading impersonation watch…</p>,
@@ -151,7 +154,7 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
 }
 
 function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;user:string;view:WorkspaceView;initialRoom?:string }) {
-  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'files' | 'activity' | 'impersonation' | 'governance' | 'overview' | 'integrations' | 'features' | 'ai' | 'compliance-exports'>('people')
+  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'files' | 'activity' | 'impersonation' | 'governance' | 'overview' | 'integrations' | 'features' | 'ai' | 'dlp' | 'compliance-exports'>('people')
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
@@ -165,7 +168,7 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
   const activeMembers = members.filter(member => !member.suspended_at)
   const role = activeMembers.find(member => member.user_id === user)?.role
   const manager = role === 'owner' || role === 'admin'
-  const visibleTab = (!manager && ['activity','impersonation','governance','overview','features','ai','compliance-exports'].includes(tab)) ||
+  const visibleTab = (!manager && ['activity','impersonation','governance','overview','features','ai','dlp','compliance-exports'].includes(tab)) ||
     (tab==='integrations'&&role!=='owner') ? 'people' : tab
   const load = useCallback(async () => {
     const [channelResult, memberResult, presencePolicy] = await Promise.all([
@@ -209,7 +212,8 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
       ['people', <><Users size={15}/> People</>], ['teams','Groups & teams'], ['files','Files'],
       ...(role==='owner' ? [['integrations','Integrations'] as const] : []),
       ...(manager ? [['activity','Activity'] as const,['impersonation','Impersonation watch'] as const,
-        ['governance','Governance'] as const,['ai','AI settings'] as const,['compliance-exports','Compliance exports'] as const] : []),
+        ['governance','Governance'] as const,['ai','AI settings'] as const,['dlp','Data loss controls'] as const,
+        ['compliance-exports','Compliance exports'] as const] : []),
     ]}/>}
     {error && <p role="alert" className="error">{error}</p>}
     {view==='rooms'&&<SectionTabs label="Room sections" value={roomView} onChange={setRoomView} options={ [['rooms','Room directory'],['channels','Workspace channels']] }/>}
@@ -237,6 +241,7 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
     {view==='workspaces' && tab==='files' && <WorkspaceFiles workspace={space.id} owner={role==='owner'} />}
     {view==='workspaces' && visibleTab==='integrations' && <WorkspaceIntegrations key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='ai' && manager && <WorkspaceAISettings key={space.id} workspace={space.id}/>}
+    {view==='workspaces' && visibleTab==='dlp' && manager && <WorkspaceDlp key={space.id} workspace={space.id}/>}
     {view==='workspaces' && tab==='impersonation' && manager && <ImpersonationWatch workspace={space.id}
       accounts={activeMembers.flatMap(member => profiles[member.user_id] ? [profiles[member.user_id]] : [])} />}
     {view==='workspaces' && tab==='governance' && manager && <WorkspaceLegalHolds key={space.id} workspace={space.id} owner={role==='owner'}
@@ -299,6 +304,7 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
 function ChannelPanel({channel,profiles,activeMembers,user,refresh,onArchiveChange}: {
   channel:Channel;profiles:Record<string,Profile>;activeMembers:Member[];user:string;refresh:()=>Promise<void>;onArchiveChange:(archived:boolean)=>void
 }) {
+  const {authorize,confirmation}=useSensitiveAction()
   const [details,setDetails]=useState<ChannelDetails|null>(null)
   const [error,setError]=useState('')
   const version=useRef(0)
@@ -328,6 +334,7 @@ function ChannelPanel({channel,profiles,activeMembers,user,refresh,onArchiveChan
     if(action==='archive'||action==='restore')onArchiveChange(action==='archive')
   }
   return <section aria-label={'#'+channel.name}>
+    {confirmation}
     <h2>#{channel.name}</h2>
     <p>{channel.visibility==='private'?'Private':'Workspace-wide'}{channel.archived?' · Archived':''}</p>
     {error&&<p role="alert" className="error">{error}</p>}
@@ -354,7 +361,7 @@ function ChannelPanel({channel,profiles,activeMembers,user,refresh,onArchiveChan
         </QuickForm>}
         {people.length>0&&<QuickForm label="Transfer channel ownership" button="Transfer ownership" send={async fields=>{
           if(window.confirm('Transfer channel ownership? The previous owner loses owner access.'))
-            await change('transfer_owner',{p_target:fields.get('owner')})
+            await authorize('room_role',()=>change('transfer_owner',{p_target:fields.get('owner')}))
         }}><label>New channel owner<select name="owner" required>{peopleOptions(people)}</select></label></QuickForm>}
       </>}
       <QuickForm label="Change channel archive status" button={channel.archived?'Restore channel':'Archive channel'} send={async()=>{
@@ -377,6 +384,7 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
   const [error, setError] = useState('')
   const [older, setOlder] = useState(false)
   const draftId = useRef<{ id: string; body: string } | null>(null)
+  const {publish: publishWithDlp, prompt: dlpPrompt}=useDlpPublishWarning()
   const fetchPosts = useCallback(async (before?: Post) => {
     let query = db!.from('st_v2_posts').select('*').eq('channel_id', channelId)
     if (before) query = query.or('created_at.lt.' + before.created_at + ',and(created_at.eq.' + before.created_at + ',id.lt.' + before.id + ')')
@@ -399,6 +407,7 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
   }, [channelId, fetchPosts])
   return <>
     {error && <p className="error" role="alert">{error}</p>}
+    {dlpPrompt}
     <details className="release-create"><summary>Channel quiet hours</summary>
       <QuietHoursSettings channel={channelId}/>
     </details>
@@ -411,10 +420,11 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
       const body = String(fields.get('body')).trim()
       if (!body) return
       if (draftId.current?.body !== body) draftId.current = { id: crypto.randomUUID(), body }
-      await rpc('st_v2_post', { p_channel: channelId, p_id: draftId.current.id, p_body: body })
+      const id=draftId.current.id
+      await publishWithDlp('channel',channelId,id,body,()=>rpc('st_v2_post', { p_channel: channelId, p_id: id, p_body: body }))
       draftId.current = null
       await fetchPosts()
-    }}><label><span><Send size={14}/> Channel message</span><textarea name="body" required maxLength={4000} rows={2} /></label></QuickForm>}
+    }}><label><span><Send size={14}/> Channel message</span><textarea name="body" required maxLength={4000} rows={2} readOnly={dlpPrompt!==null} /></label></QuickForm>}
   </>
 }
 

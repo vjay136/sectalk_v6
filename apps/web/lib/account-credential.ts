@@ -5,7 +5,7 @@ export async function signInWithAppPassword(email:string,password:string) {
   const signed=await fetch('/api/auth/sign-in',{
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password}),cache:'no-store',
   })
-  if (!signed.ok) throw new Error('Sign-in failed')
+  if (!signed.ok) throw Object.assign(new Error('Sign-in failed'),{status:signed.status})
   const {access_token,refresh_token}=await signed.json()
   const result=await db!.auth.setSession({access_token,refresh_token})
   if (result.error) throw result.error

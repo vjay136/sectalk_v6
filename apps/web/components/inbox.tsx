@@ -9,6 +9,7 @@ import {
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
 import { useCalling } from '../lib/calling'
 import { MessageSafetyWarning } from './message-safety-warning'
+import { ProtectedMessageText } from './protected-message-text'
 import { CallPanel } from './call-panel'
 import { Brand } from './entry'
 import { ReportDialog, Safety } from './safety'
@@ -1273,12 +1274,14 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
             })}
           </div>}
           {message.reply_to&&!message.revoked_at && <blockquote className="reply-preview">
-            {quote?<><strong>{quote.sender===self?selfName:peerName}</strong>{' · '}<EmojiText value={quote.body}/></>:'Original message unavailable'}
+            {quote?<><strong>{quote.sender===self?selfName:peerName}</strong>{' · '}{quote.sender === self ? <EmojiText value={quote.body}/> :
+              <ProtectedMessageText key={quote.id+':'+quote.body} value={quote.body}/>}</>:'Original message unavailable'}
           </blockquote>}
           <div className={'bubble'+(message.revoked_at?' revoked-message':'')}>
             {message.voice_note&&!message.revoked_at ?
               <VoiceNotePlayer chat={chat.id} message={message.id} blocked={blocked} revision={Boolean(message.voice_transcript)}/> :
-              (!file||message.body!=='Attachment: '+file.filename)&&<EmojiText value={message.body}/>}
+              (!file||message.body!=='Attachment: '+file.filename)&&(own || message.revoked_at ? <EmojiText value={message.body}/> :
+                <ProtectedMessageText key={message.edited_at||message.created_at} value={message.body}/>)}
             {file&&<button className="attachment-file" type="button" onClick={()=>void download(file)}>
               <Download size={16}/><span>{file.filename}<small>{Math.ceil(file.size_bytes/1024)} KiB</small></span>
             </button>}

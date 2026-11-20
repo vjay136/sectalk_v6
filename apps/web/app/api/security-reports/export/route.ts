@@ -9,6 +9,8 @@ export const maxDuration = 30
 export async function GET(request: Request) {
   const viewer = await operationalReportViewer(request)
   if (!viewer) return new Response(null, {status: 401, headers: emailHeaders})
+  const proof=await viewer.client.rpc('st_v7_sensitive_action_status',{p_kind:'export'})
+  if (proof.error||proof.data!=='verified') return new Response(null,{status:403,headers:emailHeaders})
   const query = new URL(request.url).searchParams
   const period = query.get('period')
   const format = query.get('format')

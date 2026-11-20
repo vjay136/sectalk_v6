@@ -9,6 +9,8 @@ const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i
 export async function GET(request: Request) {
   const viewer = await operationalReportViewer(request)
   if (!viewer) return new Response(null, {status: 401, headers: emailHeaders})
+  const proof=await viewer.client.rpc('st_v7_sensitive_action_status',{p_kind:'export'})
+  if (proof.error||proof.data!=='verified') return new Response(null,{status:403,headers:emailHeaders})
   const run = new URL(request.url).searchParams.get('run')
   if (!run || !uuid.test(run)) return new Response(null, {status: 400, headers: emailHeaders})
   const result = await viewer.client.rpc('st_v6_operational_report_export', {p_run: run})

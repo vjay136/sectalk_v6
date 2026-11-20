@@ -12,6 +12,7 @@ export function transientAuthClient() {
       autoRefreshToken: false,
       detectSessionInUrl: false,
       storageKey: 'sectalk-transient-auth',
+      experimental: {passkey:passkeysEnabled},
     },
   }) : null
 }

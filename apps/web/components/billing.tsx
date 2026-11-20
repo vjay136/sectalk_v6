@@ -5,6 +5,7 @@ import { ArrowRight, CreditCard } from 'lucide-react'
 import { type BillingCurrency, type Cadence, type PaidPlan, type Plan, type PlanVersion, formatBillingAmount, isBillingCurrency, isPaidPlan, plans } from '../lib/billing'
 import { db } from '../lib/data'
 import { SectionTabs } from './section-tabs'
+import {useSensitiveAction} from './sensitive-action'
 
 type Catalog = { plans: PlanVersion[]; checkoutAvailable: boolean }
 type Subscription = {
@@ -17,6 +18,7 @@ const labels: Record<string, string> = {
 }
 
 export function Billing({ user }: { user: string }) {
+  const {authorize,confirmation}=useSensitiveAction()
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [subscriptionTitle, setSubscriptionTitle] = useState<string | null>(null)
@@ -87,6 +89,7 @@ export function Billing({ user }: { user: string }) {
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><CreditCard size={22}/></div><div><h1>Billing</h1><p>Manage your SecTalk subscription and workspace limits.</p></div></header>
     <SectionTabs label="Billing sections" value={view} onChange={setView} options={ [['subscription','My subscription'], ['plans','Compare plans']] }/>
+    {confirmation}
     {view==='subscription'&&<div className="panel release-panel billing-summary">
       <div><span className="pill">Current plan</span><h2>{(currentPlan === 'free' ? null : subscriptionTitle) ?? activeVersion?.title ?? plans.find(plan => plan.id === currentPlan)?.name ?? 'Free'}</h2>
         {status && <p>{status}{subscription?.cancel_at_period_end ? ' · Ends at the end of this billing period' : ''}</p>}
@@ -94,7 +97,7 @@ export function Billing({ user }: { user: string }) {
         {currentPlan !== 'free' && subscription?.billing_amount != null && subscription.billing_currency &&
           <p>{formatBillingAmount(subscription.billing_amount, subscription.billing_currency)} per {subscription.billing_cadence === 'annual' ? 'year' : 'month'}</p>}
         {subscription?.period_end && <p>Period ends <time dateTime={subscription.period_end}>{new Date(subscription.period_end).toLocaleDateString()}</time></p>}</div>
-      {subscription?.customer_id && <button className="secondary" disabled={busy} onClick={() => void start('portal')}>Manage billing <ArrowRight size={15}/></button>}
+      {subscription?.customer_id && <button className="secondary" disabled={busy} onClick={() => void authorize('billing',()=>start('portal'))}>Manage billing <ArrowRight size={15}/></button>}
     </div>}
     {notice && <p role="status" className="release-info">{notice}</p>}
     {error && <p role="alert" className="error">{error}</p>}
@@ -117,7 +120,7 @@ export function Billing({ user }: { user: string }) {
           <h2>{plan.title}</h2><p>{plan.description}</p>
           {price?.amount != null && <p>{formatBillingAmount(price.amount, price.currency)} per {cadence === 'annual' ? 'year' : 'month'}</p>}
           {limits && <ul><li>{limits.workspaces} {limits.workspaces === 1 ? 'workspace' : 'workspaces'}</li><li>Up to {limits.members} members per workspace</li></ul>}
-          {isPaidPlan(id) && <button disabled={busy || !available || currentPlan !== 'free'} className="primary" onClick={() => void start('checkout', id, plan.version)}>{currentPlan === id ? 'Current plan' : available ? 'Continue to checkout' : 'Checkout unavailable'}</button>}
+          {isPaidPlan(id) && <button disabled={busy || !available || currentPlan !== 'free'} className="primary" onClick={() => void authorize('billing',()=>start('checkout', id, plan.version))}>{currentPlan === id ? 'Current plan' : available ? 'Continue to checkout' : 'Checkout unavailable'}</button>}
           {id === 'enterprise' && <span className="pill">Contract billing</span>}
         </article>
       })}

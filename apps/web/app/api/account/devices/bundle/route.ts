@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { base64urlToBinary, binaryToBase64url, deviceBindingTranscript,
   deviceBundleContract, deviceBundleTranscript, deviceRecoveryTranscript, type DeviceChallenge } from '../../../../../lib/device-bundle'
+import { readBoundedText } from '../../../../../lib/request-body'
 
 export const runtime = 'nodejs'
 const headers = {'Cache-Control':'no-store'}
@@ -20,9 +21,9 @@ export async function POST(request: Request) {
 
   let proof: {challenge?: unknown; signature?: unknown; binding?: unknown; recoveryRequest?: unknown; recoverySignature?: unknown}
   try {
-    if (Number(request.headers.get('content-length')||0)>1024) return new Response(null,{status:413,headers})
-    const raw=await request.text()
-    if (raw.length>1024) return new Response(null,{status:413,headers})
+    const raw=await readBoundedText(request,1024)
+    if (raw===undefined) return new Response(null,{status:413,headers})
+    if (raw===null) return new Response(null,{status:400,headers})
     proof=JSON.parse(raw)
     if (!proof || typeof proof!=='object') throw new Error()
   } catch {return new Response(null,{status:400,headers})}

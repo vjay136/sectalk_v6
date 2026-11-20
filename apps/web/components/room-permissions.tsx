@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
+import {useSensitiveAction} from './sensitive-action'
 
 const actions = [
   ['post', 'Post messages and replies'],
@@ -43,6 +44,7 @@ export function useRoomPermissions(room: string | null) {
 export function RoomPermissionSettings({ room, editable, refresh }: {
   room: string; editable: State['editable']; refresh: () => Promise<void>
 }) {
+  const {authorize,confirmation}=useSensitiveAction()
   const available = (Object.keys(roleLabels) as Role[]).filter(role => editable[role] !== undefined)
   const [role, setRole] = useState<Role>('member')
   const selected = available.includes(role) ? role : available[0]
@@ -52,10 +54,9 @@ export function RoomPermissionSettings({ room, editable, refresh }: {
   if (!selected) return null
   const rules = editable[selected] ?? {}
 
-  async function save(event: FormEvent<HTMLFormElement>) {
+  function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (busy) return
-    setBusy(true)
     setMessage('')
     setError('')
     const form = new FormData(event.currentTarget)
@@ -63,6 +64,11 @@ export function RoomPermissionSettings({ room, editable, refresh }: {
       const value = form.get(action)
       return value === 'allow' || value === 'deny' ? [[action, value]] : []
     }))
+    void authorize('room_role',()=>apply(selected,overrides))
+  }
+
+  async function apply(selected:Role,overrides:Record<string,string>) {
+    setBusy(true)
     try {
       const result = await db!.rpc('st_v6_set_room_role_overrides', { p_room: room, p_role: selected, p_rules: overrides })
       if (result.error) throw result.error
@@ -90,6 +96,7 @@ export function RoomPermissionSettings({ room, editable, refresh }: {
       </select></label>)}
       <button className="secondary" disabled={busy}>Save room permissions</button>
     </form>
+    {confirmation}
     {message && <p role="status">{message}</p>}
     {error && <p className="error" role="alert">{error}</p>}
   </section>

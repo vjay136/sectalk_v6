@@ -18,7 +18,7 @@ async function handle(request: Request) {
   const filename = readUploadFilename(request)
   const mime = request.headers.get('content-type') || ''
   if (!validFileId(workspace) || (file !== undefined && !validFileId(file))) return fileFailure(400, 'Choose a valid workspace file.')
-  const auth = await authenticateFileRequest(request)
+  const auth = await authenticateFileRequest(request,{type:'workspace',id:workspace})
   if (auth instanceof Response) return auth
   const command = (action: string, size: number | null = null, hash: string | null = null) =>
     auth.storage.rpc('st_v6_workspace_file_command', {

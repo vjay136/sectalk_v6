@@ -1,5 +1,20 @@
 begin;
 
+-- Use an authoritative native session for this ownership-transfer fixture.
+create function pg_temp.refresh_owner_proof()
+returns void language plpgsql security definer set search_path='' as $$
+declare actor uuid:=auth.uid(); native_session uuid:=gen_random_uuid(); factor uuid;
+begin
+  select id into factor from auth.mfa_factors f where f.user_id=actor and f.status='verified'
+    and f.factor_type='totp' limit 1;
+  insert into auth.sessions(id,user_id,aal,factor_id,created_at)
+    values(native_session,actor,case when factor is null then 'aal1'::auth.aal_level else 'aal2'::auth.aal_level end,factor,now());
+  insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at)
+    values(gen_random_uuid(),native_session,case when factor is null then 'password' else 'totp' end,now(),now());
+  perform set_config('request.jwt.claims',jsonb_build_object('sub',actor,'role','authenticated',
+    'session_id',native_session,'aal',case when factor is null then 'aal1' else 'aal2' end)::text,true);
+end $$;
+
 -- Set up a fresh TOTP session for a roster mutation in this SQL fixture.
 create function pg_temp.set_verified_member(p_workspace uuid,p_member uuid,p_role text)
 returns void language plpgsql security definer set search_path='' as $$
@@ -66,7 +81,9 @@ begin
   perform set_config('request.jwt.claim.sub',owner_id::text,true);
   perform pg_temp.set_verified_member(space_a,admin_id,'admin');
   perform pg_temp.set_verified_member(space_a,second_admin,'admin');
+  perform pg_temp.refresh_owner_proof();
   perform public.st_v6_manage_channel(channel,'transfer_owner',member_id,null);
+  perform set_config('request.jwt.claims','',true);
 
   perform set_config('request.jwt.claim.sub',admin_id::text,true);
   begin

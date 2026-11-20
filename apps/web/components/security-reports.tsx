@@ -5,8 +5,10 @@ import { categories, db } from '../lib/data'
 import type { ReportPeriod, SecurityReport } from '../lib/security-report-export'
 import { SectionTabs } from './section-tabs'
 import styles from './threat-trends.module.css'
+import {useSensitiveAction} from './sensitive-action'
 
 export function SecurityReports() {
+  const {authorize,confirmation}=useSensitiveAction()
   const [period, setPeriod] = useState<ReportPeriod>('daily')
   const [result, setResult] = useState<{period: ReportPeriod; report: SecurityReport | null} | null>(null)
   const [downloading, setDownloading] = useState(false)
@@ -52,11 +54,12 @@ export function SecurityReports() {
     <SectionTabs label="Security report period" value={period} onChange={next => {setPeriod(next);setError('')}}
       options={[['daily', 'Daily'], ['weekly', 'Weekly']]}/>
     {!current && <p role="status">Loading security report…</p>}
+    {confirmation}
     {current && !report && <p role="alert" className="error">Could not load this report. Verify your staff authenticator.</p>}
     {report && <>
       <div className="actions">
-        <button type="button" className="secondary" disabled={downloading} onClick={() => void download('csv')}>Download CSV</button>
-        <button type="button" className="secondary" disabled={downloading} onClick={() => void download('pdf')}>Download PDF</button>
+        <button type="button" className="secondary" disabled={downloading} onClick={() => void authorize('export',()=>download('csv'))}>Download CSV</button>
+        <button type="button" className="secondary" disabled={downloading} onClick={() => void authorize('export',()=>download('pdf'))}>Download PDF</button>
       </div>
       <div className={styles.scroll}><table className={styles.table}>
         <caption>{report.period_start} to {report.period_end} UTC (end exclusive)</caption>

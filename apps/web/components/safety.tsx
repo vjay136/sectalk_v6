@@ -1,5 +1,6 @@
 'use client'
 
+import { messageSafetyAction } from '../lib/message-safety-action.mjs'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Flag, Shield, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { categories, db, formatError, type Message } from '../lib/data'
@@ -23,6 +24,7 @@ import { SecurityIncidents } from './security-incidents'
 import { SecurityCenterOverview } from './security-center-overview'
 import { CaseCollaboration, CaseCollaborationAlerts } from './case-collaboration'
 import { CaseEscalation, CaseEscalationAssignments } from './case-escalation'
+import { CaseBehaviorPanel } from './case-behavior-panel'
 import { MyRoomReports, RoomReportQueue } from './room-reports'
 import { StaffMfa } from './staff-mfa'
 import { EmergencyNotices } from './emergency-notices'
@@ -31,6 +33,7 @@ type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
 type Queue = Report & { subject_handle: string }
 type QueueTimer = Queue & {
+  requested_priority: boolean
   acknowledge_by: string
   resolve_by: string
   acknowledged_at: string | null
@@ -64,23 +67,33 @@ function DateLabel({ value }: { value: string }) {
 export function ReportDialog({ chat, message, file, close, inform }: { chat:string;message:Message|null;file?:ChatFile;close:()=>void;inform:(notice:string)=>void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const eligiblePriority = Boolean(message && !message.expires_at && messageSafetyAction(message.body).priority)
+  const [category, setCategory] = useState(eligiblePriority ? 'threat' : 'harassment')
+  const priorityAllowed = eligiblePriority && (category === 'threat' || category === 'sexual_content')
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (busy) return
     const values = new FormData(event.currentTarget)
     setBusy(true)
     setError('')
-    const result = await db!.rpc('st_v5_report', { p_chat: chat, p_message: message?.expires_at ? null : message?.id ?? null, p_category: values.get('category'), p_details: values.get('details'), p_share_file:values.has('share-file') })
+    const payload = { p_chat: chat, p_message: message?.expires_at ? null : message?.id ?? null,
+      p_category: values.get('category'), p_details: values.get('details'), p_share_file: values.has('share-file') }
+    const requested = priorityAllowed && values.has('priority-review')
+    const result = requested ? await db!.rpc('st_v7_request_priority_message_review', {
+      ...payload, p_revision: message?.edited_at || message?.created_at,
+    }) : await db!.rpc('st_v5_report', payload)
     setBusy(false)
     if (result.error) { setError(formatError(result.error, 'Could not submit your report.')); return }
     close()
-    inform('Report submitted. Track it in the Safety center.')
+    inform(requested ? 'Priority review requested. Track it in the Safety center.' : 'Report submitted. Track it in the Safety center.')
   }
   return <Dialog title={message ? 'Report this message' : 'Report this contact'} close={close}><form onSubmit={submit}>
     <p>{message && !message.expires_at ? 'You’re sharing this message and your notes with SecTalk safety staff.' : 'Your notes will be shared with SecTalk safety staff.'}</p>
     {message && !message.expires_at && <blockquote>{message.body}</blockquote>}
     {file&&<label className="task-check"><input type="checkbox" name="share-file"/> Share the attached file with safety staff</label>}
-    <label>Reason<select name="category" required>{Object.entries(categories).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
+    <label>Reason<select name="category" required value={category} onChange={event=>setCategory(event.target.value)}>{Object.entries(categories).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
+    {priorityAllowed && <label className="task-check"><input type="checkbox" name="priority-review" />
+      Request urgent human review</label>}
     <label>Details <span className="muted">(optional)</span><textarea name="details" maxLength={1500} rows={4} placeholder="What happened?" /></label>
     {error && <p className="error" role="alert">{error}</p>}
     <button className="primary" disabled={busy}><Flag size={16}/> Submit report</button>
@@ -291,7 +304,7 @@ function QueuePanel({linkIncident}: {linkIncident?: (report: string) => void}) {
 
   const load = useCallback(async () => {
     const version = ++queueVersion.current
-    const { data, error } = await db!.rpc('st_v6_abuse_queue', {
+    const { data, error } = await db!.rpc('st_v7_priority_abuse_queue', {
       p_category: category || null, p_status: status, p_due: due, p_offset: offset,
     })
     if (version !== queueVersion.current) return
@@ -363,6 +376,7 @@ function QueuePanel({linkIncident}: {linkIncident?: (report: string) => void}) {
       }}>Download shared file</button>}
       <CaseCollaboration key={selected.id} report={selected.id}/>
       <CaseEscalation key={'escalation-' + selected.id} report={selected.id}/>
+      <CaseBehaviorPanel key={'behavior-' + selected.id} report={selected.id}/>
       <form onSubmit={action}><h3>Record a decision</h3><label>Action<select name="action" required defaultValue="reviewing">
         <option value="reviewing">Mark in review</option><option value="escalated">Flag for further review</option>
         {selected.message_redaction_available&&<option value="redact_message">Redact reported message</option>}
@@ -390,6 +404,7 @@ function QueuePanel({linkIncident}: {linkIncident?: (report: string) => void}) {
       {rows?.slice(0, 50).map(row => <button disabled={working} className="report-row" key={row.id} onClick={() => void open(row.id)}>
         <Flag size={17}/>
         <div><strong>{categories[row.category]} · @{row.subject_handle}</strong>
+          {row.requested_priority && <small>Priority requested</small>}
           <small>{row.next_due ? <>{row.overdue ? 'Overdue · ' : ''}{row.acknowledged_at ? 'Resolve by ' : 'Acknowledge by '}
             <DateLabel value={row.next_due}/></> : <DateLabel value={row.created_at}/>}</small>
         </div>

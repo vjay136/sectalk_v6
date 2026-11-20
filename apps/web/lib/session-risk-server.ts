@@ -126,6 +126,12 @@ export function sessionRiskGateway(url: string, email: string) {
   const db = createClient(dbUrl, serviceKey, {auth: {persistSession: false, autoRefreshToken: false}})
   const hash = createHmac('sha256', secret).update('sectalk-password-risk:' + email.toLowerCase()).digest('hex')
   return {
+    async admit(ip: string | null) {
+      const result=await db.rpc('st_v7_admit_password_request',{p_identifier:hash,p_ip:ip})
+        .abortSignal(AbortSignal.timeout(1500))
+      if (result.error||typeof result.data!=='number') throw new Error('Could not evaluate the password budget')
+      return result.data
+    },
     async failure() {
       await db.rpc('st_v7_record_password_failure', {p_identifier: hash}).abortSignal(AbortSignal.timeout(250))
     },

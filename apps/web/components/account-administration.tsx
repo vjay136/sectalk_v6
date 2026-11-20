@@ -7,6 +7,7 @@ import { OperatorAccountDevices } from './operator-account-devices'
 import { OperatorAccountSessions } from './operator-account-sessions'
 import { SessionRiskOperations } from './session-risk-operations'
 import { SectionTabs } from './section-tabs'
+import { ThreatMap } from './threat-map'
 
 export type AccountOperatorAccess = 'none' | 'mfa' | 'operator' | 'reviewer'
 type Account = { id: string; handle: string; name: string; status: 'active' | 'restricted' }
@@ -45,15 +46,16 @@ export function useAccountOperator() {
 export function AccountAdministration({ access, refresh }: {
   access: AccountOperatorAccess; refresh: () => Promise<void>
 }) {
-  const [section, setSection] = useState<'directory' | 'risks'>('directory')
+  const [section, setSection] = useState<'directory' | 'risks' | 'map'>('directory')
   if (access === 'none') return null
   if (access === 'mfa') return <StaffMfa refresh={refresh}
     explanation="Enter a current authenticator code to manage native account sessions and authenticator recovery."/>
   return <>
     <SectionTabs label="Account administration sections" value={section} onChange={setSection}
-      options={ [['directory', 'Account directory'], ['risks', 'High-risk sessions']] }/>
+      options={ [['directory', 'Account directory'], ['risks', 'High-risk sessions'], ['map','Threat map']] }/>
     {section === 'directory' ? <AccountDirectory access={access} onAccessChanged={refresh}/>
-      : <SessionRiskOperations canManage={access === 'operator'} refreshAccess={refresh}/>}
+      : section === 'risks' ? <SessionRiskOperations canManage={access === 'operator'} refreshAccess={refresh}/>
+      : <ThreatMap refreshAccess={refresh}/>}
   </>
 }
 

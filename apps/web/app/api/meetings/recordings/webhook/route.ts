@@ -1,4 +1,5 @@
 import { recordingMeeting, recordingServices } from '../../../../../lib/meeting-recording-server'
+import { readBoundedText } from '../../../../../lib/request-body'
 
 export const runtime = 'nodejs'
 const subscriptions = new Set(['participant_joined','participant_left','participant_connection_aborted','room_finished',
@@ -9,7 +10,10 @@ export async function POST(request: Request) {
   if (!services) return new Response(null,{status:503})
   let event
   try {
-    event = await services.verifier.receive(await request.text(),request.headers.get('Authorization') ?? undefined)
+    const body = await readBoundedText(request, 1024 * 1024)
+    if (body === undefined) return new Response(null, { status: 413 })
+    if (!body) return new Response(null, { status: 401 })
+    event = await services.verifier.receive(body, request.headers.get('Authorization') ?? undefined)
   } catch {
     return new Response(null,{status:401})
   }

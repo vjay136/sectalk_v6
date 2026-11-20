@@ -53,6 +53,8 @@ export async function POST(request: Request) {
   })
   const auth = await client.auth.getUser(jwt)
   if (auth.error || !auth.data.user) return fail('Sign in to export audit entries.', 401)
+  const proof=await client.rpc('st_v7_sensitive_action_status',{p_kind:'export'})
+  if (proof.error||proof.data!=='verified') return fail('Enter a current authenticator code to export.',403)
   const filters = { workspace, query, source, from, before }
   const access = await client.rpc('st_v6_audit_integrity_status', { p_workspace: workspace, p_rows: [] })
   if (access.error || !access.data?.can_export) return fail('Verify workspace administrator access to export.', 403)

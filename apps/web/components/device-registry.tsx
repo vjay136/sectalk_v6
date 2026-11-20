@@ -1,5 +1,6 @@
 'use client'
 
+import { BrowserReputationLink } from './browser-reputation-link'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
 import { verifyAccountCredential } from '../lib/account-credential'
@@ -122,5 +123,6 @@ export function DeviceRegistry({hints}: {hints: EventTarget}) {
       {commands.filter(command=>command.device===device.id).map(command=><DeviceRemoteControls key={command.device}
         status={command} hasFactor={hasFactor} hasRegisteredDevice={Boolean(current)} onChange={load}/>)}
     </article>)}
+    {(current?.state === 'trusted' || current?.state === 'managed') && <BrowserReputationLink key={current.id}/>}
   </section>
 }

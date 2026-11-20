@@ -161,11 +161,21 @@
 | P10 | Build separately approved, integrity-checked workspace compliance exports | Edge, SQL and Storage verified exact selected evidence, distinct owner approval, per-record and bundle hashes, live scope rechecks and access audit |
 | P10 | Add an operator risk console with live fresh authenticator requests | Edge, GoTrue and SQL verified risky location filtering, targeted step-up, stale AAL2 denial, verified re-entry and audited termination |
 | P10 | Add a versioned impersonation rule registry with shadow evaluation | Native Edge, SQL and an offline benchmark verified generation rules, aggregate synthetic disagreement, live promotion and rollback |
+| P10 | Add a privacy-thresholded threat map and network aggregates | Edge and SQL verified coarse cells, five-account thresholds, distinct account counting, ASN summaries, date and event switches, and authorized display |
+| P4 | Require fresh native proof before sensitive actions | Edge, HTTP and SQL verified stale proof denial and genuine step-up before room roles, reports, audit and integration keys, plus the billing entry gate |
+| P10 | Apply local safety thresholds and explicit priority reporting | Two Edge sessions, real local attachment quarantine and SQL verified warning, defanging, reveal, consented reporting and MFA-only human review |
+| P10 | Add a behavior advisory with opt-in browser linkage | Edge and SQL verified live activity counts, decayed reviewed findings, dual browser proofs, withdrawal and MFA-only aggregate review |
+| P10 | Bound streamed input and preserve exact webhook verification | Local Stripe and LiveKit signing fixtures, direct HTTP, Edge and unit tests verified byte limits, UTF-8, file handling, output defenses and destination restrictions |
+| P4 | Enforce risk-adaptive token buckets on authentication and files | Chromium, HTTP and SQL verified atomic limits, independent user, network, device and workspace scopes, generic failures and refill |
+| P10 | Preserve approved room evidence under a workspace legal hold | Real Edge, private Storage and SQL verified immutable bytes, SHA-256, chained custody, authorization changes and bounded cleanup |
+| P4 | Add adaptive signup proof and native admission enforcement | Chromium, Mailpit, GoTrue and SQL verified ordinary email signup, suspicious-context proof, native bypass denial and replay rejection |
+| P10 | Complete human review for assigned workspace abuse reports | Three browsers and SQL verified reassignment, reasoned closure, minimal reporter status and escalation to separate Platform reviewers for severe cases |
+| P10 | Enforce workspace text data loss rules through rooms and channels | Two Edge sessions and SQL verified policy authorization, draft retention, warning confirmation, delivery prevention, managed redaction and scoped edits and forwarding |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 177 verified features and 62 pending. The next checkpoint is due at 187 verified features.
+Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 187 verified features and 52 pending. The next checkpoint is due at 197 verified features.
 
 ## Remaining work by dependency
 

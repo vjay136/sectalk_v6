@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHmac, randomUUID } from 'node:crypto'
+import { setTimeout } from 'node:timers/promises'
 import { createClient } from '@supabase/supabase-js'
 import { PDFDocument } from 'pdf-lib'
 
@@ -58,6 +59,7 @@ assert.equal((await fetch(csvUrl)).status, 401)
 assert.equal((await fetch(pdfUrl, {headers: {Authorization: 'Bearer ' + member.session.access_token}})).status, 403)
 
 const browser = await chromium.launch({executablePath: process.env.SECTALK_TEST_BROWSER})
+let keyWorkspace
 try {
   const page = await browser.newPage({acceptDownloads: true})
   await page.goto(new URL('/#account', app).href)
@@ -78,8 +80,32 @@ try {
   assert.equal(daily.rows.length, 7)
   const reports = page.getByRole('region', {name: 'Security reports'})
   await reports.getByRole('table').waitFor()
+  const oldToken=await page.evaluate(()=>JSON.parse(localStorage.getItem(Object.keys(localStorage)
+    .find(key=>key.endsWith('-auth-token')))).access_token)
+  const {session_id}=JSON.parse(Buffer.from(oldToken.split('.')[1],'base64url').toString())
+  assert.match(session_id,/^[a-f0-9-]{36}$/)
+  const billing='auth09_'+suffix
+  data(await admin.rpc('st_v2_sync_billing',{p_event:billing,p_user:staff.id,p_customer:billing,p_subscription:billing,
+    p_plan:'business',p_status:'active',p_end:new Date(Date.now()+86400000).toISOString(),p_cancel:false,p_synced:new Date().toISOString()}))
+  keyWorkspace=randomUUID()
+  execFileSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],{
+    input:`insert into public.st_v2_workspaces(id,owner,name) values('${keyWorkspace}','${staff.id}','Assurance key QA');
+      insert into public.st_v2_members(workspace_id,user_id,role) values('${keyWorkspace}','${staff.id}','owner');
+      update auth.mfa_amr_claims set updated_at=now()-interval '6 minutes' where session_id='${session_id}' and authentication_method='totp';`,
+  })
+  assert.equal((await fetch(csvUrl,{headers:{Authorization:'Bearer '+oldToken}})).status,403)
+  const manageKey=(token,body)=>fetch(new URL('/api/integrations/keys',app),{method:'POST',
+    headers:{Origin:app.origin,Authorization:'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify({workspace:keyWorkspace,...body})})
+  const keyRequest={action:'create',label:'Assurance key QA',scopes:['workspace:read'],lifetime:1}
+  assert.equal((await manageKey(oldToken,keyRequest)).status,403)
   const csvDownload = page.waitForEvent('download')
   await reports.getByRole('button', {name: 'Download CSV', exact: true}).click()
+  const confirmation=reports.getByRole('form',{name:'Verify your current sign-in'})
+  await confirmation.waitFor()
+  await setTimeout(30000-(Date.now()%30000)+100)
+  await confirmation.getByLabel('Current authenticator code').fill(totp(secret))
+  await confirmation.getByRole('button',{name:'Verify and continue',exact:true}).click()
   const csv = (await capture(csvDownload)).toString('utf8')
   assert.match(csv, /^Period,UTC start,UTC end \(exclusive\),Category,Reports filed,Reports with staff action/)
   assert.equal(csv.split('\r\n').filter(Boolean).length, 8)
@@ -96,6 +122,10 @@ try {
     return sessionKey ? JSON.parse(localStorage.getItem(sessionKey)).access_token : null
   })
   assert.ok(bearer)
+  const createdKey=await manageKey(bearer,keyRequest)
+  assert.equal(createdKey.status,201)
+  const {id:keyId}=await createdKey.json()
+  assert.equal((await manageKey(bearer,{action:'revoke',key:keyId})).status,204)
   const apiPdf = await fetch(pdfUrl, {headers: {Authorization: 'Bearer ' + bearer}})
   assert.equal(apiPdf.status, 200, 'Authenticated loopback PDF API status')
   assert.equal(apiPdf.headers.get('content-type'), 'application/pdf')
@@ -114,4 +144,6 @@ try {
   console.log('Passed genuine staff MFA security reporting and authenticated, privacy-safe CSV/PDF downloads.')
 } finally {
   await browser.close()
+  if (keyWorkspace) execFileSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-v','ON_ERROR_STOP=1',
+    '-U','postgres','-d','postgres'],{input:`delete from public.st_v2_workspaces where id='${keyWorkspace}';`})
 }

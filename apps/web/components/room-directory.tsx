@@ -17,6 +17,8 @@ import { RoomThreadSummary } from './room-thread-summary'
 import { RoomFiles } from './workspace-files'
 import { RoomCalls } from './room-calls'
 import { RoomPermissionSettings, useRoomPermissions } from './room-permissions'
+import {useSensitiveAction} from './sensitive-action'
+import { useDlpPublishWarning } from './dlp-publish-warning'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
@@ -29,6 +31,7 @@ function RoomComposer({user,room,parent,staff,mentionAll,showAnnounce,working,ca
   onSend:(body:string,announce:boolean,parent:string|null,onSent:()=>void)=>void
 }){
   const draft=useSyncedDraft(user,'room',room,parent)
+  const composerLabel=parent?'Write a reply':'Write a room message'
   function submit(event:FormEvent<HTMLFormElement>){
     event.preventDefault()
     if(working||!draft.body.trim())return
@@ -40,7 +43,7 @@ function RoomComposer({user,room,parent,staff,mentionAll,showAnnounce,working,ca
     })
   }
   return <form className="release-form" onSubmit={submit}>
-    <label>{parent?'Write a reply':'Write a room message'}<textarea name="body" required maxLength={4000}
+    <label>{composerLabel}<textarea name="body" aria-label={composerLabel} required maxLength={4000} readOnly={working}
       aria-describedby="room-mentions-help" value={draft.body} onChange={event=>{
         draft.change(event.target.value)
         onTyping(event.target.value)
@@ -205,6 +208,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   room:Room;user:string;profiles:Record<string,Profile>;refreshDirectory:()=>Promise<void>;workspaceAdminIds:string[]
   reactionPolicy:RoomReactionPolicy|null;manager:boolean;allowedRoomKinds?:string[];onArchiveChange:(archived:boolean)=>void
 }) {
+  const {authorize,confirmation}=useSensitiveAction()
+  const {publish: publishWithDlp, prompt: dlpPrompt}=useDlpPublishWarning()
   const [role,setRole]=useState<Role|null|undefined>(undefined)
   const [entries,setEntries]=useState<Entry[]>([])
   const [roster,setRoster]=useState<Roster[]>([])
@@ -298,8 +303,9 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     finally{setWorking(false)}
   }
   function member(action:string,target?:string,nextRole?:string){
-    return perform(async()=>{await call('st_v6_room_membership',{p_room:room.id,p_action:action,
+    const apply=()=>perform(async()=>{await call('st_v6_room_membership',{p_room:room.id,p_action:action,
       ...(target?{p_target:target}:{}),...(nextRole?{p_role:nextRole}:{})})})
+    return action==='role'?authorize('room_role',apply):apply()
   }
   function settings(action:string,values:Record<string,unknown>={}){
     return perform(async()=>{await call('st_v6_room_settings',{p_room:room.id,p_action:action,...values})})
@@ -321,7 +327,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     void perform(async()=>{
       const key=JSON.stringify(input)
       if(pending.current?.key!==key)pending.current={key,id:crypto.randomUUID()}
-      await call('st_v6_room_post',{...input,p_id:pending.current.id})
+      const id=pending.current.id
+      await publishWithDlp('room',room.id,id,body,()=>call('st_v6_room_post',{...input,p_id:id}))
       pending.current=null;onSent()
       void stopRoomTyping(parent)
     })
@@ -416,7 +423,9 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
 
   function updatePost(post:Post,action:'edit'|'delete'|'redact',body?:FormDataEntryValue|null){
     return perform(async()=>{
-      await call('st_v6_room_post_action',{p_room:room.id,p_post:post.id,p_action:action,...(action==='edit'?{p_body:body}:{})})
+      const update=()=>call('st_v6_room_post_action',{p_room:room.id,p_post:post.id,p_action:action,...(action==='edit'?{p_body:body}:{})})
+      if(action==='edit'&&typeof body==='string')await publishWithDlp('room',room.id,post.id,body,update)
+      else await update()
       setEditingPost(null)
     })
   }
@@ -446,7 +455,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         event.preventDefault()
         void updatePost(post,'edit',new FormData(event.currentTarget).get('editedBody'))
       }}>
-        <label>Edit room message<textarea name="editedBody" required maxLength={4000} defaultValue={post.body}/></label>
+        <label>Edit room message<textarea name="editedBody" aria-label="Edit room message" required maxLength={4000} readOnly={working} defaultValue={post.body}/></label>
         <div className="action-row">
           <button className="primary" disabled={working}>Save edit</button>
           <button className="secondary" type="button" onClick={()=>setEditingPost(null)}>Cancel edit</button>
@@ -474,6 +483,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   }
 
   return <section className="panel release-panel" aria-label={room.name} ref={receiptFeed}>
+    {confirmation}
+    {dlpPrompt}
     {forwarding&&<ForwardMessageDialog key={forwarding} source={{kind:'room',conversation:room.id,message:forwarding}}
       close={()=>setForwarding(null)} onSent={()=>setNotice('Message forwarded.')}/>}
     <h2>{room.name}</h2><p>{kinds[room.kind]}{room.template!=='blank'?' · '+templates[room.template].name+' template':''}{room.archived?' · Archived':room.locked?' · Locked':''}{role?' · '+roleLabel(role):''}</p>
@@ -625,7 +636,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
             event.preventDefault()
             const target=String(new FormData(event.currentTarget).get('owner'))
             if(window.confirm('Transfer ownership? The previous owner becomes a moderator.'))
-              void manage('transfer_owner',{p_target:target})
+              void authorize('room_role',()=>manage('transfer_owner',{p_target:target}))
           }}>
             <label>New room owner<select name="owner" required><option value="">Choose a room member</option>
               {ownerCandidates.map(person=><option key={person.user_id} value={person.user_id}>{name(person.user_id)} (@{profiles[person.user_id].handle})</option>)}
