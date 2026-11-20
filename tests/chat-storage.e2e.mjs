@@ -38,17 +38,73 @@ data(await recipient.client.rpc('st_respond',{p_chat:chat,p_accept:true}))
 const file=randomUUID()
 const raw=new TextEncoder().encode('An isolated attachment integration test.')
 const bucket='sectalk-chat-files'
+const app=process.env.SECTALK_STORAGE_TEST_APP
+const v6=process.env.SECTALK_TEST_V6==='1'
 const storage=client=>client.storage.from(bucket)
+let recipientLink
+async function grant(client,id){
+  assert.equal(new URL(app).hostname,'127.0.0.1')
+  const session=data(await client.auth.getSession()).session
+  const authorization={Authorization:'Bearer '+session.access_token}
+  return fetch(app+'/api/files/download',{method:'POST',
+    headers:{...authorization,'Content-Type':'application/json'},body:JSON.stringify({file:id})})
+}
+async function retrieve(client,link){
+  const session=data(await client.auth.getSession()).session
+  return fetch(new URL(link,app),{headers:{Authorization:'Bearer '+session.access_token}})
+}
+async function publish(client,id,caption,mime){
+  if(!v6)return data(await client.rpc('st_v5_send_file',{p_id:id,p_caption:caption}))
+  const session=data(await client.auth.getSession()).session
+  const response=await fetch(app+'/api/files/publish',{method:'POST',
+    headers:{Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},
+    body:JSON.stringify({file:id,caption,mime})})
+  const body=await response.json()
+  assert.equal(response.status,200,body.error)
+  return body.id
+}
 assert.equal(data(await sender.client.rpc('st_v5_stage_file',{
   p_chat:chat,p_id:file,p_filename:'fixture.txt',p_bytes:raw.length,
 })), false)
 data(await storage(sender.client).upload(file,raw.buffer,{contentType:'application/octet-stream',upsert:false}))
 assert.ok((await storage(recipient.client).download(file)).error, 'Pending file must stay private')
-assert.equal(data(await sender.client.rpc('st_v5_send_file',{p_id:file,p_caption:'Example attachment'})), file)
-assert.equal(await data(await storage(recipient.client).download(file)).text(), new TextDecoder().decode(raw))
+assert.equal(await publish(sender.client,file,'Example attachment','text/plain'),file)
+if(v6){
+  const renamed=randomUUID()
+  data(await sender.client.rpc('st_v5_stage_file',{p_chat:chat,p_id:renamed,p_filename:'spoof.jpg',p_bytes:raw.length}))
+  data(await storage(sender.client).upload(renamed,raw.buffer,{contentType:'application/octet-stream'}))
+  const session=data(await sender.client.auth.getSession()).session
+  const rejected=await fetch(app+'/api/files/publish',{method:'POST',
+    headers:{Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},
+    body:JSON.stringify({file:renamed,caption:'Spoofed image',mime:'image/jpeg'})})
+  assert.equal(rejected.status,415)
+  assert.ok((await sender.client.rpc('st_v5_send_file',{p_id:renamed,p_caption:'Bypass'})).error)
+  assert.equal(data(await sender.client.from('st_messages').select('id').eq('id',renamed).maybeSingle()),null)
+  console.log('Passed server file-type validation and raw publication bypass denial.')
+  assert.ok((await storage(recipient.client).download(file)).error,'Direct Storage must not bypass the download log')
+  const granted=await grant(recipient.client,file)
+  assert.equal(granted.status,200)
+  assert.match(granted.headers.get('cache-control'),/no-store/)
+  const result=await granted.json()
+  assert.equal(result.expiresIn,30)
+  recipientLink=result.url
+  assert.equal((await grant(outsider.client,file)).status,404)
+  assert.equal((await retrieve(outsider.client,recipientLink)).status,404)
+  const received=await retrieve(recipient.client,recipientLink)
+  assert.equal(received.status,200)
+  assert.equal(await received.text(),new TextDecoder().decode(raw))
+  assert.ok((await recipient.client.rpc('st_v6_log_file_download',{p_file:file,p_actor:recipient.user,p_ticket:randomUUID()})).error)
+}else{
+  assert.equal(await data(await storage(recipient.client).download(file)).text(), new TextDecoder().decode(raw))
+}
 assert.ok((await storage(outsider.client).download(file)).error, 'An unrelated account must not download a file')
 data(await sender.client.rpc('st_v5_message_action',{p_message:file,p_action:'revoke'}))
 assert.ok((await storage(recipient.client).download(file)).error, 'A new download must fail after revoke')
+if(v6){
+  assert.equal((await retrieve(recipient.client,recipientLink)).status,404)
+  assert.equal((await grant(recipient.client,file)).status,404)
+  console.log('Passed signed attachment links, retrieval authorization and revoke.')
+}
 
 const avatarPath=sender.user+'.jpg'
 const photo=new Uint8Array([255,216,255,217]).buffer
@@ -56,7 +112,6 @@ data(await sender.client.storage.from('sectalk-avatars').upload(avatarPath,photo
 assert.ok((await outsider.client.storage.from('sectalk-avatars').download(avatarPath)).error, 'An unrelated account must not see a photo')
 data(await recipient.client.storage.from('sectalk-avatars').download(avatarPath))
 
-const app=process.env.SECTALK_STORAGE_TEST_APP
 if(app) {
   assert.equal(new URL(app).hostname,'127.0.0.1')
   const {chromium}=await import(process.env.SECTALK_PLAYWRIGHT_MODULE||'playwright')
@@ -108,12 +163,23 @@ if(app) {
       await first.getByRole('button',{name:'Remove from saved'}).click()
       await first.getByText('Use a message’s action menu to save it here.').waitFor()
 
+      await first.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Inbox',exact:true}).click()
+      await first.locator('.composer input[type=file]').setInputFiles({
+        name:'composer-approved.txt',mimeType:'text/plain',buffer:Buffer.from(raw),
+      })
+      await first.getByRole('button',{name:'Send message',exact:true}).click()
+      await second.getByRole('button',{name:/composer-approved\.txt/}).waitFor()
+      const composerAttachment=data(await sender.client.from('st_v5_files').select('id').eq('chat_id',chat)
+        .eq('filename','composer-approved.txt').single())
+      data(await sender.client.rpc('st_v5_message_action',{p_message:composerAttachment.id,p_action:'revoke'}))
+      console.log('Passed validated attachment publication from the chat composer.')
+
       const libraryFile=randomUUID()
       data(await sender.client.rpc('st_v5_stage_file',{
         p_chat:chat,p_id:libraryFile,p_filename:'library-test.txt',p_bytes:raw.length,
       }))
       data(await storage(sender.client).upload(libraryFile,raw.buffer,{contentType:'application/octet-stream'}))
-      data(await sender.client.rpc('st_v5_send_file',{p_id:libraryFile,p_caption:'Library test message'}))
+      await publish(sender.client,libraryFile,'Library test message','text/plain')
       await second.getByRole('button',{name:'Files',exact:true}).click()
       await second.getByRole('heading',{name:'Files',exact:true}).waitFor()
       await second.getByLabel('Direction').selectOption('received')

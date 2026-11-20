@@ -60,12 +60,21 @@ begin
   perform public.st_v2_edit_message(text_key,'Edited private text');
   if public.st_v5_stage_file(chat,file_key,'test.txt',10) then raise exception 'New attachment already uploaded'; end if;
   insert into storage.objects(bucket_id,name,metadata) values('sectalk-chat-files',file_key::text,'{"size":10}'::jsonb);
-  if public.st_v5_send_file(file_key,'Fixture caption') is distinct from file_key then raise exception 'File was not sent'; end if;
+  if public.st_v6_pending_file(file_key)->>'filename' is distinct from 'test.txt'
+    then raise exception 'Pending owner could not resolve validation metadata'; end if;
+  if has_function_privilege('public.st_v5_send_file(uuid,text)','EXECUTE')
+    or has_function_privilege('public.st_v6_publish_validated_file(uuid,uuid,text)','EXECUTE')
+    then raise exception 'An ordinary caller could publish unvalidated bytes'; end if;
+  set local role service_role;
+  if public.st_v6_publish_validated_file(file_key,alex,'Fixture caption') is distinct from file_key
+    then raise exception 'Trusted attachment was not sent'; end if;
+  set local role authenticated;
 
   perform set_config('request.jwt.claims',json_build_object('sub',billie,'role','authenticated','aal','aal1')::text,true);
   if public.st_v5_last_seen(chat) is null then raise exception 'Shared activity not visible to accepted contact'; end if;
   if not exists(select 1 from public.st_v5_files where id=file_key)
-    or not exists(select 1 from storage.objects where bucket_id='sectalk-chat-files' and name=file_key::text)
+    or not public.st_v6_file_can_read(file_key)
+    or exists(select 1 from storage.objects where bucket_id='sectalk-chat-files' and name=file_key::text)
     then raise exception 'Recipient cannot download the attachment'; end if;
   begin
     perform public.st_v5_message_action(text_key,'revoke');
@@ -88,7 +97,8 @@ begin
   report:=public.st_v5_report(chat,file_key,'sexual_content','Fixture concern',true);
 
   perform set_config('request.jwt.claims',json_build_object('sub',casey,'role','authenticated','aal','aal1')::text,true);
-  if exists(select 1 from storage.objects where bucket_id='sectalk-chat-files' and name=file_key::text)
+  if public.st_v6_file_can_read(file_key)
+    or exists(select 1 from storage.objects where bucket_id='sectalk-chat-files' and name=file_key::text)
     or exists(select 1 from public.st_v5_report_timeline(report)) then raise exception 'Outside account accessed evidence or timeline'; end if;
   begin
     perform public.st_v5_moderate(report,'warn','Unauthorized example');
@@ -102,12 +112,14 @@ begin
   perform public.st_v5_message_action(file_key,'revoke');
   if exists(select 1 from public.st_v2_reactions where message_id=file_key) then raise exception 'Reaction remained on a revoked message'; end if;
   if exists(select 1 from public.st_v2_message_edits where message_id=text_key) then raise exception 'Revoked edit content remained'; end if;
-  if exists(select 1 from storage.objects where bucket_id='sectalk-chat-files' and name=file_key::text)
+  if public.st_v6_file_can_read(file_key)
+    or exists(select 1 from storage.objects where bucket_id='sectalk-chat-files' and name=file_key::text)
     then raise exception 'Sender could still download revoked file'; end if;
 
   perform set_config('request.jwt.claims',json_build_object('sub',staffer,'role','authenticated','aal','aal2')::text,true);
   if (public.st_v5_case(report)->'attachment'->>'id') is distinct from file_key::text
-    or not exists(select 1 from storage.objects where bucket_id='sectalk-chat-files' and name=file_key::text)
+    or not public.st_v6_file_can_read(file_key)
+    or exists(select 1 from storage.objects where bucket_id='sectalk-chat-files' and name=file_key::text)
     then raise exception 'Explicitly shared evidence unavailable to MFA staff'; end if;
   perform public.st_v5_moderate(report,'escalated','Escalation fixture');
   perform public.st_v5_moderate(report,'warn','Warning fixture');

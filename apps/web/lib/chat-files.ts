@@ -20,14 +20,29 @@ export async function sendChatFile(chat: string, id: string, file: File, caption
     })
     if (error) throw error
   }
-  const result = await db!.rpc('st_v5_send_file', { p_id: id, p_caption: caption })
-  if (result.error) throw result.error
+  const session=await db!.auth.getSession()
+  if(!session.data.session)throw new Error('Sign in to send attachments.')
+  const result=await fetch('/api/files/publish',{
+    method:'POST',headers:{Authorization:'Bearer '+session.data.session.access_token,'Content-Type':'application/json'},
+    body:JSON.stringify({file:id,caption,mime:file.type}),
+  })
+  if(!result.ok){
+    const value=await result.json().catch(()=>null)
+    throw new Error(value?.error||'The attachment could not be published.')
+  }
 }
 
 export async function fetchChatFile(id: string) {
-  const { data, error } = await db!.storage.from('sectalk-chat-files').download(id)
-  if (error) throw error
-  return data
+  const {data}=await db!.auth.getSession()
+  if(!data.session)throw new Error('Sign in to download attachments.')
+  const authorization={Authorization:'Bearer '+data.session.access_token}
+  const grant=await fetch('/api/files/download',{method:'POST',headers:{...authorization,'Content-Type':'application/json'},body:JSON.stringify({file:id})})
+  if(!grant.ok)throw new Error('Could not authorize the attachment download.')
+  const {url}=await grant.json()
+  if(typeof url!=='string'||!url.startsWith('/api/files/download?ticket='))throw new Error('Download link unavailable.')
+  const file=await fetch(url,{headers:authorization})
+  if(!file.ok)throw new Error('The attachment is no longer available.')
+  return file.blob()
 }
 
 export function downloadName(filename: string) {

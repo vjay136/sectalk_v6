@@ -95,3 +95,23 @@ Workspace owners and admins can schedule a one-time meeting or a daily or weekly
 ## THR-05 · Room thread integrity
 
 Authors can edit eligible room posts for 24 hours or remove their own posts. Eligible moderators can redact another author’s post. Removal replaces the post body with a tombstone, clears any pin, and preserves the parent reference, replies, reply count and private follows. Tasks linked to a removed post stay available while their source text and snapshot become inaccessible.
+
+## ORG-02 · Active workspace
+
+The active workspace carries across Workspaces, Rooms, workspace and room tasks, Calendar, and Meetings. A meeting link switches context only when the caller can access its workspace. Role changes and membership removal refresh the account’s context. Search and Notifications keep their existing account-wide authorized views. Direct chats retain contact-scoped access.
+
+## MSG-05 · Direct-message delivery
+
+The sender sees Queued while the request is pending, Sent after the server accepts it, Delivered after the recipient’s browser acknowledges it, or Read when the recipient reads it. A failed send can be retried using its original message ID. Acknowledgments are restricted to accepted recipients and visible messages.
+
+## MSG-14 · Offline direct-message outbox
+
+Text and replies stay in an account-scoped queue in the browser with a non-exportable encryption key. The signed-in account can send queued items when connectivity returns, even after a reload or when viewing another chat. A response lost after server acceptance can be retried without inserting a second message. A damaged queue entry remains available to dismiss and other items can still send. Attachments use retry within the current session.
+
+## CALL-22 · Per-call ICE leases
+
+An authenticated participant can get a short-lived TURN lease for an active direct call. The server bounds the lease by the call’s expiry, separates each participant’s identity and renews setup while the call remains eligible. Local verification uses synthetic TURN configuration.
+
+## FILE-03 and FILE-07 · Private attachment publication and retrieval
+
+New uploads stay private until the server checks the filename extension, supplied MIME and stored bytes. It publishes only supported types. Downloads use a 30-second app link bound to the signed-in recipient, and authorization is checked again when the link is redeemed. Successful retrieval is recorded privately. Revoking a chat message stops downloads from it. Explicitly shared evidence retains its separate MFA-reviewed access.

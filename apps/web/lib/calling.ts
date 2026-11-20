@@ -8,11 +8,17 @@ type Signal = {
   payload: RTCSessionDescriptionInit | RTCIceCandidateInit
 }
 
-async function callConfiguration(): Promise<RTCConfiguration> {
+async function callConfiguration(callId: string): Promise<{ config: RTCConfiguration; ttlSeconds: number | null }> {
   const { data } = await db!.auth.getSession()
-  const response = await fetch('/api/ice', { headers: { Authorization: 'Bearer ' + data.session?.access_token } })
+  if (!data.session) throw new Error('Sign in to connect to a call.')
+  const query = new URLSearchParams({ call: callId })
+  const response = await fetch('/api/ice?' + query, {
+    headers: { Authorization: 'Bearer ' + data.session.access_token },
+    cache: 'no-store',
+  })
   if (!response.ok) throw new Error('Unable to initialize call networking.')
-  return response.json()
+  const { iceServers, iceTransportPolicy, ttlSeconds } = await response.json()
+  return { config: { iceServers, iceTransportPolicy }, ttlSeconds }
 }
 
 async function media(video: boolean) {
@@ -187,11 +193,15 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   const isCaller = call?.caller === user
   useEffect(() => {
     if (!activeId || !local) return
+    const callId = activeId
     let disposed = false
     let pc: RTCPeerConnection | undefined
     let retry: number | undefined
     let timeout: number | undefined
     let polling: number | undefined
+    let iceTimer: number | undefined
+    let iceDeadline = Infinity
+    let iceRenewal: Promise<void> | undefined
     let removeChannel: (() => void) | undefined
     let removeHint: (() => void) | undefined
     let processing = false
@@ -213,7 +223,34 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       if (error && !disposed) throw error
     }
 
+    function scheduleIceRenewal(peer: RTCPeerConnection, ttlSeconds: number | null) {
+      window.clearTimeout(iceTimer)
+      iceDeadline = ttlSeconds === null ? Infinity : performance.now() + ttlSeconds * 1000
+      // A lease this short is bounded by the end of the call.
+      if (ttlSeconds !== null && ttlSeconds > 60) {
+        iceTimer = window.setTimeout(() => renewIce(peer).catch(() => retryIceRenewal(peer)), (ttlSeconds - 60) * 1000)
+      }
+    }
+
+    function retryIceRenewal(peer: RTCPeerConnection) {
+      if (disposed || performance.now() >= iceDeadline) return
+      iceTimer = window.setTimeout(() => renewIce(peer).catch(() => retryIceRenewal(peer)), 15000)
+    }
+
+    function renewIce(peer: RTCPeerConnection) {
+      if (!iceRenewal) {
+        iceRenewal = callConfiguration(callId).then(({ config, ttlSeconds }) => {
+          if (disposed) return
+          peer.setConfiguration(config)
+          scheduleIceRenewal(peer, ttlSeconds)
+        }).finally(() => { iceRenewal = undefined })
+      }
+      return iceRenewal
+    }
+
     async function offer(peer: RTCPeerConnection, restart = false) {
+      if (restart && iceDeadline - performance.now() <= 60000) await renewIce(peer)
+      if (disposed) return
       const description = await peer.createOffer(restart ? { iceRestart: true } : {})
       await peer.setLocalDescription(description)
       await transmit('offer', description)
@@ -256,6 +293,8 @@ export function useCalling(user: string, notice: (message: string) => void, hint
               continue
             }
             const description = row.payload as RTCSessionDescriptionInit
+            if (row.kind === 'offer' && iceDeadline - performance.now() <= 60000) await renewIce(peer)
+            if (disposed) return
             await peer.setRemoteDescription(description)
             remoteUfrags = new Set([...description.sdp?.matchAll(/^a=ice-ufrag:([^\r\n]+)/gm) ?? []].map(match => match[1]))
             const remaining: RTCIceCandidateInit[] = []
@@ -283,11 +322,12 @@ export function useCalling(user: string, notice: (message: string) => void, hint
 
     async function negotiate() {
       try {
-        const config = await callConfiguration()
+        const { config, ttlSeconds } = await callConfiguration(callId)
         if (disposed) return
         const peer = new RTCPeerConnection(config)
         pc = peer
         activePeer.current = peer
+        scheduleIceRenewal(peer, ttlSeconds)
         local!.getTracks().forEach(track => peer.addTrack(track, local!))
         peer.ontrack = event => { if (!disposed && event.streams[0]) setRemote(event.streams[0]) }
         peer.onicecandidate = event => {
@@ -336,6 +376,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       window.clearTimeout(retry)
       window.clearTimeout(timeout)
       window.clearInterval(polling)
+      window.clearTimeout(iceTimer)
       removeChannel?.()
       removeHint?.()
       if (activePeer.current === pc) activePeer.current = null

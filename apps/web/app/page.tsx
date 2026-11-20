@@ -5,6 +5,7 @@ import type { Session } from '@supabase/supabase-js'
 import { db } from '../lib/data'
 import { Brand, Entry } from '../components/entry'
 import { Inbox } from '../components/inbox'
+import { WorkspaceContextProvider } from '../components/workspace-context'
 
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null)
@@ -20,6 +21,8 @@ export default function Home() {
     })
     return () => data.subscription.unsubscribe()
   }, [])
-  return loaded ? (session && !recovering ? <Inbox key={session.user.id} user={session.user.id} /> : <Entry recovering={recovering} />) :
+  return loaded ? (session && !recovering ? <WorkspaceContextProvider key={session.user.id} user={session.user.id}>
+    <Inbox user={session.user.id} />
+  </WorkspaceContextProvider> : <Entry recovering={recovering} />) :
     <main className="center-page"><Brand /><p role="status">Opening SecTalk…</p></main>
 }

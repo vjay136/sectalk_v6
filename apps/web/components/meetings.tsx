@@ -7,15 +7,46 @@ import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/
 import { saveDownload } from '../lib/chat-files'
 import { meetingCalendar, meetingLink } from '../lib/meeting-calendar'
 import { SectionTabs } from './section-tabs'
+import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
 type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null }
 type Attendance = { user_id:string; status:'waiting'|'admitted'|'declined'|'left'; requested_at:string; admitted_at:string|null; left_at:string|null }
-type Space = { id:string; name:string; role:string }
-
 export function Meetings({ user, requested }: { user:string; requested:string|null }) {
+  const {active,workspaces,select}=useWorkspaceContext()
+  const [linkedWorkspace,setLinkedWorkspace]=useState<string|null|undefined>(requested?undefined:null)
+  const [linkUsed,setLinkUsed]=useState(false)
+  const [dismissed,setDismissed]=useState(false)
+  useEffect(()=>{
+    if(!requested)return
+    let mounted=true
+    void db!.from('st_v3_meetings').select('workspace_id').eq('id',requested).maybeSingle().then(({data})=>{
+      if(mounted)setLinkedWorkspace(data?.workspace_id||null)
+    })
+    return()=>{mounted=false}
+  },[requested])
+  const permittedLink=Boolean(linkedWorkspace&&workspaces?.some(space=>space.id===linkedWorkspace))
+  useEffect(()=>{
+    if(!linkUsed&&!dismissed&&permittedLink&&linkedWorkspace){
+      select(linkedWorkspace)
+      setLinkUsed(true)
+    }
+  },[dismissed,linkUsed,linkedWorkspace,permittedLink,select])
+  const opening=requested&&!dismissed&&(linkedWorkspace===undefined||!workspaces||(permittedLink&&!linkUsed))
+  const linkedMeeting=!dismissed&&permittedLink&&active?.id===linkedWorkspace?requested:null
+  return <section className="content-page">
+    <header className="content-title"><div className="card-icon"><Video size={22}/></div><div><h1>Meetings</h1><p>Schedule workspace meetings and manage the waiting room.</p></div></header>
+    <WorkspaceSwitcher onSwitch={()=>setDismissed(true)}/>
+    {opening?<p role="status">Opening meeting…</p>:<>
+      {requested&&!dismissed&&!permittedLink&&<p role="status">This meeting is unavailable to your account.</p>}
+      {active?<WorkspaceMeetings key={active.id+active.role} user={user} requested={linkedMeeting} workspace={active}/>:
+        workspaces?.length===0&&!requested&&<p>Join or create a workspace to see meetings.</p>}
+    </>}
+  </section>
+}
+
+function WorkspaceMeetings({ user, requested, workspace }: { user:string; requested:string|null; workspace:Workspace }){
   const [meetings,setMeetings] = useState<Meeting[] | null>(null)
-  const [spaces,setSpaces] = useState<Space[]>([])
   const [id,setId] = useState(requested)
   const [view,setView] = useState<'upcoming'|'past'|'schedule'|'instant'>('upcoming')
   const [ready,setReady] = useState(false)
@@ -23,34 +54,27 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
   const [busy,setBusy] = useState(false)
   const [frequency,setFrequency]=useState('once')
   const pendingMeeting = useRef<{ input:string; id:string } | null>(null)
+  const workspaceId=workspace.id
   const reload = useCallback(async () => {
-    const { data,error } = await db!.from('st_v3_meetings').select('*').order('starts_at',{ascending:false}).limit(100)
+    const { data,error } = await db!.from('st_v3_meetings').select('*').eq('workspace_id',workspaceId).order('starts_at',{ascending:false}).limit(100)
     if (error) setError('Could not load meetings.')
     else {
       if(requested&&!data.some(row=>row.id===requested)){
-        const linked=await db!.from('st_v3_meetings').select('*').eq('id',requested).maybeSingle()
+        const linked=await db!.from('st_v3_meetings').select('*').eq('workspace_id',workspaceId).eq('id',requested).maybeSingle()
         if(linked.data)data.push(linked.data)
       }
       setMeetings(data as Meeting[])
     }
-  },[requested])
+  },[requested,workspaceId])
   useEffect(() => {
     void reload()
-    const subscription=liveChannel('meetings:'+user,reload)
-      .on('postgres_changes',{event:'*',schema:'public',table:'st_v3_meetings'},reload).subscribe()
+    const subscription=liveChannel('meetings:'+workspaceId,reload)
+      .on('postgres_changes',{event:'*',schema:'public',table:'st_v3_meetings',filter:'workspace_id=eq.'+workspaceId},reload).subscribe()
     const reconnect=onReconnect(reload)
     const interval=window.setInterval(reload,6000)
-    const loadSpaces=async () => {
-      const [membership,workspaces]=await Promise.all([
-        db!.from('st_v2_members').select('workspace_id,role').eq('user_id',user),
-        db!.from('st_v2_workspaces').select('id,name'),
-      ])
-      setSpaces((workspaces.data||[]).map(space => ({...space,role:membership.data?.find(row => row.workspace_id===space.id)?.role||'member'})))
-    }
-    void loadSpaces()
     void fetch('/api/meetings/token').then(reply=>reply.json()).then(data=>setReady(data.mediaConfigured===true)).catch(()=>undefined)
     return () => { reconnect();window.clearInterval(interval);void db!.removeChannel(subscription) }
-  },[reload,user])
+  },[reload,workspaceId])
   async function createMeeting(event:FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (busy) return
@@ -58,7 +82,7 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
     const data=new FormData(form)
     setBusy(true);setError('')
     try {
-      const common={p_workspace:data.get('workspace'),p_title:data.get('title')}
+      const common={p_workspace:workspaceId,p_title:data.get('title')}
       const repeats=!instant&&frequency!=='once'
       const input=instant?{...common,p_minutes:Number(data.get('duration'))}:{
         ...common,p_agenda:data.get('agenda'),p_start:new Date(String(data.get('start'))).toISOString(),
@@ -76,14 +100,12 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
     finally { setBusy(false) }
   }
   const selected=meetings?.find(m=>m.id===id)
-  const hostSpaces=spaces.filter(space=>space.role==='owner'||space.role==='admin')
-  const canHost=hostSpaces.length>0
+  const canHost=workspace.role==='owner'||workspace.role==='admin'
   const instant=view==='instant'
   const editing=canHost && (view==='schedule'||instant)
   const past=(meeting:Meeting)=>meeting.status==='ended'||Date.parse(meeting.ends_at)<=Date.now()
   const list=meetings?.filter(meeting=>past(meeting)===(view==='past'))
-  return <section className="content-page">
-    <header className="content-title"><div className="card-icon"><Video size={22}/></div><div><h1>Meetings</h1><p>Schedule workspace meetings and manage the waiting room.</p></div></header>
+  return <>
     {!ready && <p className="release-info">Scheduling and waiting rooms are available. Live audio and video require a configured media provider.</p>}
     {error && <p role="alert" className="error">{error}</p>}
     <SectionTabs label="Meeting sections" value={editing ? view : view==='past' ? 'past' : 'upcoming'} onChange={next=>{if(!busy){setError('');setId(null);setView(next)}}} options={[
@@ -91,7 +113,6 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
     ]}/>
     {editing ? <div className="panel release-panel">
       <h2>{instant?'Start a meeting now':'Schedule a meeting'}</h2><form key={view} className="release-form" onSubmit={createMeeting}>
-        <label>Workspace<select required name="workspace">{hostSpaces.map(space=><option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
         <label>Title<input name="title" required={!instant} placeholder={instant?'Instant meeting':undefined} maxLength={100}/></label>
         {instant ? <label>Duration<select name="duration" defaultValue="60">
           <option value="15">15 minutes</option><option value="30">30 minutes</option>
@@ -117,8 +138,8 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
       </div>)}
     </div>}
     {selected && <MeetingDetail key={selected.id} meeting={selected} user={user} mediaReady={ready}
-      host={selected.host_id===user && hostSpaces.some(space=>space.id===selected.workspace_id)} refresh={reload}/>}
-  </section>
+      host={selected.host_id===user && canHost} refresh={reload}/>}
+  </>
 }
 
 function MeetingDetail({meeting,user,mediaReady,host,refresh}: {

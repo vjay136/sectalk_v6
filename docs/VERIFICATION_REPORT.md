@@ -6,8 +6,8 @@
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
-| Unit tests | 12 passed, including calendar export format, readiness failure handling, safety heuristics, vault authentication, emoji data and disclosure configuration validation |
-| Supabase database integration | All 17 rollback suites passed, including room thread integrity, time-zone recurrence, pin permissions, audit search, room templates and presence expiry |
+| Unit tests | 14 passed, including file type and ticket checks, calendar export, readiness, safety heuristics, vault, emoji data and disclosure configuration |
+| Supabase database integration | All 20 rollback suites passed, including workspace context, attachment authorization, message delivery and active-call ICE permissions |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -29,6 +29,12 @@
 | Onboarding and help | A fresh account completed profile and discovery setup. The browser verified the empty Inbox, the Help tab, keyboard shortcuts, help links, and mobile access. |
 | Recurring meetings | SQL verified recurrence across a daylight-saving change and retry and role checks. Browser verified a weekly series and downloaded three calendar events. A linked occurrence opened in a member session and the same link disclosed no meeting details to an outsider. |
 | Room thread integrity | Two browsers verified that edit and redaction retain replies, counts and follows. SQL checked author deletion, moderator authorization, removal of pins, and hiding both copies of a linked task source. |
+| Workspace switcher | Two-browser and SQL checks covered workspace-bound views, invitations, permissions, meeting links, immediate account-scoped membership invalidation and sign-out isolation. |
+| Message delivery | Two browsers verified queued, failed, same-ID retry, sent, delivered and read. SQL exercised private acknowledgment constraints and idempotency. |
+| Offline message queue | Browser verified encrypted storage, persistence across reload and account switches, replay with the same IDs, reply linkage, blocked retry, and isolating an unreadable entry while other messages continued. |
+| ICE credential leases | Browser and SQL verified per-call signing, distinct participants, bounded expiry, renewal and denial for ineligible callers with simulated TURN settings. Cross-network relay remains pending. |
+| Signed attachment downloads | The local app issued and redeemed user-bound 30-second links, rechecked access, logged retrieval and rejected a stale link after revocation. Unit tests exercised the expiry boundary and tampering. |
+| Attachment type policy | Unit and browser checks verified agreement between extension, requested MIME and stored bytes. The normal composer published an approved file. The API rejected a renamed text file and the database denied raw publication. |
 | Local database security advisor | No warning or error reported for the isolated candidate at test time. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
 | Updated candidate | `npm run build` passed after the rooms, search, status, PWA and thread changes. |

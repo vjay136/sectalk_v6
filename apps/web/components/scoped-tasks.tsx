@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { CalendarDays, ListChecks } from 'lucide-react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
+import { WorkspaceSwitcher, useWorkspaceContext } from './workspace-context'
 
 export type TaskScope={kind:'chat'|'room';id:string}
 type Status='todo'|'in_progress'|'blocked'|'done'|'cancelled'
@@ -32,10 +33,29 @@ function dateValue(value:FormDataEntryValue|null){
   return value?new Date(String(value)).toISOString():null
 }
 
-export function ScopedTasks({user,scope,source,people={},moderator=false,canCreate=false,onSourceUsed}:{
+type ScopedTaskProps={
   user:string;scope?:TaskScope;source?:string|null;people?:Record<string,Profile>;
   moderator?:boolean;canCreate?:boolean;onSourceUsed?:()=>void;
-}){
+}
+
+export function ScopedTasks(props:ScopedTaskProps){
+  return props.scope?<ScopedTaskList {...props}/>:<TaskOverview {...props}/>
+}
+
+function TaskOverview(props:ScopedTaskProps){
+  const {active,workspaces}=useWorkspaceContext()
+  const [view,setView]=useState<'workspace'|'direct'>('workspace')
+  return <>
+    <SectionTabs label="Task workspace scope" value={view} onChange={setView} options={[['workspace','Workspace room tasks'],['direct','Direct chat tasks']]}/>
+    {view==='direct'?<ScopedTaskList key="direct" {...props}/>:
+      <><WorkspaceSwitcher/>
+        {active?<ScopedTaskList key={active.id+active.role} {...props} workspace={active.id}/>:
+          workspaces?.length===0&&<p>Join or create a workspace to see room tasks.</p>}
+      </>}
+  </>
+}
+
+function ScopedTaskList({user,scope,source,people={},moderator=false,canCreate=false,onSourceUsed,workspace}:ScopedTaskProps&{workspace?:string}){
   const [tasks,setTasks]=useState<Task[]|null>(null)
   const [relations,setRelations]=useState<Person[]>([])
   const [view,setView]=useState<'list'|'board'|'calendar'>('list')
@@ -49,27 +69,28 @@ export function ScopedTasks({user,scope,source,people={},moderator=false,canCrea
   const scopeId=scope?.id
 
   const load=useCallback(async()=>{
-    let query=db!.from('st_v6_tasks').select(fields)
+    let query=db!.from('st_v6_tasks').select(workspace?fields+',room:st_v6_rooms!inner(workspace_id)':fields)
     if(scopeId)query=query.eq(column,scopeId)
+    else if(workspace)query=query.eq('room.workspace_id',workspace)
+    else query=query.not('chat_id','is',null)
     const result=await query.order('created_at',{ascending:false}).order('id',{ascending:false}).limit(100).returns<Task[]>()
     if(result.error){setError('Could not load tasks.');return}
     const ids=result.data.map(task=>task.id)
     const links=ids.length?await db!.from('st_v6_task_people').select('task_id,user_id,kind').in('task_id',ids).limit(1000).returns<Person[]>():null
     if(links?.error){setError('Could not load task assignments.');return}
     setTasks(result.data);setRelations(links?.data||[])
-  },[column,scopeId])
+  },[column,scopeId,workspace])
 
   useEffect(()=>{
     void load()
-    const configuration=scopeId?{filter:column+'=eq.'+scopeId}:{}
-    const subscription=liveChannel('v6-tasks:'+(scopeId||user),load)
-      .on('postgres_changes',{event:'INSERT',schema:'public',table:'st_v6_tasks',...configuration},load)
-      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'st_v6_tasks',...configuration},load)
-      .subscribe(status=>{if(status==='SUBSCRIBED')void load()})
+    const subscription=scopeId?liveChannel('v6-tasks:'+scopeId,load)
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'st_v6_tasks',filter:column+'=eq.'+scopeId},load)
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'st_v6_tasks',filter:column+'=eq.'+scopeId},load)
+      .subscribe(status=>{if(status==='SUBSCRIBED')void load()}):null
     const timer=window.setInterval(load,6000)
     const dispose=onReconnect(load)
-    return()=>{clearInterval(timer);dispose();void db!.removeChannel(subscription)}
-  },[column,load,scopeId,user])
+    return()=>{clearInterval(timer);dispose();if(subscription)void db!.removeChannel(subscription)}
+  },[column,load,scopeId])
 
   useEffect(()=>{if(source)setCreateOpen(true)},[source])
 
@@ -108,7 +129,7 @@ export function ScopedTasks({user,scope,source,people={},moderator=false,canCrea
   }
 
   return <section className="release-section" aria-label="Scoped tasks">
-    <div className="content-title"><ListChecks size={20}/><h2>{scope?'Tasks':'Room and chat tasks'}</h2></div>
+    <div className="content-title"><ListChecks size={20}/><h2>{scope?'Tasks':workspace?'Workspace room tasks':'Direct chat tasks'}</h2></div>
     <SectionTabs label="Task views" value={view} onChange={setView} options={[['list','List'],['board','Board'],['calendar','Calendar']]}/>
     <SectionTabs label="Task filters" value={filter} onChange={setFilter} options={[['all','All tasks'],['assigned','Assigned to me'],['watching','Watching']]}/>
     {canCreate&&<details open={createOpen} onToggle={event=>setCreateOpen(event.currentTarget.open)}>

@@ -5,8 +5,8 @@ import { CalendarDays, Hash, ListChecks, MessageCircle, Plus, Send, Users } from
 import { db, formatError, formatTime, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { RoomDirectory } from './room-directory'
+import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
 
-type Space = { id: string; name: string; owner: string }
 type Invite = { id: string; workspace_name: string }
 type Channel = { id: string; name: string }
 type Member = { user_id: string; role: 'owner' | 'admin' | 'member' }
@@ -58,24 +58,19 @@ async function rpc(name: string, values: Record<string, unknown>) {
 }
 
 export function Workspaces({ user, view = 'workspaces' }: { user:string;view?:WorkspaceView }) {
-  const [spaces, setSpaces] = useState<Space[]>([])
+  const {active:space,workspaces,reload:reloadWorkspaces}=useWorkspaceContext()
   const [invites, setInvites] = useState<Invite[]>([])
-  const [selected, setSelected] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const reload = useCallback(async () => {
-    const [workspaceResult, inviteResult] = await Promise.all([
-      db!.from('st_v2_workspaces').select('id,name,owner').order('created_at').limit(100),
-      db!.from('st_v2_invites').select('id,workspace_name').eq('invitee', user).eq('status', 'pending').limit(50),
-    ])
-    if (workspaceResult.error || inviteResult.error) { setError('Could not load your workspaces.'); return }
+    const inviteResult=await db!.from('st_v2_invites').select('id,workspace_name').eq('invitee', user).eq('status', 'pending').limit(50)
+    if (inviteResult.error) { setError('Could not load your workspace invitations.'); return }
     setError('')
-    setSpaces(workspaceResult.data)
     setInvites(inviteResult.data)
-    setSelected(previous => workspaceResult.data.some(space => space.id === previous) ? previous : workspaceResult.data[0]?.id ?? '')
   }, [user])
 
   useEffect(() => {
+    if(view!=='workspaces')return
     void reload()
     const channel = liveChannel('workspace-invites:' + user, reload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'st_v2_invites', filter: 'invitee=eq.' + user }, reload)
@@ -83,19 +78,17 @@ export function Workspaces({ user, view = 'workspaces' }: { user:string;view?:Wo
     const reconnect = onReconnect(reload)
     const timer = window.setInterval(reload, 15000)
     return () => { reconnect(); window.clearInterval(timer); void db!.removeChannel(channel) }
-  }, [reload, user])
+  }, [reload, user, view])
 
   async function reply(id: string, accept: boolean) {
     setBusy(true)
     try {
       const result = await rpc('st_v2_reply_invite', { p_invite: id, p_accept: accept })
-      await reload()
-      if (result) setSelected(result)
+      await Promise.all([reload(),reloadWorkspaces(result||undefined)])
     } catch (error) { setError(formatError(error, 'Could not respond to the invitation.')) }
     finally { setBusy(false) }
   }
 
-  const space = spaces.find(row => row.id === selected)
   const {title, description, icon:Icon}=workspaceViews[view]
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Icon size={22}/></div><div><h1>{title}</h1><p>{description}</p></div></header>
@@ -106,23 +99,20 @@ export function Workspaces({ user, view = 'workspaces' }: { user:string;view?:Wo
       <button className="secondary" disabled={busy} onClick={() => void reply(invite.id, false)}>Decline</button>
     </div>)}</section>}
     <div className="release-flex">
-      {spaces.length > 0 && <label>Workspace<select value={selected} onChange={event => setSelected(event.target.value)}>
-        {spaces.map(row => <option value={row.id} key={row.id}>{row.name}</option>)}
-      </select></label>}
+      <WorkspaceSwitcher/>
       {view==='workspaces' && <details className="release-create" open={!space || undefined}>
         <summary>Create a workspace</summary><QuickForm label="Create a workspace" button="Create workspace" send={async fields => {
           const id = await rpc('st_v2_create_workspace', { p_name: fields.get('name') })
-          await reload()
-          setSelected(id)
+          await reloadWorkspaces(id)
         }}><label>Workspace name<input name="name" required maxLength={64} placeholder="e.g. Eagle Security" /></label></QuickForm>
       </details>}
     </div>
-    {space ? <WorkspaceArea key={space.id+view} space={space} user={user} view={view} /> :
-      view!=='workspaces' && <p>Join or create a workspace to get started.</p>}
+    {space ? <WorkspaceArea key={space.id+view+space.role} space={space} user={user} view={view} /> :
+      workspaces?.length===0&&view!=='workspaces'&&<p>Join or create a workspace to get started.</p>}
   </section>
 }
 
-function WorkspaceArea({ space, user, view }: { space:Space;user:string;view:WorkspaceView }) {
+function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view:WorkspaceView }) {
   const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'activity'>('people')
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])

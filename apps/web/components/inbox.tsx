@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import dynamic from 'next/dynamic'
 import {
-  ArrowLeft, Ban, Bell, BellOff, Bookmark, CalendarClock, CalendarDays, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Folder, Inbox as InboxIcon, LogOut, ShieldAlert,
+  ArrowLeft, Ban, Bell, BellOff, Bookmark, CalendarClock, CalendarDays, Check, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Folder, Inbox as InboxIcon, LogOut, ShieldAlert,
   Download, Hash, ListChecks, MessageCircle, MoreHorizontal, Paperclip, Phone, Pin, Search, Send, Shield, ShieldCheck, Smile, UserPlus, UserRound, Users, Video, X,
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
@@ -19,10 +19,12 @@ import { FilesLibrary } from './files-library'
 import { GlobalSearch, Notifications } from './discover'
 import { InProductHelp } from './in-product-help'
 import { meetingFromQuery } from '../lib/meeting-calendar'
+import { useWorkspaceContext } from './workspace-context'
 import { ScopedTasks } from './scoped-tasks'
 import { SectionTabs } from './section-tabs'
 import { CommandPalette, type Command } from './command-palette'
 import { ScheduledMessages } from './scheduled-messages'
+import { useOfflineMessages } from '../lib/use-offline-messages'
 import { downloadChatFile, extensions, sendChatFile, supportedFile, type ChatFile } from '../lib/chat-files'
 import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
@@ -41,6 +43,7 @@ type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id
 type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'; expires_at:string }
 
 export function Inbox({ user }: { user: string }) {
+  const {reload:reloadWorkspaces}=useWorkspaceContext()
   const [profile, setProfile] = useState<Profile | null | undefined>()
   const [profiles, setProfiles] = useState<Record<string, Profile>>({})
   const [chats, setChats] = useState<Chat[]>([])
@@ -73,6 +76,7 @@ export function Inbox({ user }: { user: string }) {
   const announced = useRef(new Map<string, string>())
   const readVersion = useRef(0)
   const [hints] = useState(() => new EventTarget())
+  const offlineMessages=useOfflineMessages(user,hints)
   const call = useCalling(user, setNotice, hints)
   useEffect(() => { activeChat.current = tab === 'inbox' ? selected : null }, [tab, selected])
   const refreshInboxStatus = useCallback(async (changedChat?: string) => {
@@ -132,6 +136,7 @@ export function Inbox({ user }: { user: string }) {
       })
       .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
       .on('broadcast', { event: 'presence' }, () => void refresh())
+      .on('broadcast', { event: 'workspace_memberships' }, () => void reloadWorkspaces())
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))
       })
@@ -167,7 +172,7 @@ export function Inbox({ user }: { user: string }) {
       void db!.removeChannel(account)
       void db!.removeChannel(channel)
     }
-  }, [user, refresh, hints, refreshInboxStatus])
+  }, [user, refresh, hints, refreshInboxStatus, reloadWorkspaces])
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -424,7 +429,7 @@ export function Inbox({ user }: { user: string }) {
           </div>
         </header>
         {blockCheck && <div className="inline-warning"><span>{blocked ? 'Allow this contact to reach you again?' : 'Block new messages and calls from this contact?'}</span><button className="danger" disabled={working} onClick={() => void run('st_set_block', { p_chat: chat.id, p_block: !blocked }, () => { setBlockCheck(false); setNotice(blocked ? 'Contact unblocked.' : 'Contact blocked.') })}>{blocked ? 'Unblock' : 'Block'}</button><button className="secondary" onClick={() => setBlockCheck(false)}>Cancel</button></div>}
-        {chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} selfName={profile.name} peerName={peer?.name||'Contact'} hints={hints}
+        {chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} selfName={profile.name} peerName={peer?.name||'Contact'} hints={hints} offlineMessages={offlineMessages}
           blocked={blocked} inform={setNotice} onReport={(message,file) => setReport({ chat:chat.id,message,file })}
           onTask={id=>{setSourceTask(id);setChatTasks(true)}} taskPanel={chatTasks&&!blocked?<div className="feed">
             <ScopedTasks user={user} scope={{kind:'chat',id:chat.id}} source={sourceTask}
@@ -550,24 +555,34 @@ function ProfileForm({ profile, onSave }: { profile: Profile | null; onSave: () 
 
 type Reaction = { message_id: string; user_id: string; reaction: string }
 type ChatActivity = { muted: boolean; read_at: string | null; read_id: string | null; typing_until: string | null }
+type DirectMessage = Message & { delivered_at?:string|null }
+type OutboxMessage = {
+  id:string; body:string; reply:string|null; file:File|null; at:string; state:'queued'|'sent'|'failed'|'damaged'
+}
+function mergeDelivery(before:DirectMessage|undefined,row:DirectMessage){
+  if(!before)return row
+  const body=row.revoked_at?row:before.revoked_at||before.edited_at&&before.edited_at>(row.edited_at||'')?before:row
+  return {...body,delivered_at:row.delivered_at||before.delivered_at}
+}
 const reactionOptions = [
   { emoji: '👍', label: 'Thumbs up' }, { emoji: '❤️', label: 'Heart' },
   { emoji: '✅', label: 'Check mark' }, { emoji: '👀', label: 'Eyes' },
 ]
 
-function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, inform, onTask, taskPanel }: {
+function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, inform, onTask, taskPanel, offlineMessages }: {
   chat: Chat; self: string; selfName:string; peerName:string; hints: EventTarget; blocked: boolean
   onReport: (message: Message,file?:ChatFile) => void; inform: (notice: string) => void
   onTask:(id:string)=>void;taskPanel:React.ReactNode
+  offlineMessages:ReturnType<typeof useOfflineMessages>
 }) {
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<DirectMessage[]>([])
   const [draft, setDraft] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [activity, setActivity] = useState<ChatActivity | null>(null)
   const [reactions, setReactions] = useState<Reaction[]>([])
   const [pin, setPin] = useState<Message | null>(null)
   const [showSearch, setShowSearch] = useState(false)
-  const [results, setResults] = useState<Message[] | null>(null)
+  const [results, setResults] = useState<DirectMessage[] | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
   const [removing,setRemoving]=useState<{message:Message;action:'hide'|'revoke'}|null>(null)
   const [hidden,setHidden]=useState<string[]>([])
@@ -588,18 +603,29 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const [busy, setBusy] = useState(false)
   const feed = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
-  const pending = useRef<{ id: string; body: string; reply: string | null } | null>(null)
+  const [outbox,setOutbox]=useState<OutboxMessage[]>([])
+  const pendingText:OutboxMessage[]=offlineMessages.entries.filter(item=>item.chat===chat.id&&!messages.some(row=>row.id===item.id))
+    .map(item=>({...item,file:null,state:item.state==='retry'?'failed':item.state}))
+  const sending=useRef(false)
+  const acknowledged=useRef(new Set<string>())
   const pendingSchedule=useRef<{id:string;body:string;at:string}|null>(null)
   const [scheduleOpen,setScheduleOpen]=useState(false)
-  const revoked=useRef(new Map<string,Message>())
+  const revoked=useRef(new Map<string,DirectMessage>())
   const [loadingOlder, setLoadingOlder] = useState(false)
-  const merge = useCallback((rows: Message[]) => {
+  const merge = useCallback((rows: DirectMessage[]) => {
     for(const row of rows)if(row.revoked_at)revoked.current.set(row.id,row)
     const current=rows.map(row=>revoked.current.get(row.id)||row)
-    setMessages(previous => [...new Map([...previous, ...current].map(row => [row.id, row])).values()]
-      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)))
+    setMessages(previous => {
+      const byId=new Map(previous.map(row=>[row.id,row]))
+      for(const row of current)byId.set(row.id,mergeDelivery(byId.get(row.id),row))
+      return [...byId.values()].sort((a,b)=>a.created_at.localeCompare(b.created_at)||a.id.localeCompare(b.id))
+    })
     const updates=new Map(current.map(row=>[row.id,row]))
-    setResults(previous=>previous?.map(row=>updates.get(row.id)||row)??null)
+    setResults(previous=>previous?.map(row=>{
+      const update=updates.get(row.id)
+      return update?mergeDelivery(row,update):row
+    })??null)
+    setOutbox(previous=>previous.some(item=>updates.has(item.id))?previous.filter(item=>!updates.has(item.id)):previous)
     setReplying(previous=>previous&&(updates.get(previous.id)?.revoked_at?null:previous))
     setEditing(previous=>previous&&(updates.get(previous.id)?.revoked_at?null:previous))
   }, [])
@@ -622,7 +648,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(51)
     if (error) { inform('Could not sync messages.'); return }
     if (before || !loaded) setOlder(data.length > 50)
-    const page=data.slice(0,50) as Message[]
+    const page=data.slice(0,50) as DirectMessage[]
     const ids=page.map(row=>row.id)
     if(ids.length){
       const [removed,attachments]=await Promise.all([
@@ -661,7 +687,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     const channel = liveChannel('thread:' + chat.id, sync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'st_messages', filter: 'chat_id=eq.' + chat.id }, payload => {
         if (payload.eventType !== 'DELETE'){
-          const message=payload.new as Message
+          const message=payload.new as DirectMessage
           merge([message])
           if(message.reply_to)void loadQuotes([message])
           if(payload.eventType==='UPDATE')setQuotes(current=>current[message.id]?
@@ -689,7 +715,19 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     const timer = window.setTimeout(() => setClock(Date.now()), Math.max(0, Date.parse(activity.typing_until) - Date.now()) + 30)
     return () => window.clearTimeout(timer)
   }, [activity?.typing_until])
-  const latestInbound = messages.findLast(message => message.sender !== self)?.id
+  useEffect(()=>{
+    if(blocked)return
+    const unavailable=new Set(hidden)
+    const ids=messages.filter(message=>message.sender!==self&&!message.delivered_at&&!message.revoked_at&&
+      !unavailable.has(message.id)&&!acknowledged.current.has(message.id)).slice(-100).map(message=>message.id)
+    if(!ids.length)return
+    for(const id of ids)acknowledged.current.add(id)
+    void db!.rpc('st_v6_ack_message_delivery',{p_chat:chat.id,p_messages:ids}).then(({data})=>{
+      const updated=new Set(data||[])
+      for(const id of ids)if(!updated.has(id))acknowledged.current.delete(id)
+    })
+  },[blocked,chat.id,hidden,messages,self])
+  const latestInbound = messages.findLast(message => message.sender !== self&&!message.revoked_at&&!hidden.includes(message.id))?.id
   const viewingTasks=Boolean(taskPanel)
   const markRead = useCallback(() => {
     if (blocked || viewingTasks || !latestInbound || document.visibilityState !== 'visible' || !nearBottom.current ||
@@ -707,7 +745,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   useEffect(() => {
     const node = feed.current
     if (node && nearBottom.current) node.scrollTop = node.scrollHeight
-  }, [messages])
+  }, [messages,outbox.length,pendingText.length])
 
   async function update(name: string, input: Record<string, unknown>) {
     const { error } = await db!.rpc(name, input)
@@ -726,37 +764,53 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     }
   }
 
+  async function transmit(item:OutboxMessage) {
+    if(sending.current||busy||blocked||!item.file)return
+    sending.current=true
+    setBusy(true)
+    nearBottom.current=true
+    const queued:OutboxMessage={...item,state:'queued'}
+    setOutbox(previous=>previous.some(entry=>entry.id===item.id)
+      ?previous.map(entry=>entry.id===item.id?queued:entry):[...previous,queued])
+    try{
+      await sendChatFile(chat.id,item.id,item.file,item.body)
+      setOutbox(previous=>previous.map(entry=>entry.id===item.id?{...entry,state:'sent'}:entry))
+      void load()
+    }catch{
+      setOutbox(previous=>previous.map(entry=>entry.id===item.id?{...entry,state:'failed'}:entry))
+    }finally{
+      sending.current=false
+      setBusy(false)
+    }
+  }
+
   async function send(event: FormEvent) {
     event.preventDefault()
-    const body = draft.trim()
-    if ((!body&&!attachment) || busy || blocked) return
+    const body=draft.trim()
+    if((!body&&!attachment)||sending.current||busy||blocked)return
+    const reply=replying?.id??null
+    const at=new Date().toISOString()
     if(attachment){
+      if(!navigator.onLine){inform('Reconnect to send attachments.');return}
+      void transmit({id:attachment.id,body,reply,file:attachment.file,at,state:'queued'})
+      setAttachment(null)
+    }else{
+      sending.current=true
       setBusy(true)
       try{
-        await sendChatFile(chat.id,attachment.id,attachment.file,body)
+        await offlineMessages.enqueue({id:crypto.randomUUID(),chat:chat.id,body,reply,at})
         nearBottom.current=true
-        setAttachment(null)
-        setDraft(previous=>previous.trim()===body?'':previous)
-        await load()
-      }catch(error){inform(formatError(error,'Could not send the attachment. Try again.'))}
-      finally{setBusy(false)}
-      return
+      }catch{
+        inform('Could not save the outgoing message. Your draft is still here.')
+        return
+      }finally{
+        sending.current=false
+        setBusy(false)
+      }
     }
-    const reply = replying?.id ?? null
-    const id = pending.current?.body === body && pending.current.reply === reply ? pending.current.id : crypto.randomUUID()
-    pending.current = { id, body, reply }
-    setBusy(true)
-    const { error } = await db!.rpc(reply ? 'st_v2_send_reply' : 'st_send', { p_chat: chat.id, p_id: id, p_body: body, ...(reply ? { p_reply: reply } : {}) })
-    if (error) inform(formatError(error, 'Could not send. Your draft is still here.'))
-    else {
-      pending.current = null
-      setReplying(current => current?.id === reply ? null : current)
-      nearBottom.current = true
-      setDraft(previous => previous.trim() === body ? '' : previous)
-      void db!.rpc('st_v2_typing', { p_chat: chat.id, p_active: false })
-      void load()
-    }
-    setBusy(false)
+    setDraft(previous=>previous.trim()===body?'':previous)
+    setReplying(current=>current?.id===reply?null:current)
+    if(navigator.onLine)void db!.rpc('st_v2_typing',{p_chat:chat.id,p_active:false})
   }
 
   function pickEmoji(value:string) {
@@ -808,7 +862,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       const { data, error } = await db!.rpc('st_v2_search_messages', { p_chat: chat.id, p_query: query })
       if (error) inform('Could not search this conversation.')
       else{
-        const rows=(data as Message[]).filter(row=>!row.revoked_at&&!revoked.current.has(row.id))
+        const rows=(data as DirectMessage[]).filter(row=>!row.revoked_at&&!revoked.current.has(row.id))
         const removed=rows.length?await db!.from('st_v5_hidden_messages').select('message_id').in('message_id',rows.map(row=>row.id)):null
         if(removed?.error){inform('Could not search this conversation.');return}
         const hiddenIds=new Set(removed?.data?.map(row=>row.message_id))
@@ -870,7 +924,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
               if (error) inform('Could not load edit history.')
               else setHistory(data)
             }}>Edited</button>}
-            {!message.revoked_at && (own ? read ? <CheckCheck size={15} aria-label="Read" /> : <Check size={13} aria-label="Sent" /> :
+            {!message.revoked_at && (own ? <span>{read?'Read':message.delivered_at?'Delivered':'Sent'}</span> :
               <button className="small-icon" title="Report message" aria-label="Report message" onClick={() => onReport(message,file)}><Flag size={13} /></button>)}
             <details className="message-menu">
               <summary className="small-icon" aria-label="Message actions" title="Message actions"><MoreHorizontal size={17}/></summary>
@@ -898,6 +952,26 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
           </div>
         </div>
       })}
+      {results===null&&[...outbox,...pendingText].map(item=><div className="message own" key={item.id}>
+        <div className="message-reaction-header"><strong className="message-sender">{selfName} (you)</strong></div>
+        <div className="bubble">{item.body&&<EmojiText value={item.body}/>}
+          {item.file&&<span className="attachment-file"><Paperclip size={16}/>{item.file.name}</span>}
+        </div>
+        <div className="message-meta">
+          <time dateTime={item.at}>{formatTime(item.at)}</time>
+          <span role="status">{item.state==='queued'?'Queued':item.state==='sent'?'Sent':item.state==='damaged'?'Could not recover':'Failed to send'}</span>
+          {item.state==='failed'&&
+            <button type="button" className="text-button" disabled={busy||blocked} onClick={()=>{
+              if(item.file)void transmit(item)
+              else void offlineMessages.retry(item.id).catch(()=>inform('Could not retry the queued message.'))
+            }}>Retry message</button>}
+          {(item.state==='failed'||item.state==='damaged')&&
+            <button type="button" className="text-button" onClick={()=>{
+              if(item.file)setOutbox(previous=>previous.filter(entry=>entry.id!==item.id))
+              else void offlineMessages.dismiss(item.id).catch(()=>inform('Could not dismiss the queued message.'))
+            }}>Dismiss</button>}
+        </div>
+      </div>)}
     </div>
     {activity?.typing_until && Date.parse(activity.typing_until) > clock && <p className="thread-typing" role="status">Contact is typing…</p>}
     {removing&&<Dialog title={removing.action==='hide'?'Delete for me?':'Revoke for everyone?'} close={()=>setRemoving(null)}>

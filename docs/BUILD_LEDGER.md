@@ -22,6 +22,12 @@
 | P5 | Add a separate admin audit search with workspace scoping | `tests/v6-audit-search-database.sql` and two-browser admin and member verification |
 | P5 | Schedule recurring meetings and export calendar invites with scoped join links | Recurrence SQL fixture, ICS unit check and browser download and link tests |
 | P5 | Preserve room threads after a parent is edited, deleted or redacted | Room thread SQL fixture and two-browser edit, follow and redaction checks |
+| P5 | Share a permission-scoped active workspace across collaboration views | Membership SQL fixture and workspace switching, immediate role removal and account isolation browser checks |
+| P5 | Add direct-message delivery acknowledgments and stable-ID retry | Delivery SQL fixture and two-browser queued-through-read checks |
+| P5 | Persist offline text and replies with account-local encryption and replay on reconnect | Browser reload, lost-response deduplication, account switch, blocked retry, and damaged-entry checks |
+| P5 | Issue per-call ICE credentials and renew short leases | Active-call SQL fixture and local browser test for signature, TTL and renewal |
+| P5 | Authorize and audit short-lived attachment downloads | Signing unit test, permission SQL, successful local byte retrieval and download audit records |
+| P5 | Validate stored attachment bytes before publishing a chat message | File-type unit test, normal composer upload and rejection of mismatched bytes and raw RPC bypass |
 | P10 | Add public vulnerability disclosure routes and repository reporting guidance | Unit and production HTTP tests passed with local configuration. A monitored contact is pending for v6. |
 | P10 | Add portable PostgreSQL backup and restore verification | Disposable recovery drill passed. Managed PITR, private Storage, Auth and cutover rehearsal are pending. |
 | P10 | Add in-product help and a keyboard shortcut sheet | Fresh-account browser onboarding, empty Inbox, keyboard and mobile help checks |
