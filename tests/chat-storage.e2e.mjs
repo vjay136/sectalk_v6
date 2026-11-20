@@ -230,6 +230,28 @@ if(app) {
       await receiverTask.getByRole('button',{name:'Source',exact:true}).click()
       await receiverTask.getByText('The source message is no longer available. The task record remains.',{exact:true}).waitFor()
       console.log('Passed room and chat task tabs, board, calendar, source, assignment, watching, audit, and live completion notice.')
+
+      await second.getByRole('button',{name:'Notifications',exact:true}).click()
+      const categories=second.getByRole('group',{name:'Notification categories'})
+      await categories.getByRole('button',{name:'Meetings',exact:true}).click()
+      await second.getByRole('button',{name:'Unread',exact:true}).click()
+      await second.getByText('You have no unread notifications.',{exact:true}).waitFor()
+      const startsAt=Date.now()+60_000
+      data(await sender.client.rpc('st_v3_schedule',{
+        p_workspace:workspace,p_title:'Browser notification meeting',p_agenda:'',
+        p_start:new Date(startsAt).toISOString(),p_end:new Date(startsAt+60*60_000).toISOString(),p_id:randomUUID(),
+      }))
+      const meetingNotice=second.locator('article').filter({hasText:'Browser notification meeting'})
+      await meetingNotice.getByText('A workspace meeting was scheduled',{exact:true}).waitFor()
+      await meetingNotice.getByRole('button',{name:'Mark read',exact:true}).click()
+      await second.getByText('You have no unread notifications.',{exact:true}).waitFor()
+      await second.getByRole('button',{name:'All updates',exact:true}).click()
+      await meetingNotice.waitFor()
+      assert.equal(await meetingNotice.getByRole('button',{name:'Mark read',exact:true}).count(),0)
+      await categories.getByRole('button',{name:'Task updates',exact:true}).click()
+      await second.getByRole('button',{name:'Unread task updates',exact:true}).waitFor()
+      await meetingNotice.waitFor({state:'detached'})
+      console.log('Passed live meeting notification, read and unread filters, and notification grouping.')
       await first.getByRole('button',{name:'Inbox',exact:true}).click()
     }
     await first.getByRole('button',{name:'Find Friends',exact:true}).first().click()

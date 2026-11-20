@@ -76,7 +76,7 @@ Status is conservative. Rows require verification against the complete registry 
 | PRES-01 | Online/away/busy/offline with rate-limited heartbeats | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
 | PRES-02 | Custom status + schedule/DND integration | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
 | PRES-03 | Presence privacy controls (user + org policy; invisible mode where policy allows) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
-| NOTIF-01 | In-app notification center (read/unread, grouping) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| NOTIF-01 | In-app notification center (read/unread, grouping) | Signed-in notification recipients | Notifications, Meetings and Task updates | Recipient-scoped RLS and mark-read RPCs | Realtime meeting and task notices | tests/v3-database.sql, tests/v6-tasks-database.sql and tests/chat-storage.e2e.mjs | DONE | Browser verified category grouping, live meeting and task updates, and persistent read state. SQL checked recipient isolation. |
 | NOTIF-02 | Web push (VAPID), privacy-preserving payloads (no plaintext for E2EE) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | NOTIF-03 | Email notifications and digests | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | NOTIF-04 | Per-category preferences (DM, mention, thread, task, call, security, billing, admin) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |

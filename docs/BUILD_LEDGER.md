@@ -10,6 +10,7 @@
 | P5 | Add scoped thread replies, synchronized reply counts and private follow/unfollow | `tests/v6-rooms-database.sql`, two-browser thread checks |
 | P5 | Add account-private saved search terms and filters | `tests/v6-database.sql`, browser save, run and remove flow |
 | P5 | Add scoped tasks, assignment, watchers, source links, audited transitions and deadline reminders | `tests/v6-tasks-database.sql`, two-browser workflow and local scheduler |
+| P5 | Group live meeting and task notifications and verify read state | `tests/chat-storage.e2e.mjs`, meeting and task recipient SQL fixtures |
 | P10 | Add a public status page and installable PWA with an offline shell | Local HTTP probes and `tests/pwa.e2e.mjs` |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
