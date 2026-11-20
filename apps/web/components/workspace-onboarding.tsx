@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
 
 type Template={id:string;label:string;restricted:boolean}
+type ComplianceProfile={id:string;label:string;room_kinds:string[];invite_hours:number;individual_admission:boolean}
 type Step='type'|'name'|'review'
 
 export function WorkspaceOnboarding({openByDefault,onCreated}:{
@@ -11,23 +12,29 @@ export function WorkspaceOnboarding({openByDefault,onCreated}:{
 }){
   const [open,setOpen]=useState(openByDefault)
   const [templates,setTemplates]=useState<Template[]|null>(null)
+  const [profiles,setProfiles]=useState<ComplianceProfile[]>([])
   const [step,setStep]=useState<Step>('type')
   const [type,setType]=useState('')
+  const [profile,setProfile]=useState('')
   const [name,setName]=useState('')
   const [error,setError]=useState('')
   const [busy,setBusy]=useState(false)
   const [tries,setTries]=useState(0)
   const request=useRef<{id:string;key:string}|null>(null)
   const selected=templates?.find(template=>template.id===type)
+  const selectedProfile=profiles.find(option=>option.id===profile)
 
   useEffect(()=>{
     if(!open)return
     let mounted=true
     async function read(){
-      const {data,error}=await db!.from('st_v6_workspace_templates').select('id,label,restricted').order('sort_order').returns<Template[]>()
+      const [templates,profiles]=await Promise.all([
+        db!.from('st_v6_workspace_templates').select('id,label,restricted').order('sort_order').returns<Template[]>(),
+        db!.from('st_v6_compliance_profiles').select('id,label,room_kinds,invite_hours,individual_admission').order('sort_order').returns<ComplianceProfile[]>(),
+      ])
       if(!mounted)return
-      if(error){setError('Could not load workspace types.');return}
-      setTemplates(data);setError('')
+      if(templates.error||profiles.error){setError('Could not load workspace types and profiles.');return}
+      setTemplates(templates.data);setProfiles(profiles.data);setError('')
     }
     void read()
     return()=>{mounted=false}
@@ -41,15 +48,18 @@ export function WorkspaceOnboarding({openByDefault,onCreated}:{
     const displayName=name.trim()
     if(!displayName){setError('Enter a workspace name.');return}
     if(step==='name'){setStep('review');return}
-    const key=JSON.stringify([type,displayName])
+    const key=JSON.stringify([type,displayName,profile])
     if(request.current?.key!==key)request.current={id:crypto.randomUUID(),key}
     setBusy(true)
     try{
-      const {data,error}=await db!.rpc('st_v6_create_typed_workspace',{p_id:request.current.id,p_name:displayName,p_type:type})
+      const params={p_id:request.current.id,p_name:displayName,p_type:type}
+      const {data,error}=profile?
+        await db!.rpc('st_v6_create_profiled_workspace',{...params,p_profile:profile}):
+        await db!.rpc('st_v6_create_typed_workspace',params)
       if(error)throw error
       await onCreated(data)
       request.current=null
-      setStep('type');setName('');setType('');setOpen(false)
+      setStep('type');setName('');setType('');setProfile('');setOpen(false)
     }catch(error){setError(formatError(error,'Could not create the workspace.'))}
     finally{setBusy(false)}
   }
@@ -69,12 +79,22 @@ export function WorkspaceOnboarding({openByDefault,onCreated}:{
       {step==='name'&&<>
         <h3>Name your workspace</h3>
         <label>Workspace name<input required maxLength={64} value={name} onChange={event=>setName(event.target.value)}/></label>
+        <label>Compliance profile<select value={profile} onChange={event=>setProfile(event.target.value)}>
+          <option value="">Use workspace type defaults</option>
+          {profiles.map(option=><option value={option.id} key={option.id}>{option.label}</option>)}
+        </select></label>
       </>}
       {step==='review'&&selected&&<>
         <h3>Review workspace setup</h3>
         <p><strong>{name.trim()}</strong> · {selected.label}</p>
-        <p>Default policy {selected.restricted?'requires private or admin-only rooms and individual meeting admission.':
-          'allows all available room types and lets meeting hosts admit eligible attendees together.'}</p>
+        {selectedProfile?<ul>
+          <li><strong>{selectedProfile.label}</strong> setup profile</li>
+          <li>Room types: {selected.restricted||!selectedProfile.room_kinds.includes('announcement')?
+            'Private and admin-only':'Private, admin-only and announcement'}</li>
+          <li>Meeting admission: {selected.restricted||selectedProfile.individual_admission?'individual':'individual or bulk'}</li>
+          <li>Email links require an approved domain and expire in at most {selectedProfile.invite_hours} hours.</li>
+        </ul>:<p>Default policy {selected.restricted?'requires private or admin-only rooms and individual meeting admission.':
+          'allows all available room types and lets meeting hosts admit eligible attendees together.'}</p>}
       </>}
       {error&&<p className="error" role="alert">{error}</p>}
       <div className="action-row">

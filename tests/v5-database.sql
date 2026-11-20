@@ -59,7 +59,9 @@ begin
   perform public.st_send(chat,text_key,'Initial private text');
   perform public.st_v2_edit_message(text_key,'Edited private text');
   if public.st_v5_stage_file(chat,file_key,'test.txt',10) then raise exception 'New attachment already uploaded'; end if;
+  set local role service_role;
   insert into storage.objects(bucket_id,name,metadata) values('sectalk-chat-files',file_key::text,'{"size":10}'::jsonb);
+  set local role authenticated;
   if public.st_v6_pending_file(file_key)->>'filename' is distinct from 'test.txt'
     then raise exception 'Pending owner could not resolve validation metadata'; end if;
   if has_function_privilege('public.st_v5_send_file(uuid,text)','EXECUTE')

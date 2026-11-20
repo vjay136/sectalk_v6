@@ -8,6 +8,7 @@ import { Inbox } from '../components/inbox'
 import { useLocale } from '../components/locale-provider'
 import { WorkspaceContextProvider } from '../components/workspace-context'
 import { SignInMfa } from '../components/account-mfa'
+import { unsubscribeBrowserPush } from '../components/web-push-settings'
 
 type Access = { user: string; state: 'allowed' | 'challenge' | 'error' }
 
@@ -25,7 +26,10 @@ export default function Home() {
     if (!db) return
     const { data } = db.auth.onAuthStateChange((event, value) => {
       if (event === 'PASSWORD_RECOVERY') setRecovering(true)
-      if (event === 'SIGNED_OUT') setRecovering(false)
+      if (event === 'SIGNED_OUT') {
+        setRecovering(false)
+        void unsubscribeBrowserPush().catch(() => undefined)
+      }
       if (!value) setAccess(null)
       else if (event === 'SIGNED_IN') setAuthenticatorReset(false)
       setSession(value)

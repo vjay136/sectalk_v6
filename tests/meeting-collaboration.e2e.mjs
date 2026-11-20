@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { ConnectionQuality, SignalRequest, SignalResponse, VideoQuality } from '@livekit/protocol'
+import { watchCallQos } from './helpers/call-qos.mjs'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
@@ -44,6 +45,9 @@ link.searchParams.set('meeting', meeting)
 const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
 const testBlur = process.env.SECTALK_TEST_BACKGROUND_BLUR === '1'
 const testSharing = process.env.SECTALK_TEST_SCREEN_SHARE === '1'
+const testQuality = process.env.SECTALK_TEST_QOS === '1'
+const testAnalytics = process.env.SECTALK_TEST_ANL_02 === '1'
+const samples = new WeakMap()
 const browser = await chromium.launch({
   executablePath: process.env.SECTALK_TEST_BROWSER,
   args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
@@ -56,6 +60,7 @@ const videoSettings = []
 const subscriptions = []
 async function open(person) {
   const page = await browser.newPage({ locale: 'en-US', permissions: ['microphone', 'camera'] })
+  if (testQuality) samples.set(page, watchCallQos(page, 'meeting'))
   page.on('console', event => {
     if (event.type() === 'error') diagnostics.push(person.name + ' ' + event.text())
   })
@@ -246,6 +251,13 @@ try {
   }
   await Promise.all([hostPage, guestPage].map(page => button(page, 'Join audio and video').click()))
   await Promise.all([tile(hostPage, guest.name).waitFor(), tile(guestPage, host.name).waitFor()])
+  if (testQuality) for (const page of [hostPage, guestPage]) {
+    assert.match(await samples.get(page)('setup'), /^(fast|moderate|slow)$/)
+    if (testAnalytics) {
+      assert.equal(await samples.get(page)('join', 'started', false), 'started')
+      assert.equal(await samples.get(page)('join', 'connected'), 'connected')
+    }
+  }
   if (testBlur) {
     await guestPage.waitForSelector('button[data-lk-source="camera"][aria-pressed="true"]')
     await tile(hostPage, guest.name).locator('video').waitFor()
@@ -310,6 +322,10 @@ try {
   }, host.name)
   await microphone.click()
   await hostPage.waitForSelector('button[data-lk-source="microphone"][aria-pressed="true"]')
+  if (testQuality) for (const page of [hostPage, guestPage]) {
+    assert.match(await samples.get(page)('relay'), /^(relayed|non_relayed)$/)
+  }
+  if (testQuality && testAnalytics) assert.match(await samples.get(guestPage)('mos'), /^(below_2|2_to_3|3_to_4|4_or_more)$/)
   await guestPage.waitForFunction(() => [...document.querySelectorAll('.meeting-media audio')].some(audio =>
     audio.srcObject?.getAudioTracks().length && audio.currentTime > 0))
   await tile(guestPage, host.name).locator('[data-lk-muted=true]').waitFor({ state: 'detached' })
@@ -376,3 +392,4 @@ try {
 console.log('Passed pre-join device tests, network probe, ' + (testBlur ? 'live background blur' : 'background blur fallback') +
   (testSharing ? ', screen video and audio, one-presenter enforcement, and capture and permission loss' : '') +
   ', two-browser roster, chat, camera and microphone, quality adaptation, audio-only recovery, pin, spotlight, and access cleanup.')
+if (testQuality) console.log('Passed LiveKit setup and selected ICE route sample privacy and delivery.')

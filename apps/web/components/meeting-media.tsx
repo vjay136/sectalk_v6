@@ -2,18 +2,79 @@
 
 import {
   CarouselLayout, ConnectionStateToast, ControlBar, FocusLayout, FocusLayoutContainer,
-  GridLayout, LiveKitRoom, ParticipantTile, RoomAudioRenderer, useTracks,
+  GridLayout, LiveKitRoom, ParticipantTile, RoomAudioRenderer, useRoomContext, useTracks,
 } from '@livekit/components-react'
-import { Track } from 'livekit-client'
+import { ConnectionError, ConnectionState, DisconnectReason, RoomEvent, Track } from 'livekit-client'
 import { MoreHorizontal, Signal, VideoOff } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import '@livekit/components-styles'
+import { createCallQos } from '../lib/call-qos'
 import { useMeetingNetwork } from './meeting-network'
 import { deviceConstraint, type MeetingChoices } from './meeting-prejoin'
 import { MeetingScreenShare } from './meeting-screen-share'
 import styles from './meeting-media.module.css'
 
-function ConferenceStage({ focus, meeting }: { focus: string | null; meeting: string }) {
+function MeetingQosObserver({ qos }: { qos: ReturnType<typeof createCallQos> }) {
+  const room = useRoomContext()
+  useEffect(() => {
+    let active = true
+    let attempts = 0
+    let timer: number | undefined
+    let mosAttempts = 0
+    let mosTimer: number | undefined
+    qos.started()
+    async function readStats() {
+      // The pinned LiveKit SDK uses these transports for its own WebRTC stats snapshots.
+      const transports = room.engine?.pcManager
+      const reads = [transports?.publisher, transports?.subscriber].map(async transport => transport?.getStats())
+      const results = await Promise.allSettled(reads)
+      return results.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
+    }
+    async function sampleRoute() {
+      if (!active || attempts >= 3) return
+      attempts++
+      const stats = await readStats()
+      if (!active) return
+      if (!qos.route(...stats) && attempts < 3) timer = window.setTimeout(() => void sampleRoute(), 400)
+    }
+    async function sampleAudio() {
+      if (!active || mosAttempts >= 3) return
+      mosAttempts++
+      const stats = await readStats()
+      if (active && !qos.mos(...stats) && mosAttempts < 3) mosTimer = window.setTimeout(() => void sampleAudio(), 2500)
+    }
+    function subscribed(track: Track) {
+      if (track.source === Track.Source.Microphone && mosTimer === undefined) {
+        mosTimer = window.setTimeout(() => void sampleAudio(), 2500)
+      }
+    }
+    function connected() {
+      if (attempts === 0) void sampleRoute()
+    }
+    room.on(RoomEvent.Connected, connected)
+    room.on(RoomEvent.Reconnecting, qos.reconnecting)
+    room.on(RoomEvent.SignalReconnecting, qos.reconnecting)
+    room.on(RoomEvent.Reconnected, qos.connected)
+    room.on(RoomEvent.TrackSubscribed, subscribed)
+    if (room.state === ConnectionState.Connected) connected()
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+      window.clearTimeout(mosTimer)
+      room.off(RoomEvent.Connected, connected)
+      room.off(RoomEvent.Reconnecting, qos.reconnecting)
+      room.off(RoomEvent.SignalReconnecting, qos.reconnecting)
+      room.off(RoomEvent.Reconnected, qos.connected)
+      room.off(RoomEvent.TrackSubscribed, subscribed)
+    }
+  }, [qos, room])
+  return null
+}
+
+const networkDisconnects = new Set<DisconnectReason>([DisconnectReason.JOIN_FAILURE, DisconnectReason.SIGNAL_CLOSE,
+  DisconnectReason.STATE_MISMATCH, DisconnectReason.CONNECTION_TIMEOUT, DisconnectReason.MEDIA_FAILURE])
+
+function ConferenceStage({ focus, meeting, screenShareDisabled }: { focus: string | null; meeting: string; screenShareDisabled: boolean }) {
   const network = useMeetingNetwork()
   const tracks = useTracks([
     { source: Track.Source.Camera, withPlaceholder: true },
@@ -45,7 +106,8 @@ function ConferenceStage({ focus, meeting }: { focus: string | null; meeting: st
       </div> : <div className={`lk-grid-layout-wrapper ${styles.videoStage}`}>
         <GridLayout tracks={tracks}><ParticipantTile/></GridLayout>
       </div>}
-      <MeetingScreenShare meeting={meeting} presenting={tracks.some(track => track.source === Track.Source.ScreenShare && !track.participant.isLocal)}/>
+      <MeetingScreenShare meeting={meeting} disabled={screenShareDisabled}
+        presenting={tracks.some(track => track.source === Track.Source.ScreenShare && !track.participant.isLocal)}/>
       <ControlBar controls={{ microphone: true, camera: true, screenShare: false, chat: false, leave: true }}
         saveUserChoices={false}/>
     </div>
@@ -54,10 +116,11 @@ function ConferenceStage({ focus, meeting }: { focus: string | null; meeting: st
   </div>
 }
 
-export default function MeetingMedia({ url, token, focus, choices, meeting, leave }: {
-  url: string; token: string; focus: string | null; choices: MeetingChoices; meeting: string; leave: () => void
+export default function MeetingMedia({ url, token, focus, choices, meeting, screenShareDisabled, leave }: {
+  url: string; token: string; focus: string | null; choices: MeetingChoices; meeting: string; screenShareDisabled: boolean; leave: () => void
 }) {
   const [mediaError, setMediaError] = useState('')
+  const [qos] = useState(() => createCallQos('meeting', meeting))
   const configuredRoom = {
     ...roomOptions,
     audioCaptureDefaults: { deviceId: deviceConstraint(choices.microphone) },
@@ -71,10 +134,17 @@ export default function MeetingMedia({ url, token, focus, choices, meeting, leav
       <div className="message-menu-panel"><button className="text-button remove-text" type="button" onClick={leave}>Disconnect from media</button></div>
     </details>
     <LiveKitRoom serverUrl={url} token={token} connect audio={choices.audio} video={choices.video}
-      options={configuredRoom} onDisconnected={leave}
+      options={configuredRoom} onConnected={qos.connected} onDisconnected={reason => {
+        if (reason !== undefined && networkDisconnects.has(reason)) qos.failed()
+        leave()
+      }}
       onMediaDeviceFailure={() => setMediaError('A selected media device could not start. Check your permissions and devices.')}
-      onError={() => setMediaError('Could not start meeting media. Check your devices or reconnect.')}>
-      <ConferenceStage focus={focus} meeting={meeting}/>
+      onError={error => {
+        if (error instanceof ConnectionError) qos.failed()
+        setMediaError('Could not start meeting media. Check your devices or reconnect.')
+      }}>
+      <MeetingQosObserver qos={qos}/>
+      <ConferenceStage focus={focus} meeting={meeting} screenShareDisabled={screenShareDisabled}/>
     </LiveKitRoom>
   </div>
 }

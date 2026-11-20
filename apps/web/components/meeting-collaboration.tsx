@@ -8,8 +8,8 @@ type Participant = { user_id: string; name: string; is_host: boolean }
 type ChatMessage = { id: string; user_id: string; author_name: string; body: string; sent_at: string }
 const tabs = [['participants', 'Participants'], ['chat', 'In-call chat']] as const
 
-export function MeetingCollaboration({ meeting, user, host, setFocus }: {
-  meeting: string; user: string; host: boolean; setFocus: (value: string | null) => void
+export function MeetingCollaboration({ meeting, user, host, chatDisabled, setFocus }: {
+  meeting: string; user: string; host: boolean; chatDisabled: boolean; setFocus: (value: string | null) => void
 }) {
   const [tab, setTab] = useState<'participants' | 'chat'>('participants')
   const [roster, setRoster] = useState<Participant[] | null>(null)
@@ -69,7 +69,7 @@ export function MeetingCollaboration({ meeting, user, host, setFocus }: {
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const body = draft.trim()
-    if (!body || busy) return
+    if (!body || busy || chatDisabled) return
     setBusy(true)
     setActionError('')
     const message = pendingMessage.current?.body === body
@@ -139,11 +139,12 @@ export function MeetingCollaboration({ meeting, user, host, setFocus }: {
           <p>{message.body}</p>
         </li>)}</ol> : <p>No meeting messages yet.</p>}
       </div>
+      {chatDisabled && <p role="status">Meeting chat is disabled.</p>}
       <form onSubmit={send} className="meeting-chat-form">
         <label>Message to meeting
-          <input value={draft} onChange={event => setDraft(event.target.value)} maxLength={1000} disabled={!roster || busy}/>
+          <input value={draft} onChange={event => setDraft(event.target.value)} maxLength={1000} disabled={!roster || busy || chatDisabled}/>
         </label>
-        <button className="primary" type="submit" disabled={!roster || busy || !draft.trim()}>Send message</button>
+        <button className="primary" type="submit" disabled={!roster || busy || chatDisabled || !draft.trim()}>Send message</button>
       </form>
     </section>}
   </section>

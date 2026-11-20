@@ -30,7 +30,7 @@ async function updateShare(meeting: string, leaseId: string, action: 'claim' | '
   throw new Error(body?.error || 'Screen sharing is unavailable.')
 }
 
-export function MeetingScreenShare({ meeting, presenting }: { meeting: string; presenting: boolean }) {
+export function MeetingScreenShare({ meeting, presenting, disabled }: { meeting: string; presenting: boolean; disabled: boolean }) {
   const room = useRoomContext()
   const participant = room.localParticipant
   const [audio, setAudio] = useState(false)
@@ -94,8 +94,13 @@ export function MeetingScreenShare({ meeting, presenting }: { meeting: string; p
     }
   }, [room, participant, stop])
 
+  useEffect(() => {
+    if (disabled) void stop('Screen sharing stopped by a moderator.')
+    else setNotice(previous => previous === 'Screen sharing stopped by a moderator.' ? '' : previous)
+  }, [disabled, stop])
+
   async function share() {
-    if (active.current || !supported || presenting || !connected) return
+    if (active.current || disabled || !supported || presenting || !connected) return
     const session: ScreenSession = { id: crypto.randomUUID(), tracks: [], publishing: false }
     active.current = session
     setPhase('starting')
@@ -154,16 +159,16 @@ export function MeetingScreenShare({ meeting, presenting }: { meeting: string; p
   }
 
   return <div className={styles.screenShare}>
-    <button className="secondary" type="button" disabled={phase === 'starting' || phase === 'stopping' ||
+    <button className="secondary" type="button" disabled={disabled || phase === 'starting' || phase === 'stopping' ||
       (phase === 'idle' && (!supported || !connected || presenting))}
       onClick={() => phase === 'sharing' ? void stop('Screen sharing stopped.') : void share()}>
       <MonitorUp size={16} aria-hidden="true"/>
       {phase === 'sharing' ? 'Stop sharing screen' : phase === 'starting' ? 'Starting screen share…' : 'Share screen'}
     </button>
-    {phase === 'idle' && supported && !presenting && <label><input type="checkbox" checked={audio}
+    {phase === 'idle' && supported && !presenting && !disabled && <label><input type="checkbox" checked={audio}
       onChange={event => setAudio(event.target.checked)}/> Share audio when available</label>}
-    {phase === 'idle' && supported && !presenting && <span>Choose a tab, window, or screen.</span>}
-    <span role="status">{presenting ? 'Someone is already presenting.'
+    {phase === 'idle' && supported && !presenting && !disabled && <span>Choose a tab, window, or screen.</span>}
+    <span role="status">{disabled ? 'Screen sharing is disabled for this meeting.' : presenting ? 'Someone is already presenting.'
       : notice || (!supported ? 'Screen sharing is unavailable in this browser.' : '')}</span>
   </div>
 }

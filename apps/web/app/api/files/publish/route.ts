@@ -1,3 +1,4 @@
+import { withOperationalMetrics } from '../../../../lib/operational-metrics-server'
 import { createHash } from 'node:crypto'
 import { authenticateFileRequest, fileFailure, fileHeaders } from '../../../../lib/authenticated-file-request'
 import { validFileId } from '../../../../lib/file-download-ticket'
@@ -5,7 +6,7 @@ import { allowedFileType } from '../../../../lib/file-type-policy'
 
 export const runtime='nodejs'
 
-export async function POST(request:Request){
+async function handlePost(request:Request){
   const auth=await authenticateFileRequest(request)
   if(auth instanceof Response)return auth
   const input=await request.json().catch(()=>null)
@@ -25,6 +26,12 @@ export async function POST(request:Request){
   const publication=await auth.storage.rpc('st_v7_publish_hashed_file',{
     p_file:input.file,p_actor:auth.actor,p_caption:input.caption,p_hash:createHash('sha256').update(bytes).digest('hex'),
   })
+  if(publication.error?.code==='PT413')return fileFailure(413,publication.error.message)
+  if(publication.error?.code==='PT409')return fileFailure(409,publication.error.message)
   if(publication.error)return fileFailure(409,'The attachment could not be published.')
   return Response.json(publication.data,{headers:fileHeaders})
+}
+
+export async function POST(request: Request) {
+  return withOperationalMetrics('file_publish', () => handlePost(request))
 }

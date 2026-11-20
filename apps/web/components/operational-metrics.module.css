@@ -1,0 +1,23 @@
+.scroll {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  text-align: right;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(th, td) {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.table :is(th, td):first-child {
+  text-align: left;
+}
+
+.table td {
+  white-space: nowrap;
+}

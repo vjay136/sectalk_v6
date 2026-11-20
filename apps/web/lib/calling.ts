@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { db, formatError, liveChannel, onReconnect, type Call } from './data'
+import { createCallQos } from './call-qos'
 
 type Signal = {
   id: string; sender: string; kind: 'offer' | 'answer' | 'ice'; created_at: string
@@ -232,6 +233,8 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   useEffect(() => {
     if (!activeId || !local) return
     const callId = activeId
+    const qos = createCallQos('direct', callId, device, isCaller)
+    qos.started()
     let disposed = false
     let pc: RTCPeerConnection | undefined
     let retry: number | undefined
@@ -248,9 +251,13 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     const arriving = new Map<string, Signal>()
     let pending: RTCIceCandidateInit[] = []
     let remoteUfrags = new Set<string>()
+    let routeSampled = false
+    let mosTimer: number | undefined
+    let mosAttempts = 0
 
     function fail(message: string) {
       if (disposed) return
+      qos.failed()
       notice(message)
       void end()
     }
@@ -292,6 +299,16 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       const description = await peer.createOffer(restart ? { iceRestart: true } : {})
       await peer.setLocalDescription(description)
       await transmit('offer', description)
+      if (restart && !disposed) qos.iceRestart()
+    }
+
+    async function sampleAudioQuality(peer: RTCPeerConnection) {
+      if (disposed || mosAttempts >= 3) return
+      mosAttempts++
+      const stats = await peer.getStats().catch(() => undefined)
+      if (!disposed && !qos.mos(stats) && mosAttempts < 3) {
+        mosTimer = window.setTimeout(() => void sampleAudioQuality(peer), 2500)
+      }
     }
 
     async function readSignals(peer: RTCPeerConnection, signal?: Signal) {
@@ -375,8 +392,17 @@ export function useCalling(user: string, notice: (message: string) => void, hint
           if (disposed) return
           window.clearTimeout(retry)
           setConnection(peer.connectionState)
-          if (peer.connectionState === 'connected') window.clearTimeout(timeout)
+          if (peer.connectionState === 'connected') {
+            window.clearTimeout(timeout)
+            qos.connected()
+            if (mosTimer === undefined) mosTimer = window.setTimeout(() => void sampleAudioQuality(peer), 2500)
+            if (!routeSampled) {
+              routeSampled = true
+              void peer.getStats().then(stats => { if (!disposed) qos.route(stats) }).catch(() => {})
+            }
+          }
           if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') {
+            qos.reconnecting()
             retry = window.setTimeout(() => {
               if (disposed || peer.connectionState === 'connected') return
               if (isCaller && peer.signalingState === 'stable') {
@@ -415,6 +441,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       window.clearTimeout(timeout)
       window.clearInterval(polling)
       window.clearTimeout(iceTimer)
+      window.clearTimeout(mosTimer)
       removeChannel?.()
       removeHint?.()
       if (activePeer.current === pc) activePeer.current = null

@@ -12,6 +12,8 @@ const admin = createClient(supabase.origin, process.env.SECTALK_STORAGE_TEST_SER
 const client = createClient(supabase.origin, process.env.SECTALK_STORAGE_TEST_PUBLIC_KEY, options)
 const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
 const run = randomUUID().slice(0, 8)
+const testQuality = process.env.SECTALK_TEST_QOS === '1'
+const testAdvancedQuality = process.env.SECTALK_TEST_ANL_02 === '1'
 const handle = 'analytics_' + run
 const email = handle + '@example.org'
 const password = randomUUID() + '1!Q'
@@ -142,8 +144,36 @@ try {
   assert.deepEqual(Object.keys(latency).sort(), ['available', 'p50', 'p95', 'p99', 'through'])
 
   const usageInitial = waitForAggregate(page, 'st_v6_usage_metrics')
+  if (testQuality) sql(`
+    insert into sectalk_private.st_v6_call_qos (day,event_key,reporter_key,mode,metric,bucket)
+    select (now() at time zone 'UTC')::date-1, extensions.digest('qos-ui-event-${run}-'||n,'sha256'),
+      extensions.digest('qos-ui-reporter-${run}-'||(n%5),'sha256'), 'meeting', 'setup', 'fast'
+    from generate_series(1,10) n;
+  `)
+  if (testAdvancedQuality) sql(`
+    insert into sectalk_private.st_v6_call_qos (day,event_key,reporter_key,mode,metric,bucket)
+    select (now() at time zone 'UTC')::date-1, extensions.digest('qos-anl-${run}-'||metric||n,'sha256'),
+      extensions.digest('qos-anl-person-${run}-'||(n%5),'sha256'), mode,metric,bucket
+    from (values ('meeting','join','connected'), ('meeting','relay','relayed'), ('meeting','mos','4_or_more'),
+      ('direct','ice_restart','not_requested')) as fixture(mode,metric,bucket) cross join generate_series(1,10) n;
+  `)
   await page.getByRole('button', { name: 'Usage metrics', exact: true }).click()
-  const usageBaseline = (await (await usageInitial).json()).metrics.messages ?? 0
+  const usageSnapshot = await (await usageInitial).json()
+  const usageBaseline = usageSnapshot.metrics.messages ?? 0
+  if (testQuality) {
+    assert.ok(usageSnapshot.qos.metrics['meeting:setup:fast'] >= 10)
+    await page.getByRole('region', { name: 'Call quality' })
+      .getByText('Connected in under 2 seconds', { exact: true }).waitFor()
+  }
+  if (testAdvancedQuality) {
+    const quality = page.getByRole('region', { name: 'Call quality' })
+    for (const label of ['Join success', 'TURN relay use', 'Application ICE restart rate', 'Audio MOS proxy of 4 or above']) {
+      await quality.getByText(label, { exact: true }).first().waitFor()
+    }
+    assert.equal(usageSnapshot.qos.rates['meeting:join'].positive, usageSnapshot.qos.rates['meeting:join'].sampled)
+    assert.ok(usageSnapshot.qos.rates['meeting:relay'].sampled >= 10)
+    assert.equal(usageSnapshot.qos.rates['direct:ice_restart'].percent, 0)
+  }
   const usageUpdated = waitForAggregate(page, 'st_v6_usage_metrics', result => result.metrics.messages >= usageBaseline + 20)
   writeMessages(null, true)
   const updatedUsage = (await (await usageUpdated).json()).metrics.messages
@@ -172,6 +202,13 @@ try {
   sql(`delete from public.st_messages where chat_id in (${chats});
     delete from public.st_chats where id in (${chats});
     delete from auth.users where id in (${actors});
+    ${testQuality ? `delete from sectalk_private.st_v6_call_qos where event_key in (
+      select extensions.digest('qos-ui-event-${run}-'||n,'sha256') from generate_series(1,10) n
+    );` : ''}
+    ${testAdvancedQuality ? `delete from sectalk_private.st_v6_call_qos where event_key in (
+      select extensions.digest('qos-anl-${run}-'||metric||n,'sha256')
+      from (values ('join'), ('relay'), ('mos'), ('ice_restart')) as fixture(metric) cross join generate_series(1,10) n
+    );` : ''}
     ${staffId ? `delete from realtime.messages where topic='st:analytics:${staffId}';
       delete from sectalk_private.staff where user_id='${staffId}';` : ''}`)
   if (staffId) data(await admin.auth.admin.deleteUser(staffId))

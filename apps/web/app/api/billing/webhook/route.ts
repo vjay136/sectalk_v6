@@ -1,9 +1,10 @@
+import { withOperationalMetrics } from '../../../../lib/operational-metrics-server'
 import type Stripe from 'stripe'
 import { billingWriter, planForPrice, stripe, webhookSecret } from '../../../../lib/stripe-server'
 
 export const runtime = 'nodejs'
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   if (!stripe || !webhookSecret || !billingWriter) return new Response('Billing unavailable', { status: 503 })
   const signature = request.headers.get('Stripe-Signature')
   if (!signature) return new Response('Missing signature', { status: 400 })
@@ -34,4 +35,8 @@ export async function POST(request: Request) {
   } catch {
     return new Response('Provider synchronization failed', { status: 503 })
   }
+}
+
+export async function POST(request: Request) {
+  return withOperationalMetrics('billing_webhook', () => handlePost(request))
 }

@@ -13,12 +13,14 @@ import { RiskFeedback } from './risk-feedback'
 import { TenantOperations } from './tenant-operations'
 import { useAnalyticsStream } from '../lib/live-analytics'
 import { ThreatTrends } from './threat-trends'
+import { OperationalMetrics } from './operational-metrics'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
 type Queue = Report & { subject_handle: string }
 type Case = Queue & {
   details: string; evidence: string | null; suspended_until: string | null
+  message_redaction_available: boolean
   attachment?: ChatFile | null
   history: { id: number; action: string; note: string; created_at: string }[]
 }
@@ -30,6 +32,7 @@ const labels: Record<string, string> = {
   suspend: '24-hour suspension', restore: 'Restriction lifted', viewed: 'Evidence viewed',
   submitted:'Report received', escalated:'Escalated for review', warn:'Account warning issued',
   restrict:'Seven-day restriction', remove:'Indefinite restriction',
+  redacted:'Reported message removed',
 }
 
 function DateLabel({ value }: { value: string }) {
@@ -65,7 +68,7 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 export function Safety({ staff, refresh }: { staff: string; refresh: () => Promise<void> }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations'>('mine')
   const [flagOperator,setFlagOperator]=useState(false)
   const [tenantStatus,setTenantStatus]=useState<'none' | 'mfa' | 'verified'>('none')
   const [selected,setSelected]=useState<Report|null>(null)
@@ -118,7 +121,7 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
     const timer = window.setInterval(update, 15000)
     return () => { current = false; window.clearInterval(timer) }
   }, [refreshTenantStatus])
-  const visibleView=((view==='latency'||view==='usage'||view==='feedback'||view==='trends')&&staff!=='verified')||(view==='queue'&&!staffAccess)
+  const visibleView=((view==='latency'||view==='usage'||view==='feedback'||view==='trends'||view==='operations')&&staff!=='verified')||(view==='queue'&&!staffAccess)
     ||(view==='release'&&!releaseAccess)||(view==='tenants'&&tenantStatus==='none')?'mine':view
 
   return <section className="content-page safety-page">
@@ -126,13 +129,14 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
     <SectionTabs label="Safety center sections" value={visibleView} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
       ['mine','My reports'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
       ...(staff==='verified'?[['latency','Delivery metrics'] as const,['usage','Usage metrics'] as const,
-        ['feedback','Warning feedback'] as const,['trends','Threat trends'] as const]:[]),
+        ['feedback','Warning feedback'] as const,['trends','Threat trends'] as const,['operations','Operational metrics'] as const]:[]),
       ...(releaseAccess?[['release','Release controls'] as const]:[]),
       ...(tenantStatus!=='none'?[['tenants','Tenant operations'] as const]:[]),
     ]}/>
     {visibleView==='latency'?<DeliveryLatency revision={analyticsRevision}/>:visibleView==='usage'?<UsageMetrics revision={analyticsRevision}/>:visibleView==='release'?<ReleaseControls/>:
       visibleView==='feedback'?<RiskFeedback/>:
       visibleView==='trends'?<ThreatTrends/>:
+      visibleView==='operations'?<OperationalMetrics/>:
       visibleView==='tenants' ? (tenantStatus === 'verified'
         ? <TenantOperations onAccessChanged={refreshTenantStatus}/>
         : <StaffMfa refresh={async () => { await refreshTenantStatus(); await refresh() }}
@@ -246,10 +250,16 @@ function QueuePanel() {
     if (!selected || working) return
     const form = event.currentTarget
     const values = new FormData(form)
+    const decision=values.get('action')
     setWorking(true)
     setError('')
-    if(values.get('action')==='remove'&&!window.confirm('Restrict this account until staff restore access?')){setWorking(false);return}
-    const { error } = await db!.rpc('st_v5_moderate', { p_report: selected.id, p_action: values.get('action'), p_note: values.get('reason') })
+    if(decision==='remove'&&!window.confirm('Restrict this account until staff restore access?')){setWorking(false);return}
+    if(decision==='redact_message'&&!window.confirm('Remove this reported message from the conversation and retain the shared evidence?')){
+      setWorking(false);return
+    }
+    const { error } = decision==='redact_message'
+      ?await db!.rpc('st_v6_case_redact',{p_report:selected.id,p_note:values.get('reason')})
+      :await db!.rpc('st_v5_moderate', { p_report: selected.id, p_action: decision, p_note: values.get('reason') })
     if (error) { setError(formatError(error, 'Could not record action.')); setWorking(false); return }
     form.reset()
     await load()
@@ -272,6 +282,7 @@ function QueuePanel() {
       }}>Download shared file</button>}
       <form onSubmit={action}><h3>Record a decision</h3><label>Action<select name="action" required defaultValue="reviewing">
         <option value="reviewing">Mark in review</option><option value="escalated">Escalate for review</option>
+        {selected.message_redaction_available&&<option value="redact_message">Redact reported message</option>}
         <option value="warn">Warn account</option><option value="suspend">Restrict for 24 hours</option>
         <option value="restrict">Restrict for seven days</option><option value="remove">Restrict until restored</option>
         <option value="restore">Lift restriction</option><option value="resolved">Resolve</option><option value="dismissed">Dismiss</option>

@@ -37,7 +37,9 @@ async function connect(sender,recipient){
 async function stage(actor,chat,name,bytes){
   const file=randomUUID()
   data(await actor.client.rpc('st_v5_stage_file',{p_chat:chat,p_id:file,p_filename:name,p_bytes:bytes.length}))
-  data(await actor.client.storage.from(bucket).upload(file,bytes,{contentType:'application/octet-stream'}))
+  const upload=await fetch(app+'/api/files/upload?file='+file,{method:'POST',
+    headers:{Authorization:'Bearer '+actor.token,'Content-Type':'text/plain'},body:bytes})
+  assert.equal(upload.status,200)
   return file
 }
 

@@ -1,3 +1,4 @@
+import { withOperationalMetrics } from '../../../lib/operational-metrics-server'
 import { createHmac } from 'node:crypto'
 import { isIP } from 'node:net'
 import { createClient } from '@supabase/supabase-js'
@@ -19,7 +20,7 @@ function validIceUrl(value: string, relay: boolean) {
   return /^turns?$/i.test(scheme) && !(scheme.toLowerCase() === 'turns' && transport?.toLowerCase() === 'udp')
 }
 
-export async function GET(request: Request) {
+async function handleGet(request: Request) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
   const token = request.headers.get('Authorization')?.match(/^Bearer (\S+)$/i)?.[1]
@@ -68,4 +69,8 @@ export async function GET(request: Request) {
     ttlSeconds = expiry - now
   }
   return Response.json({ iceServers, iceTransportPolicy: relay ? 'relay' : 'all', ttlSeconds }, { headers })
+}
+
+export async function GET(request: Request) {
+  return withOperationalMetrics('call_ice', () => handleGet(request))
 }

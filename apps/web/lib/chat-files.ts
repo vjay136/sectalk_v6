@@ -3,10 +3,31 @@ import { db } from './data'
 export const chatFileLimit = 4 * 1024 * 1024
 export const extensions = '.png,.jpg,.jpeg,.webp,.gif,.pdf,.txt'
 export type ChatFile = { id: string; message_id?: string; filename: string; size_bytes: number }
+export type ChatFileCapacity = {
+  max_file_bytes: number
+  max_storage_bytes: number
+  stored_bytes: number
+  reserved_bytes: number
+}
 
 export function supportedFile(file: File) {
   return file.size > 0 && file.size <= chatFileLimit &&
     /\.(png|jpe?g|webp|gif|pdf|txt)$/i.test(file.name) && [...file.name].length <= 140
+}
+
+export async function getChatFileCapacity() {
+  const { data, error } = await db!.rpc('st_v6_attachment_capacity')
+  return error ? null : data as ChatFileCapacity | null
+}
+
+export function formatChatFileBytes(bytes: number) {
+  const units = ['B', 'KiB', 'MiB', 'GiB']
+  let unit = 0
+  while (bytes >= 1024 && unit < units.length - 1) {
+    bytes /= 1024
+    unit++
+  }
+  return bytes.toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' ' + units[unit]
 }
 
 export async function sendChatFile(chat: string, id: string, file: File, caption: string) {
@@ -14,16 +35,20 @@ export async function sendChatFile(chat: string, id: string, file: File, caption
     p_chat: chat, p_id: id, p_filename: file.name, p_bytes: file.size,
   })
   if (error) throw error
+  const session = await db!.auth.getSession()
+  if (!session.data.session) throw new Error('Sign in to send attachments.')
+  const authorization = { Authorization: 'Bearer ' + session.data.session.access_token }
   if (!uploaded) {
-    const { error } = await db!.storage.from('sectalk-chat-files').upload(id, await file.arrayBuffer(), {
-      contentType: 'application/octet-stream', upsert: false,
+    const upload = await fetch('/api/files/upload?file=' + encodeURIComponent(id), {
+      method: 'POST', headers: {...authorization, 'Content-Type': file.type || 'application/octet-stream'}, body: file,
     })
-    if (error) throw error
+    if (!upload.ok) {
+      const value = await upload.json().catch(() => null)
+      throw new Error(value?.error || 'The attachment could not be uploaded.')
+    }
   }
-  const session=await db!.auth.getSession()
-  if(!session.data.session)throw new Error('Sign in to send attachments.')
   const result=await fetch('/api/files/publish',{
-    method:'POST',headers:{Authorization:'Bearer '+session.data.session.access_token,'Content-Type':'application/json'},
+    method:'POST',headers:{...authorization,'Content-Type':'application/json'},
     body:JSON.stringify({file:id,caption,mime:file.type}),
   })
   if(!result.ok){

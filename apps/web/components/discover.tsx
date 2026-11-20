@@ -6,6 +6,8 @@ import { db, liveChannel, onReconnect } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { TaskNotices } from './scoped-tasks'
 import { AuditSearch, type AuditWorkspace } from './audit-search'
+import { WebPushSettings } from './web-push-settings'
+import { NotificationDelivery } from './notification-delivery'
 
 type Result = { kind:'direct'|'channel'|'room'|'board'|'task'|'meeting'; id:string; scope_id:string; title:string; snippet:string; at:string }
 type SearchKind=Result['kind']|'all'
@@ -349,7 +351,7 @@ export function Notifications({user,hints,openMeeting,openRoom,openChat}: Digest
   user:string;hints:EventTarget;openMeeting:(id:string)=>void
 }) {
   const [items,setItems]=useState<Notification[]|null>(null)
-  const [category,setCategory]=useState<'meetings'|'mentions'|'tasks'|'digest'|'preferences'>('meetings')
+  const [category,setCategory]=useState<'meetings'|'mentions'|'tasks'|'digest'|'delivery'|'preferences'>('meetings')
   const [filter,setFilter]=useState<'all'|'unread'>('all')
   const [headings,setHeadings]=useState<Record<string,string>>({})
   const [error,setError]=useState('')
@@ -395,8 +397,8 @@ export function Notifications({user,hints,openMeeting,openRoom,openChat}: Digest
   if(category==='mentions')visible?.sort((a,b)=>(mentionDetails[b.kind]?.priority||0)-(mentionDetails[a.kind]?.priority||0))
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Bell size={22}/></div><div><h1>Notifications</h1></div></header>
-    <SectionTabs label="Notification categories" value={category} onChange={next=>{if(next!==category){setItems(null);setCategory(next)}}} options={ [['meetings','Meetings'],['mentions','Mentions'],['tasks','Task updates'],['digest','Digest'],['preferences','Preferences']] }/>
-    {category==='preferences'?<NotificationPreferences hints={hints}/>:category==='tasks'?<TaskNotices user={user}/>:category==='digest'?<NotificationDigest openRoom={openRoom} openChat={openChat}/>:<>
+    <SectionTabs label="Notification categories" value={category} onChange={next=>{if(next!==category){setItems(null);setCategory(next)}}} options={ [['meetings','Meetings'],['mentions','Mentions'],['tasks','Task updates'],['digest','Digest'],['delivery','Delivery'],['preferences','Preferences']] }/>
+    {category==='preferences'?<><NotificationPreferences hints={hints}/><WebPushSettings/></>:category==='delivery'?<NotificationDelivery/>:category==='tasks'?<TaskNotices user={user}/>:category==='digest'?<NotificationDigest openRoom={openRoom} openChat={openChat}/>:<>
     {error&&<p role="alert" className="error">{error}</p>}
     <SectionTabs label="Notification filters" value={filter} onChange={setFilter} options={ [['all','All updates'], ['unread','Unread']] }/>
     <button className="secondary" disabled={!visible?.some(item=>!item.read_at)} onClick={()=>void mark(null)}><Check size={15}/> Mark all read</button>

@@ -6,6 +6,7 @@ import { db } from '../lib/data'
 import { downloadChatFile, downloadName, fetchChatFile, saveDownload, type ChatFile } from '../lib/chat-files'
 import { SectionTabs } from './section-tabs'
 import { Vault } from './vault'
+import { AttachmentDetails } from './attachment-details'
 
 type LibraryFile=ChatFile & {message_id:string;chat_id:string;created_at:string}
 const pageSize=25
@@ -39,6 +40,7 @@ function ChatLibrary({openChat}: {openChat:(id:string)=>void}) {
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
   const [loadedCriteria,setLoadedCriteria]=useState('')
+  const [detailFile,setDetailFile]=useState<string|null>(null)
 
   const criteria=JSON.stringify([page,sort,direction,query])
   const load=useCallback(async (alive:()=>boolean=()=>true)=>{
@@ -109,6 +111,7 @@ function ChatLibrary({openChat}: {openChat:(id:string)=>void}) {
         {file.filename}</label>
       <span className="pill">{Math.ceil(file.size_bytes/1024)} KiB</span>
       <button type="button" className="secondary" onClick={()=>openChat(file.chat_id)}>Open conversation</button>
+      <button type="button" className="secondary" onClick={()=>setDetailFile(file.id)}>View details</button>
       <button type="button" className="secondary" disabled={busy} onClick={async()=>{
         setError('')
         try{await downloadChatFile(file)}catch{setError('The attachment could not be downloaded.')}
@@ -119,5 +122,6 @@ function ChatLibrary({openChat}: {openChat:(id:string)=>void}) {
       <span>Page {page+1}</span>
       <button className="secondary" type="button" disabled={!hasMore||busy||!visible} onClick={()=>setPage(page+1)}>Next</button>
     </div>}
+    {detailFile && <AttachmentDetails key={detailFile} file={detailFile} close={()=>setDetailFile(null)}/>}
   </section>
 }

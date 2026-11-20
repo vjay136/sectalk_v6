@@ -1,3 +1,4 @@
+import { withOperationalMetrics } from '../../../../lib/operational-metrics-server'
 import { type SupabaseClient } from '@supabase/supabase-js'
 import { fileTicketSeconds, issueFileTicket, readFileTicket, validFileId } from '../../../../lib/file-download-ticket'
 import { authenticateFileRequest, fileFailure as failure, fileHeaders as headers } from '../../../../lib/authenticated-file-request'
@@ -12,7 +13,7 @@ async function checkAccess(client:SupabaseClient,file:string){
   return null
 }
 
-export async function POST(request:Request){
+async function handlePost(request:Request){
   const secret=process.env.SECTALK_FILE_TICKET_SECRET
   if(!secret||Buffer.byteLength(secret)<32)return failure(503,'Attachment downloads are unavailable.')
   const auth=await authenticateFileRequest(request)
@@ -25,7 +26,7 @@ export async function POST(request:Request){
   return Response.json({url:'/api/files/download?ticket='+ticket,expiresIn:fileTicketSeconds},{headers})
 }
 
-export async function GET(request:Request){
+async function handleGet(request:Request){
   const secret=process.env.SECTALK_FILE_TICKET_SECRET
   if(!secret||Buffer.byteLength(secret)<32)return failure(503,'Attachment downloads are unavailable.')
   const auth=await authenticateFileRequest(request)
@@ -39,4 +40,12 @@ export async function GET(request:Request){
   const {error:logError}=await auth.storage.rpc('st_v6_log_file_download',{p_file:ticket.file,p_actor:auth.actor,p_ticket:ticket.nonce})
   if(logError)return failure(503,'Attachment download could not be recorded.')
   return new Response(data,{headers:{...headers,'Content-Type':'application/octet-stream','Content-Disposition':'attachment'}})
+}
+
+export async function POST(request: Request) {
+  return withOperationalMetrics('file_download_grant', () => handlePost(request))
+}
+
+export async function GET(request: Request) {
+  return withOperationalMetrics('file_download', () => handleGet(request))
 }

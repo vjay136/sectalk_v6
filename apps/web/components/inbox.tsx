@@ -27,12 +27,14 @@ import { SectionTabs } from './section-tabs'
 import { CommandPalette, type Command } from './command-palette'
 import { ScheduledMessages } from './scheduled-messages'
 import { useOfflineMessages } from '../lib/use-offline-messages'
-import { downloadChatFile, extensions, sendChatFile, supportedFile, type ChatFile } from '../lib/chat-files'
+import { downloadChatFile, extensions, formatChatFileBytes, getChatFileCapacity, sendChatFile, supportedFile,
+  type ChatFile, type ChatFileCapacity } from '../lib/chat-files'
 import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
 import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
 import { AccountMfa } from './account-mfa'
 import { DraftStatus, notifyDraftChange, useSyncedDraft } from './synced-draft'
+import { pendingWorkspaceInvite } from '../lib/workspace-invite'
 import { QuietHoursSettings, useEffectiveAvailability, useQuietIncoming } from './quiet-hours'
 
 const ChatEmoji=dynamic(()=>import('./chat-emoji'))
@@ -60,7 +62,8 @@ export function Inbox({ user }: { user: string }) {
   const [requestedMeeting,setRequestedMeeting] = useState<string|null>(()=>typeof window==='undefined'?null:meetingFromQuery(window.location.search))
   const [requestedRoom,setRequestedRoom] = useState<{workspace:string;id:string}|null>(null)
   const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
-    requestedMeeting?'meetings':typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
+    requestedMeeting?'meetings':pendingWorkspaceInvite()?'workspaces':
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
   const [taskSection,setTaskSection]=useState<'scoped'|'workspace'>('scoped')
   const [paletteOpen,setPaletteOpen]=useState(false)
@@ -682,6 +685,12 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const [hidden,setHidden]=useState<string[]>([])
   const [files,setFiles]=useState<Record<string,ChatFile>>({})
   const [attachment,setAttachment]=useState<{file:File;id:string}|null>(null)
+  const [fileCapacity, setFileCapacity] = useState<ChatFileCapacity | null>(null)
+  const refreshFileCapacity = useCallback(async () => {
+    const capacity = await getChatFileCapacity()
+    if (capacity) setFileCapacity(capacity)
+  }, [])
+  useEffect(() => { if (!blocked) void refreshFileCapacity() }, [blocked, refreshFileCapacity])
   const [emoji,setEmoji]=useState(false)
   const [reacting,setReacting]=useState<string|null>(null)
   const filePicker=useRef<HTMLInputElement>(null)
@@ -977,9 +986,11 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       if(duplicate)inform('Attachment sent. You previously shared the same file contents in this chat.')
       setOutbox(previous=>previous.map(entry=>entry.id===item.id?{...entry,state:'sent'}:entry))
       void load()
-    }catch{
+    }catch(error){
       setOutbox(previous=>previous.map(entry=>entry.id===item.id?{...entry,state:'failed'}:entry))
+      inform(formatError(error,'The attachment could not be sent.'))
     }finally{
+      void refreshFileCapacity()
       sending.current=false
       setBusy(false)
     }
@@ -1255,15 +1266,24 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       <ScheduledMessages chat={chat.id} draft={draft.trim()} schedule={schedule} canSchedule={!blocked&&Boolean(draft.trim())&&!replying&&!attachment}/>
     </Dialog>}
     <DraftStatus draft={syncedDraft}/>
+    {!blocked && fileCapacity && <p id="attachment-capacity" className="attachment-capacity muted">
+      {formatChatFileBytes(fileCapacity.max_file_bytes)} per attachment · {formatChatFileBytes(Math.max(0,
+        fileCapacity.max_storage_bytes - fileCapacity.stored_bytes - fileCapacity.reserved_bytes))} storage available
+    </p>}
     <form className="composer" onSubmit={send}>
       <input ref={filePicker} hidden type="file" accept={extensions} onChange={event=>{
         const file=event.target.files?.[0]
         event.target.value=''
         if(!file)return
+        if(fileCapacity && file.size>fileCapacity.max_file_bytes){
+          inform('Your limit is '+formatChatFileBytes(fileCapacity.max_file_bytes)+' per attachment.');return
+        }
         if(!supportedFile(file)){inform('Choose an image, PDF or text file up to 4 MiB.');return}
         setReplying(null);setAttachment({file,id:crypto.randomUUID()})
       }}/>
-      <button type="button" className="icon" title="Attach file" aria-label="Attach file" disabled={blocked||busy} onClick={()=>filePicker.current?.click()}><Paperclip size={19}/></button>
+      <button type="button" className="icon" title="Attach file" aria-label="Attach file"
+        aria-describedby={!blocked&&fileCapacity?'attachment-capacity':undefined}
+        disabled={blocked||busy} onClick={()=>filePicker.current?.click()}><Paperclip size={19}/></button>
       <button type="button" className="icon" title="Add emoji" aria-label="Add emoji" disabled={blocked||busy} onClick={()=>{
         if(composerInput.current)cursor.current={start:composerInput.current.selectionStart,end:composerInput.current.selectionEnd}
         setEmoji(true)

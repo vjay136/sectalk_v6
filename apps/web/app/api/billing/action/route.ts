@@ -1,7 +1,8 @@
+import { withOperationalMetrics } from '../../../../lib/operational-metrics-server'
 import { billingIdentity, billingWriter, origin, priceId, stripe } from '../../../../lib/stripe-server'
 import { isPaidPlan } from '../../../../lib/billing'
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   if (!stripe || !origin || !billingWriter) return Response.json({ error: 'Payment checkout is unavailable on this deployment.' }, { status: 503 })
   const identity = await billingIdentity(request)
   if (!identity) return Response.json({ error: 'Sign in first.' }, { status: 401 })
@@ -42,4 +43,8 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: 'The payment provider could not process this request.' }, { status: 502 })
   }
+}
+
+export async function POST(request: Request) {
+  return withOperationalMetrics('billing_action', () => handlePost(request))
 }

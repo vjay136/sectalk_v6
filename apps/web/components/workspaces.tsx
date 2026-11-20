@@ -10,6 +10,8 @@ import { QuietHoursSettings } from './quiet-hours'
 import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
 import { WorkspaceGroups } from './workspace-groups'
 import { WorkspaceOnboarding } from './workspace-onboarding'
+import { WorkspaceNotificationPolicy } from './workspace-notification-policy'
+import { PendingWorkspaceInvite, WorkspaceLinkInvites } from './workspace-link-invites'
 
 const ImpersonationWatch = dynamic(() => import('./impersonation-watch').then(module => module.ImpersonationWatch), {
   loading: () => <p role="status">Loading impersonation watch…</p>,
@@ -124,6 +126,7 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Icon size={22}/></div><div><h1>{title}</h1><p>{description}</p></div></header>
     {error && <p role="alert" className="error">{error}</p>}
+    {view==='workspaces'&&<PendingWorkspaceInvite onJoined={reloadWorkspaces}/>}
     {view==='workspaces' && invites.length > 0 && <section className="panel release-panel"><h2>Invitations</h2>{invites.map(invite => <div className="release-row" key={invite.id}>
       <strong>{invite.workspace_name}</strong>
       <button className="primary" disabled={busy} onClick={() => void reply(invite.id, true)}>Join</button>
@@ -188,7 +191,8 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
   const selectedChannel=visibleChannels.find(channel=>channel.id===channelId)||visibleChannels[0]
 
   return <div className="panel release-panel">
-    {view==='workspaces'&&space.policy&&<p className="muted">{space.policy.details?.label||space.policy.workspace_type} · {space.policy.template==='restricted'?'Restricted policy':'Standard policy'}</p>}
+    {view==='workspaces'&&space.policy&&<p className="muted">{space.policy.details?.label||space.policy.workspace_type} · {
+      space.policy.compliance?.label||(space.policy.template==='restricted'?'Restricted policy':'Standard policy')}</p>}
     {view==='workspaces' && <SectionTabs label="Workspace sections" value={(tab==='activity'||tab==='impersonation')&&!manager?'people':tab} onChange={setTab} options={[
       ['channels', <><Hash size={15}/> Channels</>], ['board', <><ListChecks size={15}/> Board</>],
       ['people', <><Users size={15}/> People</>], ['teams','Groups & teams'],
@@ -223,6 +227,8 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
     {view==='tasks'&&<TaskList space={space.id} actor={user} manager={manager} members={members} profiles={profiles}/>}
     {view==='calendar'&&<WorkspaceCalendar space={space.id} />}
     {view==='workspaces'&&(tab==='people'||(tab==='activity'&&!manager)) && <div className="release-section">
+      {role && <WorkspaceNotificationPolicy workspace={space.id} manager={manager}/>}
+      {manager&&<WorkspaceLinkInvites workspace={space.id} profile={space.policy?.compliance}/>}
       {presenceRequired!==null&&<div>
         {manager ? <QuickForm label="Workspace availability policy" button="Save availability policy" send={async fields => {
           await rpc('st_v6_set_workspace_presence_policy',{p_workspace:space.id,p_required:fields.get('presence')==='required'})

@@ -3,13 +3,14 @@
 import { useState } from 'react'
 import { useAnalyticsSnapshot } from '../lib/live-analytics'
 import { SectionTabs } from './section-tabs'
+import { CallQualityMetrics, type CallQuality } from './call-quality-metrics'
 
 const categories=[
   ['accounts','Active accounts'],['messages','Direct messages sent'],['calls','Direct calls started'],
   ['meetings','Meeting occurrences created'],['tasks','Task completions'],
 ] as const
 type Category=typeof categories[number][0]
-type Usage={through:string;metrics:Partial<Record<Category,number>>}
+type Usage={through:string;metrics:Partial<Record<Category,number>>;qos?:CallQuality}
 
 export function UsageMetrics({ revision }: { revision: number }){
   const [period,setPeriod]=useState<'7d'|'30d'>('7d')
@@ -27,6 +28,7 @@ export function UsageMetrics({ revision }: { revision: number }){
         <dt>{label}</dt><dd>{usage.metrics[key]?.toLocaleString()??'Below reporting threshold'}</dd>
       </div>)}</dl>
       <p className="muted">Through <time dateTime={usage.through}>{new Date(usage.through).toLocaleString()}</time></p>
+      {usage.qos&&<CallQualityMetrics quality={usage.qos}/>}
     </>}
   </section>
 }

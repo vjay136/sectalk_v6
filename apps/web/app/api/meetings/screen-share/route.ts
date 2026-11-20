@@ -84,6 +84,9 @@ export async function POST(request: Request) {
     const access = await client.rpc('st_v3_media_access', { p_meeting: meetingId })
     if (access.error) throw access.error
     if (!access.data) return fail('Join the live meeting before sharing your screen.', 403)
+    const policy = await client.from('st_v3_meetings').select('screen_share_disabled').eq('id', meetingId).single()
+    if (policy.error) throw policy.error
+    if (policy.data.screen_share_disabled) return fail('Screen sharing is disabled for this meeting.', 403)
     const participant = await service.getParticipant(room, userId).catch(error => {
       if (!isMissingParticipant(error)) throw error
       return undefined

@@ -1,3 +1,4 @@
+import { withOperationalMetrics } from '../../../../lib/operational-metrics-server'
 import { AccessToken, TrackSource } from 'livekit-server-sdk'
 import { createClient } from '@supabase/supabase-js'
 import { logProviderFailure } from '../../../../lib/provider-log.mjs'
@@ -9,7 +10,7 @@ export function GET() {
   return Response.json({ mediaConfigured: Boolean(process.env.LIVEKIT_URL && process.env.LIVEKIT_API_KEY && process.env.LIVEKIT_API_SECRET) }, { headers })
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   const url = process.env.LIVEKIT_URL
   const apiKey = process.env.LIVEKIT_API_KEY
   const secret = process.env.LIVEKIT_API_SECRET
@@ -51,4 +52,8 @@ export async function POST(request: Request) {
     logProviderFailure('meeting_signing','signing_failed')
     return Response.json({ error: 'Meeting media is temporarily unavailable.' }, { status: 503, headers })
   }
+}
+
+export async function POST(request: Request) {
+  return withOperationalMetrics('meeting_token', () => handlePost(request))
 }

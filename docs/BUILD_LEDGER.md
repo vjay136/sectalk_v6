@@ -68,12 +68,26 @@
 | P5 | Add meeting pre-join checks and one-presenter screen sharing | Real local LiveKit and Edge with synthetic capture, GPU background processing, and permission revocation scenarios |
 | P10 | Add a restricted tenant lookup and versioned member-count cache | Browser real TOTP and SQL verified metadata scope, count caching, TTL and roster invalidation |
 | P10 | Stream delivery and usage metrics and show threat-reporting trends | SQL and real browser evidence for private hints, reconnect catch-up, completed weeks and suppressed cohorts |
+| P5 | Allow case staff to redact a specifically reported, unchanged conversation message | Real TOTP browser and SQL tests for live removal, retained authorized evidence, and audit status |
 | P10 | Add an English and Arabic locale scaffold with ICU messages | Locale unit tests and production browser checks on public and signed-in screens |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
+| P5 | Add workspace-wide mandatory notification categories and quiet caps | Tenant policy SQL and two browsers with existing notification preferences and quiet hours |
+| P5 | Enforce direct-chat attachment budgets by plan and account policy | Concurrent reservation SQL and browser tests for normal uploads, quota rejection and secure download |
+| P5 | Add live meeting host controls | Three-session LiveKit browser test passed. Replay of outstanding provider tokens remains open. |
+| P5 | Add browser push enrollment and private payloads | VAPID provider contract, local queue tests and Chromium service-worker notification checks. Hosted scheduler and credentials are deployment prerequisites. |
+| P10 | Measure aggregate API latency, errors and instance concurrency | Production-route tests and genuine staff MFA dashboard access |
+| P10 | Collect coarse call and meeting quality metrics | Real direct WebRTC, LiveKit, staff dashboard MFA and privacy SQL tests |
+| P5 | Add uploader access history for direct-chat files | Two-account browser and bounded access-history SQL checks. Tenant-level scope and link lifecycle remain open. |
+| P1 | Add workspace onboarding links with authenticated SMTP delivery | Local mail capture, separate Edge sessions and invite-expiry, domain, replay and seat fixtures |
+| P5 | Add healthcare, education, finance and GDPR-style setup profiles | Workspace wizard browser and database tests verify effective room, admission and invite settings |
+| P5 | Add bounded notification retries, dead letters and in-app fallback | SQL and browser verified Web Push rejection and recipient fallback. Email-channel fallback remains open. |
+| P10 | Expand privacy-preserving call quality analytics | WebRTC and LiveKit audio quality samples, actual direct ICE restart offer, controlled relay percentages and verified staff dashboard |
+| P5 | Add password-protected links for direct-chat attachments | Guest browser download and revocation, concurrent limits, source authorization and audit SQL |
+
 See the branch history for slice commits.
 
-Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 87 verified features. The next checkpoint is due at 97, and the matrix records evidence as each feature passes.
+Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 97 verified features. The next checkpoint is due at 107, and the matrix records evidence as each feature passes.
 
 ## Remaining work by dependency
 

@@ -11,12 +11,13 @@ import { SectionTabs } from './section-tabs'
 import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
 import { MeetingEngagement } from './meeting-engagement'
 import { MeetingCollaboration } from './meeting-collaboration'
+import { MeetingModeratorActions, MeetingParticipantModeration, useMeetingModeration } from './meeting-moderation'
 import type { MeetingChoices } from './meeting-prejoin'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
 const MeetingPrejoin = dynamic(() => import('./meeting-prejoin'), { ssr: false })
-type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null }
-type Attendance = { user_id:string; status:'waiting'|'admitted'|'declined'|'left'; requested_at:string; admitted_at:string|null; left_at:string|null }
+type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null; meeting_locked:boolean; chat_disabled:boolean; screen_share_disabled:boolean }
+type Attendance = { user_id:string; status:'waiting'|'admitted'|'declined'|'left'; requested_at:string; admitted_at:string|null; left_at:string|null; is_cohost:boolean; removed_at:string|null }
 export function Meetings({ user, requested }: { user:string; requested:string|null }) {
   const {active,workspaces,select}=useWorkspaceContext()
   const [linkedWorkspace,setLinkedWorkspace]=useState<string|null|undefined>(requested?undefined:null)
@@ -169,7 +170,7 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
     setPeople(rows)
     if(!rows.find(row=>row.user_id===user && row.status==='admitted')) setMedia(null)
     const ids=rows.map(row=>row.user_id)
-    if(host && ids.length) {
+    if((host || rows.some(row=>row.user_id===user && row.status==='admitted' && row.is_cohost)) && ids.length) {
       const {data}=await db!.from('st_profiles').select('id,handle,name').in('id',ids)
       if(data) setProfiles(Object.fromEntries(data.map(row=>[row.id,row])))
     }
@@ -181,8 +182,12 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
     const timer=window.setInterval(reload,4000)
     return ()=>{window.clearInterval(timer);void db!.removeChannel(subscription)}
   },[meeting.id,reload])
-  const self=people.find(row=>row.user_id===user)?.status
+  const selfAttendance=people.find(row=>row.user_id===user)
+  const self=selfAttendance?.status
   const ended=meeting.status==='ended'||Date.parse(meeting.ends_at)<=Date.now()
+  const moderator=host || (self==='admitted' && selfAttendance?.is_cohost===true)
+  const moderation=useMeetingModeration(meeting.id,()=>Promise.all([refresh(),reload()]))
+  const actionBusy=busy||moderation.running
 
   async function action(name:string,input:Record<string,unknown>) {
     if(busy) return
@@ -237,6 +242,8 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
     <div className="release-row"><h2>{meeting.title}</h2><span className="pill">{ended?'ended':meeting.status}</span></div>
     {meeting.agenda&&<p className="meeting-agenda">{meeting.agenda}</p>}
     {error&&<p role="alert" className="error">{error}</p>}
+    {moderation.error&&<p role="alert" className="error">{moderation.error}</p>}
+    {moderation.notice&&<p role="status">{moderation.notice}</p>}
     {!ended&&<div className="release-row">
       <button type="button" className="secondary" onClick={()=>void exportCalendar(false)}>Add to calendar</button>
       {meeting.series_id&&<button type="button" className="secondary" onClick={()=>void exportCalendar(true)}>Add series to calendar</button>}
@@ -246,31 +253,40 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
     {manualLink&&<label>Meeting link<input readOnly value={manualLink} onFocus={event=>event.target.select()}/></label>}
     {!ended && <div className="release-row">
       {host && meeting.status==='scheduled' && <button className="primary" disabled={busy} onClick={()=>void action('st_v3_meeting_state',{p_state:'live'})}>Open waiting room</button>}
-      {host && meeting.status==='live' && <button className="danger" disabled={busy} onClick={()=>{if(window.confirm('End this meeting for the workspace?')) void action('st_v3_meeting_state',{p_state:'ended'})}}>End meeting</button>}
-      {(!host || meeting.status==='live') && (!self||self==='left') && <button className="secondary" disabled={busy} onClick={()=>void action('st_v3_request_admission',{})}>{host?'Rejoin meeting':'Request admission'}</button>}
+      {moderator && meeting.status==='live' && <button className="danger" disabled={actionBusy} onClick={()=>{if(window.confirm('End this meeting for everyone?')) void moderation.act('end')}}>End meeting</button>}
+      {(!host || meeting.status==='live') && (!self||self==='left') && <button className="secondary" disabled={actionBusy||(!host&&meeting.meeting_locked)} onClick={()=>void action('st_v3_request_admission',{})}>{host?'Rejoin meeting':'Request admission'}</button>}
       {self==='waiting' && <span role="status">Waiting for the host to admit you</span>}
-      {self==='declined' && <span role="status">The host declined your request</span>}
+      {self==='declined' && <span role="status">{selfAttendance?.removed_at?'A moderator removed you from the meeting.':'The host declined your request'}</span>}
+      {meeting.meeting_locked && <span className="pill" role="status">Meeting locked</span>}
       {self==='admitted' && meeting.status==='live' && !mediaReady && <span role="status">Live media unavailable</span>}
       {(self==='admitted'||self==='waiting') && <button className="secondary" disabled={busy} onClick={()=>{setMedia(null);void action('st_v3_leave',{})}}>Leave</button>}
     </div>}
+    {moderator && meeting.status==='live' && !ended &&
+      <MeetingModeratorActions locked={meeting.meeting_locked} chatDisabled={meeting.chat_disabled} shareDisabled={meeting.screen_share_disabled}
+        busy={actionBusy} moderate={moderation.act}/>}
     {self==='admitted' && meeting.status==='live' && !ended && mediaReady && !media &&
       <MeetingPrejoin busy={busy} join={connect} requestMedia={requestMedia}/>}
-    {media && self==='admitted' && !ended && <MeetingMedia {...media} meeting={meeting.id} focus={focus} leave={refreshMedia}/>}
+    {media && self==='admitted' && !ended && <MeetingMedia {...media} meeting={meeting.id} focus={focus}
+      screenShareDisabled={meeting.screen_share_disabled} leave={refreshMedia}/>}
     {self==='admitted'&&meeting.status==='live'&&!ended&&<>
-      <MeetingCollaboration meeting={meeting.id} user={user} host={host} setFocus={setFocus}/>
+      <MeetingCollaboration meeting={meeting.id} user={user} host={host} chatDisabled={meeting.chat_disabled} setFocus={setFocus}/>
       <MeetingEngagement meeting={meeting.id} user={user}/>
     </>}
-    {host && <section className="release-section"><h2>Waiting room and attendance</h2>
-      {bulkAdmit&&meeting.status==='live'&&!ended&&people.some(person=>person.status==='waiting')&&
-        <button className="primary" type="button" disabled={busy} onClick={()=>void action('st_v6_admit_all',{})}>Admit all eligible attendees</button>}
+    {moderator && <section className="release-section" aria-label="Waiting room and attendance"><h2>Waiting room and attendance</h2>
+      {host&&bulkAdmit&&meeting.status==='live'&&!ended&&people.some(person=>person.status==='waiting')&&
+        <button className="primary" type="button" disabled={actionBusy||meeting.meeting_locked} onClick={()=>void action('st_v6_admit_all',{})}>Admit all eligible attendees</button>}
       {lobbyNotice&&<p role="status">{lobbyNotice}</p>}
       {!people.length&&<p>No attendees yet.</p>}
       {people.map(person=><div className="release-row" key={person.user_id}><strong>{profiles[person.user_id]?.name||'Workspace member'}</strong><span className="pill">{person.status}</span>
+        {person.is_cohost&&<span className="pill">Co-host</span>}
         {person.admitted_at&&<time dateTime={person.admitted_at}>{new Date(person.admitted_at).toLocaleString()}</time>}
-        {person.status==='waiting'&&meeting.status==='live'&&!ended&&<>
-          <button className="primary" disabled={busy} onClick={()=>void action('st_v3_admit',{p_user:person.user_id,p_allow:true})}>Admit</button>
-          <button className="secondary" disabled={busy} onClick={()=>void action('st_v3_admit',{p_user:person.user_id,p_allow:false})}>Decline</button>
+        {host&&person.status==='waiting'&&meeting.status==='live'&&!ended&&<>
+          <button className="primary" disabled={actionBusy||meeting.meeting_locked} onClick={()=>void action('st_v3_admit',{p_user:person.user_id,p_allow:true})}>Admit</button>
+          <button className="secondary" disabled={actionBusy} onClick={()=>void action('st_v3_admit',{p_user:person.user_id,p_allow:false})}>Decline</button>
         </>}
+        {person.status==='admitted'&&!ended&&person.user_id!==user&&person.user_id!==meeting.host_id&&(host||!person.is_cohost)&&
+          <MeetingParticipantModeration participant={person.user_id} name={profiles[person.user_id]?.name||'Workspace member'}
+            cohost={person.is_cohost} organizer={host} busy={actionBusy} moderate={moderation.act}/>}
       </div>)}
     </section>}
   </div>

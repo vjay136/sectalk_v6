@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
+import { watchCallQos } from './helpers/call-qos.mjs'
 
 const app=new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase=new URL(process.env.SECTALK_STORAGE_TEST_URL)
@@ -13,6 +14,9 @@ const options={auth:{persistSession:false,autoRefreshToken:false}}
 const admin=createClient(supabase.href,serviceKey,options)
 const suffix=randomUUID().slice(0,8)
 const password=randomUUID()+'1!Q'
+const sampleQuality = process.env.SECTALK_TEST_QOS === '1'
+const testAnalytics = process.env.SECTALK_TEST_ANL_02 === '1'
+const qualitySamples = new WeakMap()
 
 function data(result){
   if(result.error)throw new Error(result.error.message)
@@ -41,10 +45,15 @@ const browser=await chromium.launch({
 
 async function openChat(person,peerName){
   const page=await browser.newPage({locale:'en-US'})
+  if (sampleQuality) qualitySamples.set(page, watchCallQos(page, 'direct'))
   await page.addInitScript(()=>{
     const Peer=window.RTCPeerConnection
+    window.testCallPeers = []
     window.RTCPeerConnection=class extends Peer {
-      constructor(config){super({...config,iceServers:[],iceTransportPolicy:'all'})}
+      constructor(config){
+        super({...config,iceServers:[],iceTransportPolicy:'all'})
+        window.testCallPeers.push(this)
+      }
       setConfiguration(config){super.setConfiguration({...config,iceServers:[],iceTransportPolicy:'all'})}
     }
   })
@@ -103,6 +112,30 @@ try{
   assert.deepEqual(decisions.sort(),['accepted','answered_elsewhere'])
   const active=await lastCall()
   assert.equal(active.status,'active')
+  if (sampleQuality) {
+    for (const page of [origin, winner]) {
+      assert.match(await qualitySamples.get(page)('setup'), /^(fast|moderate|slow)$/)
+      assert.equal(await qualitySamples.get(page)('relay'), 'non_relayed')
+      if (testAnalytics) {
+        assert.equal(await qualitySamples.get(page)('join', 'started', false), 'started')
+        assert.equal(await qualitySamples.get(page)('join', 'connected'), 'connected')
+        assert.match(await qualitySamples.get(page)('mos'), /^(below_2|2_to_3|3_to_4|4_or_more)$/)
+      }
+    }
+    if (testAnalytics) assert.equal(await qualitySamples.get(origin)('ice_restart', 'not_requested'), 'not_requested')
+    await origin.evaluate(() => {
+      const peer = window.testCallPeers.find(connection => connection.connectionState === 'connected')
+      Object.defineProperty(peer, 'connectionState', { value: 'disconnected', configurable: true })
+      peer.dispatchEvent(new Event('connectionstatechange'))
+      window.resumeTestCall = () => {
+        Reflect.deleteProperty(peer, 'connectionState')
+        peer.dispatchEvent(new Event('connectionstatechange'))
+      }
+    })
+    if (testAnalytics) assert.equal(await qualitySamples.get(origin)('ice_restart', 'requested'), 'requested')
+    await origin.evaluate(() => window.resumeTestCall())
+    assert.equal(await qualitySamples.get(origin)('recovery'), 'recovered')
+  }
   data(await callee.client.rpc('st_call_status',{p_call:active.id,p_accept:false}))
   assert.equal((await lastCall()).status,'active')
   await callButton(winner,'Hang up').click()
@@ -136,3 +169,4 @@ try{
   await browser.close()
 }
 console.log('Passed three browsers, competing answers, losing-device dismissal, endpoint ownership, busy, decline, and caller cancellation.')
+if (sampleQuality) console.log('Passed direct call setup, selected ICE route, and recovery sample privacy and delivery.')

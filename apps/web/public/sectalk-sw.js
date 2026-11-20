@@ -26,3 +26,27 @@ self.addEventListener('fetch', event => {
     return (await cache.match(offlinePage)) || Response.error()
   }))
 })
+
+self.addEventListener('push', event => {
+  try {
+    const payload = event.data?.json()
+    if (!payload || payload.v !== 1) return
+  } catch { return }
+  event.waitUntil(self.registration.showNotification('SecTalk', {
+    body: 'You have a new alert. Open SecTalk to view it.',
+    icon: '/pwa-192.png',
+    tag: 'sectalk-update',
+  }))
+})
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close()
+  event.waitUntil((async () => {
+    const target = new URL('/', self.location.origin).href
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    const existing = windows.find(client => new URL(client.url).origin === self.location.origin
+      && new URL(client.url).pathname === '/')
+    if (existing) return existing.focus()
+    return self.clients.openWindow(target)
+  })())
+})

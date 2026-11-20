@@ -38,7 +38,9 @@ begin
   perform public.st_v2_send_reply(conversation,reply_msg,'Ordered reply',first_msg);
   perform public.st_v6_schedule_message(conversation,schedule_msg,'Ordered scheduled',now()+interval '1 hour');
   perform public.st_v5_stage_file(conversation,attachment_msg,'proof.txt',10);
+  set local role service_role;
   insert into storage.objects(bucket_id,name,metadata) values('sectalk-chat-files',attachment_msg::text,'{"size":10}'::jsonb);
+  set local role authenticated;
   begin
     perform public.st_send(other,first_msg,'Other conversation');
     raise exception 'Cross-conversation ID collision was accepted' using errcode='P0004';

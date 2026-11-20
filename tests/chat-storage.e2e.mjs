@@ -53,6 +53,11 @@ async function retrieve(client,link){
   const session=data(await client.auth.getSession()).session
   return fetch(new URL(link,app),{headers:{Authorization:'Bearer '+session.access_token}})
 }
+async function serverUpload(client,id,bytes,mime){
+  const session=data(await client.auth.getSession()).session
+  return fetch(app+'/api/files/upload?file='+id,{method:'POST',
+    headers:{Authorization:'Bearer '+session.access_token,'Content-Type':mime},body:bytes})
+}
 async function publish(client,id,caption,mime){
   if(!v6)return data(await client.rpc('st_v5_send_file',{p_id:id,p_caption:caption}))
   const session=data(await client.auth.getSession()).session
@@ -66,13 +71,18 @@ async function publish(client,id,caption,mime){
 assert.equal(data(await sender.client.rpc('st_v5_stage_file',{
   p_chat:chat,p_id:file,p_filename:'fixture.txt',p_bytes:raw.length,
 })), false)
-data(await storage(sender.client).upload(file,raw.buffer,{contentType:'application/octet-stream',upsert:false}))
+if(v6){
+  assert.ok((await storage(sender.client).upload(file,raw.buffer,{contentType:'application/octet-stream'})).error)
+  assert.equal((await serverUpload(sender.client,file,raw,'text/plain')).status,200)
+}else data(await storage(sender.client).upload(file,raw.buffer,{contentType:'application/octet-stream',upsert:false}))
 assert.ok((await storage(recipient.client).download(file)).error, 'Pending file must stay private')
 assert.equal(await publish(sender.client,file,'Example attachment','text/plain'),file)
 if(v6){
   const renamed=randomUUID()
   data(await sender.client.rpc('st_v5_stage_file',{p_chat:chat,p_id:renamed,p_filename:'spoof.jpg',p_bytes:raw.length}))
-  data(await storage(sender.client).upload(renamed,raw.buffer,{contentType:'application/octet-stream'}))
+  assert.equal((await serverUpload(sender.client,renamed,raw,'image/jpeg')).status,415)
+  // Simulate a malformed legacy object to exercise publication's independent validation.
+  data(await storage(admin).upload(renamed,raw.buffer,{contentType:'application/octet-stream'}))
   const session=data(await sender.client.auth.getSession()).session
   const rejected=await fetch(app+'/api/files/publish',{method:'POST',
     headers:{Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},
@@ -223,7 +233,7 @@ if(app) {
       data(await sender.client.rpc('st_v5_stage_file',{
         p_chat:chat,p_id:libraryFile,p_filename:'library-test.txt',p_bytes:raw.length,
       }))
-      data(await storage(sender.client).upload(libraryFile,raw.buffer,{contentType:'application/octet-stream'}))
+      assert.equal((await serverUpload(sender.client,libraryFile,raw,'text/plain')).status,200)
       await publish(sender.client,libraryFile,'Library test message','text/plain')
       await second.getByRole('button',{name:'Files',exact:true}).click()
       await second.getByRole('heading',{name:'Files',exact:true}).waitFor()
