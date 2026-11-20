@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
 
-type Share = { id: string; expires_at: string; max_downloads: number; downloads: number; revoked_at: string | null }
+type Share = { id: string; expires_at: string; max_downloads: number; downloads: number; revoked_at: string | null;
+  view_only: boolean; watermark: boolean }
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
 export function AttachmentShareLinks({ file, onChanged }: { file: string; onChanged: () => void }) {
@@ -12,6 +13,7 @@ export function AttachmentShareLinks({ file, onChanged }: { file: string; onChan
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [viewOnly, setViewOnly] = useState(false)
 
   const load = useCallback(async () => {
     const { data, error } = await db!.rpc('st_v6_list_file_shares', { p_file: file })
@@ -38,10 +40,12 @@ export function AttachmentShareLinks({ file, onChanged }: { file: string; onChan
       const { data, error } = await db!.rpc('st_v6_create_file_share', {
         p_file: file, p_password: password, p_seconds: Number(fields.get('duration')),
         p_downloads: Number(fields.get('downloads')),
+        p_view_only: viewOnly, p_watermark: viewOnly && fields.has('watermark'),
       })
       if (error) setError(error.code === 'PT409' ? 'Revoke an active link before creating another.' : 'Could not create the share link.')
       else {
         form.reset()
+        setViewOnly(false)
         setCreated(location.origin + '/shared-file#' + data)
         await load()
         onChanged()
@@ -75,7 +79,11 @@ export function AttachmentShareLinks({ file, onChanged }: { file: string; onChan
         <option value="900">15 minutes</option><option value="3600">1 hour</option>
         <option value="86400">1 day</option><option value="604800">7 days</option>
       </select></label>
-      <label>Maximum downloads<input name="downloads" type="number" min={1} max={100} defaultValue={5} required/></label>
+      <label>Link access<select value={viewOnly ? 'preview' : 'download'} onChange={event=>setViewOnly(event.target.value==='preview')}>
+        <option value="download">Allow downloading</option><option value="preview">View only</option>
+      </select></label>
+      {viewOnly && <label className="task-check"><input name="watermark" type="checkbox" defaultChecked/> Watermark previews</label>}
+      <label>{viewOnly ? 'Maximum previews' : 'Maximum downloads'}<input name="downloads" type="number" min={1} max={100} defaultValue={5} required/></label>
       <button className="secondary" disabled={busy}>Create share link</button>
     </form>
     {created && <div>
@@ -90,7 +98,8 @@ export function AttachmentShareLinks({ file, onChanged }: { file: string; onChan
     {links.length > 0 && <ul className="audit">{links.map(link => {
       const active = !link.revoked_at && Date.parse(link.expires_at) > Date.now() && link.downloads < link.max_downloads
       return <li key={link.id}>
-        <span>{link.revoked_at ? 'Revoked' : active ? 'Active' : 'Expired or used up'} · {link.downloads}/{link.max_downloads} downloads</span>
+        <span>{link.revoked_at ? 'Revoked' : active ? 'Active' : 'Expired or used up'} · {link.downloads}/{link.max_downloads}
+          {' '}{link.view_only ? 'previews' : 'downloads'}{link.watermark ? ' · Watermarked' : ''}</span>
         <small>Expires <time dateTime={link.expires_at}>{dateFormat.format(new Date(link.expires_at))}</time></small>
         {active && <button className="secondary" type="button" disabled={busy} onClick={() => void revoke(link.id)}>Revoke link</button>}
       </li>

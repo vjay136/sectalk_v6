@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Flag, Shield, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { categories, db, formatError, type Message } from '../lib/data'
 import { Dialog } from './inbox'
@@ -14,11 +14,21 @@ import { TenantOperations } from './tenant-operations'
 import { useAnalyticsStream } from '../lib/live-analytics'
 import { ThreatTrends } from './threat-trends'
 import { OperationalMetrics } from './operational-metrics'
+import { DirectAttachmentHolds, type DirectHoldTarget } from './direct-attachment-holds'
+import { AttachmentQuarantine } from './attachment-quarantine'
 import { QueueOperations } from './queue-operations'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
 type Queue = Report & { subject_handle: string }
+type QueueTimer = Queue & {
+  acknowledge_by: string
+  resolve_by: string
+  acknowledged_at: string | null
+  closed_at: string | null
+  next_due: string | null
+  overdue: boolean
+}
 type Case = Queue & {
   details: string; evidence: string | null; suspended_until: string | null
   message_redaction_available: boolean
@@ -69,7 +79,9 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 export function Safety({ staff, refresh }: { staff: string; refresh: () => Promise<void> }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine'>('mine')
+  const [scanReviewer, setScanReviewer] = useState(false)
+  const [holdTargets, setHoldTargets] = useState<DirectHoldTarget[]>([])
   const [flagOperator,setFlagOperator]=useState(false)
   const [tenantStatus,setTenantStatus]=useState<'none' | 'mfa' | 'verified'>('none')
   const [queueStatus,setQueueStatus]=useState<'none' | 'mfa' | 'verified'>('none')
@@ -112,6 +124,27 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
     return()=>{active=false}
   },[staff])
   const releaseAccess=staff==='verified'&&flagOperator
+  useEffect(() => {
+    if (staff !== 'verified') { setScanReviewer(false); return }
+    let active = true
+    void db!.rpc('st_v6_is_attachment_scan_reviewer').then(({data,error}) => {
+      if (active) setScanReviewer(!error && data === true)
+    })
+    return () => { active = false }
+  }, [staff])
+  const scanAccess = staff === 'verified' && scanReviewer
+  useEffect(() => {
+    if (staff !== 'verified') { setHoldTargets([]); return }
+    let active = true
+    const load = async () => {
+      const { data, error } = await db!.rpc('st_v6_direct_hold_targets')
+      if (active) setHoldTargets(error ? [] : data as DirectHoldTarget[])
+    }
+    void load()
+    const timer = window.setInterval(load, 30000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [staff])
+  const holdAccess = staff === 'verified' && holdTargets.length > 0
   const refreshTenantStatus = useCallback(async (isCurrent: () => boolean = () => true) => {
     const { data, error } = await db!.rpc('st_v6_tenant_operations_status')
     if (isCurrent()) setTenantStatus(!error && (data === 'mfa' || data === 'verified') ? data : 'none')
@@ -137,7 +170,8 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
   }, [refreshQueueStatus, staffAccess])
   const queueAccess = staffAccess ? queueStatus : 'none'
   const visibleView=((view==='latency'||view==='usage'||view==='feedback'||view==='trends'||view==='operations')&&staff!=='verified')||(view==='queue'&&!staffAccess)
-    ||(view==='release'&&!releaseAccess)||(view==='tenants'&&tenantStatus==='none')||(view==='delivery-queue'&&queueAccess==='none')?'mine':view
+    ||(view==='release'&&!releaseAccess)||(view==='tenants'&&tenantStatus==='none')||(view==='delivery-queue'&&queueAccess==='none')
+    ||(view==='holds'&&!holdAccess)||(view==='quarantine'&&!scanAccess)?'mine':view
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
@@ -147,12 +181,16 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
         ['feedback','Warning feedback'] as const,['trends','Threat trends'] as const,['operations','Operational metrics'] as const]:[]),
       ...(releaseAccess?[['release','Release controls'] as const]:[]),
       ...(tenantStatus!=='none'?[['tenants','Tenant operations'] as const]:[]),
+      ...(holdAccess?[['holds','Attachment holds'] as const]:[]),
+      ...(scanAccess?[['quarantine','Attachment quarantine'] as const]:[]),
       ...(queueAccess!=='none'?[['delivery-queue','Queue operations'] as const]:[]),
     ]}/>
     {visibleView==='latency'?<DeliveryLatency revision={analyticsRevision}/>:visibleView==='usage'?<UsageMetrics revision={analyticsRevision}/>:visibleView==='release'?<ReleaseControls/>:
       visibleView==='feedback'?<RiskFeedback/>:
       visibleView==='trends'?<ThreatTrends/>:
       visibleView==='operations'?<OperationalMetrics/>:
+      visibleView==='holds'?<DirectAttachmentHolds targets={holdTargets}/>:
+      visibleView==='quarantine'?<AttachmentQuarantine/>:
       visibleView==='delivery-queue' ? (queueAccess === 'verified'
         ? <QueueOperations onAccessChanged={refreshQueueStatus}/>
         : <StaffMfa refresh={async () => { await refreshQueueStatus(); await refresh() }}
@@ -243,18 +281,32 @@ function StaffMfa({ refresh, explanation = 'An authenticator code is required to
 }
 
 function QueuePanel() {
-  const [rows, setRows] = useState<Queue[]>([])
+  const [rows, setRows] = useState<QueueTimer[] | null>(null)
   const [selected, setSelected] = useState<Case | null>(null)
   const [offset, setOffset] = useState(0)
+  const [category, setCategory] = useState('')
+  const [status, setStatus] = useState('active')
+  const [due, setDue] = useState('any')
   const [error, setError] = useState('')
   const [working, setWorking] = useState(false)
+  const queueVersion = useRef(0)
 
   const load = useCallback(async () => {
-    const { data, error } = await db!.rpc('st_queue', { p_offset: offset })
-    if (error) setError('Could not load the moderation queue.')
-    else { setError(''); setRows(data as Queue[]) }
-  }, [offset])
-  useEffect(() => { void load() }, [load])
+    const version = ++queueVersion.current
+    const { data, error } = await db!.rpc('st_v6_abuse_queue', {
+      p_category: category || null, p_status: status, p_due: due, p_offset: offset,
+    })
+    if (version !== queueVersion.current) return
+    if (error) { setRows(null); setError('Could not load the moderation queue.') }
+    else { setError(''); setRows(data as QueueTimer[]) }
+  }, [category, status, due, offset])
+  useEffect(() => {
+    if (selected) return
+    void load()
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load() }, 15000)
+    return () => { ++queueVersion.current; window.clearInterval(timer) }
+  }, [load, selected])
+  const timer = selected && rows?.find(row => row.id === selected.id)
 
   async function open(id: string) {
     setWorking(true)
@@ -292,6 +344,12 @@ function QueuePanel() {
     {selected ? <div className="case">
       <span className={'pill state-' + selected.status}>{labels[selected.status]}</span>
       <h2>{categories[selected.category]}</h2><p>@{selected.subject_handle} · <DateLabel value={selected.created_at}/></p>
+      {timer && <dl className="profile-stats">
+        <div><dt>Acknowledge by</dt><dd><DateLabel value={timer.acknowledge_by}/></dd></div>
+        <div><dt>Resolve by</dt><dd><DateLabel value={timer.resolve_by}/></dd></div>
+        {timer.acknowledged_at && <div><dt>Acknowledged</dt><dd><DateLabel value={timer.acknowledged_at}/></dd></div>}
+        {timer.closed_at && <div><dt>Closed</dt><dd><DateLabel value={timer.closed_at}/></dd></div>}
+      </dl>}
       {selected.suspended_until && new Date(selected.suspended_until) > new Date() && <p className="warning">Restricted until <DateLabel value={selected.suspended_until}/></p>}
       {selected.suspended_until==='infinity'&&<p className="warning">Restricted until staff restore access</p>}
       <h3>Reporter notes</h3><p className="case-text">{selected.details || 'No notes provided.'}</p>
@@ -309,9 +367,30 @@ function QueuePanel() {
       </select></label><label>Reason<textarea name="reason" minLength={4} maxLength={500} required rows={3}/></label><button className="primary" disabled={working}>Record decision</button></form>
       <h3>Audit trail</h3><ol className="audit">{selected.history.map(entry => <li key={entry.id}><strong>{labels[entry.action]}</strong><small><DateLabel value={entry.created_at}/></small>{entry.note && <p>{entry.note}</p>}</li>)}</ol>
     </div> : <>
-      {!rows.length && !error && <div className="list-empty"><ShieldCheck size={24}/><strong>No reports in the queue</strong></div>}
-      {rows.slice(0, 50).map(row => <button disabled={working} className="report-row" key={row.id} onClick={() => void open(row.id)}><Flag size={17}/><div><strong>{categories[row.category]} · @{row.subject_handle}</strong><small><DateLabel value={row.created_at}/></small></div><span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/></button>)}
-      {(offset > 0 || rows.length > 50) && <div className="pagination"><button className="secondary" disabled={!offset} onClick={() => setOffset(offset - 50)}><ArrowLeft size={15}/> Previous</button><button className="secondary" disabled={rows.length <= 50} onClick={() => setOffset(offset + 50)}>Next <ArrowRight size={15}/></button></div>}
+      <div className="release-flex" role="group" aria-label="Moderation queue filters">
+        <label>Report category<select value={category} onChange={event=>{setCategory(event.target.value);setOffset(0)}}>
+          <option value="">All categories</option>
+          {Object.entries(categories).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
+        </select></label>
+        <label>Report status<select value={status} onChange={event=>{setStatus(event.target.value);setOffset(0)}}>
+          <option value="active">Active reports</option><option value="open">Open</option>
+          <option value="reviewing">In review</option><option value="closed">Closed reports</option><option value="any">All reports</option>
+        </select></label>
+        <label>Deadline<select value={due} onChange={event=>{setDue(event.target.value);setOffset(0)}}>
+          <option value="any">Any deadline</option><option value="overdue">Overdue</option><option value="next_day">Due within 24 hours</option>
+        </select></label>
+      </div>
+      {!rows && !error && <p role="status">Loading moderation queue…</p>}
+      {rows?.length === 0 && <div className="list-empty"><ShieldCheck size={24}/><strong>No reports match these filters</strong></div>}
+      {rows?.slice(0, 50).map(row => <button disabled={working} className="report-row" key={row.id} onClick={() => void open(row.id)}>
+        <Flag size={17}/>
+        <div><strong>{categories[row.category]} · @{row.subject_handle}</strong>
+          <small>{row.next_due ? <>{row.overdue ? 'Overdue · ' : ''}{row.acknowledged_at ? 'Resolve by ' : 'Acknowledge by '}
+            <DateLabel value={row.next_due}/></> : <DateLabel value={row.created_at}/>}</small>
+        </div>
+        <span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/>
+      </button>)}
+      {(offset > 0 || (rows?.length ?? 0) > 50) && <div className="pagination"><button className="secondary" disabled={!offset} onClick={() => setOffset(offset - 50)}><ArrowLeft size={15}/> Previous</button><button className="secondary" disabled={(rows?.length ?? 0) <= 50} onClick={() => setOffset(offset + 50)}>Next <ArrowRight size={15}/></button></div>}
     </>}
   </div>
 }

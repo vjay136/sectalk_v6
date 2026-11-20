@@ -78,3 +78,51 @@ export async function renderFilePreview(filename: string, bytes: Buffer): Promis
     runningDecodes--
   }
 }
+
+function escapeXml(line: string) {
+  const entities: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+  return line.replace(/[&<>"']/g, char => entities[char])
+}
+
+export async function renderSharedAttachmentPreview(
+  filename: string, bytes: Buffer, watermark: boolean,
+): Promise<FilePreview | null> {
+  const preview = await renderFilePreview(filename, bytes)
+  if (!preview || preview.kind === 'offline' || preview.kind === 'busy' ||
+      (preview.kind === 'image' && !watermark)) return preview
+  if (runningDecodes >= 2) return { kind: 'busy' }
+  runningDecodes++
+  try {
+    let image: Buffer
+    if (preview.kind === 'text') {
+      const lines = preview.text.split(/\r?\n/).flatMap(line => {
+        const characters = Array.from(line.replace(/\t/g, '    '))
+        return characters.length ? Array.from({ length: Math.ceil(characters.length / 64) }, (_, index) =>
+          characters.slice(index * 64, (index + 1) * 64).join('')) : ['']
+      }).slice(0, 24)
+      const height = 30 + lines.length * 20
+      const text = lines.map((line, index) =>
+        `<text x="16" y="${28 + index * 20}">${escapeXml(line)}</text>`).join('')
+      const page = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="768" height="${height}">
+        <rect width="768" height="${height}" fill="#ffffff"/>
+        <g font-family="monospace" font-size="15" fill="#111827" xml:space="preserve">${text}</g></svg>`)
+      image = await sharp(page).timeout({ seconds: 7 }).png().toBuffer()
+    } else image = Buffer.from(preview.data)
+    if (watermark) {
+      const { width, height } = await sharp(image).metadata()
+      if (!width || !height) return null
+      const canvasWidth = Math.max(185, width)
+      const banner = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${canvasWidth}" height="30">
+        <rect width="${canvasWidth}" height="30" fill="#172435"/>
+        <text x="8" y="20" fill="#ffffff" font-family="sans-serif" font-size="13">SecTalk · View-only</text></svg>`)
+      image = await sharp({ create: { width: canvasWidth, height: height + 30, channels: 4, background: '#ffffff' } })
+        .composite([{ input: image, left: Math.floor((canvasWidth - width) / 2), top: 0 },
+          { input: banner, left: 0, top: height }]).timeout({ seconds: 7 }).png().toBuffer()
+    }
+    return image.length <= 3 * 1024 * 1024 ? { kind: 'image', data: Uint8Array.from(image) } : null
+  } catch {
+    return null
+  } finally {
+    runningDecodes--
+  }
+}

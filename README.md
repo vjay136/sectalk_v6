@@ -36,6 +36,8 @@ Calls use Supabase for signaling and WebRTC for media. With no TURN configured, 
 
 Calls → Network diagnostics runs browser-only probes when requested. Set `CALL_DIAGNOSTICS_TURN_URLS` and `CALL_DIAGNOSTICS_TURN_SECRET` for a dedicated relay with its own credential scope and allocation quotas. Configure `turn:` UDP and TCP endpoints and a `turns:` endpoint with a trusted certificate on port 443. Set `CALL_DIAGNOSTICS_BANDWIDTH=1` to enable the bounded data-channel estimate. `CALL_DIAGNOSTICS_STUN_URL` overrides the regular STUN endpoint for diagnostics.
 
+For signed workspace audit exports, configure `SECTALK_AUDIT_SIGNING_PRIVATE_KEY` as base64url-encoded Ed25519 PKCS #8 DER. Distribute the trusted signer fingerprint through an independent channel and retain the public key for old exports when rotating keys. The public endpoint at `/api/audit/export` returns the SPKI key and SHA-256 fingerprint. Verify an export's `signature` over the exact UTF-8 `payload` string with the trusted key before using the enclosed entries.
+
 ## Verify
 
 - `npm test` checks local scam and URL warning rules.

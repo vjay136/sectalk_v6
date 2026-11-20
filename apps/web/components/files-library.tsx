@@ -7,6 +7,7 @@ import { downloadChatFile, downloadName, fetchChatFile, saveDownload, type ChatF
 import { SectionTabs } from './section-tabs'
 import { Vault } from './vault'
 import { AttachmentDetails } from './attachment-details'
+import { MyAttachmentQuarantine } from './my-attachment-quarantine'
 
 type LibraryFile=ChatFile & {message_id:string;chat_id:string;created_at:string}
 const pageSize=25
@@ -124,6 +125,7 @@ function ChatLibrary({openChat}: {openChat:(id:string)=>void}) {
       <button className="secondary" type="button" disabled={!hasMore||busy||!visible} onClick={()=>setPage(page+1)}>Next</button>
     </div>}
     <DeletedAttachments revision={deletionRevision}/>
+    <MyAttachmentQuarantine onPublished={()=>void load()}/>
     {detailFile && <AttachmentDetails key={detailFile} file={detailFile} close={()=>setDetailFile(null)}
       onDeleted={()=>{setDetailFile(null);setDeletionRevision(value=>value+1);void load()}}/>}
   </section>

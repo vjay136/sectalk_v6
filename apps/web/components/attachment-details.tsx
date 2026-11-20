@@ -9,7 +9,7 @@ import { AttachmentPreview } from './attachment-preview'
 
 type Details = { filename: string; size_bytes: number; shared_at: string; can_view_history: boolean }
 type Activity = {
-  event: 'share' | 'view' | 'download' | 'link_created' | 'link_revoked' | 'link_view' | 'link_download'
+  event: 'share' | 'view' | 'download' | 'link_created' | 'link_revoked' | 'link_view' | 'link_download' | 'link_preview'
   participant: 'owner' | 'recipient' | 'link_visitor'
   occurred_at: string
 }
@@ -22,6 +22,7 @@ const labels: Record<Activity['event'], string> = {
   link_revoked: 'Share link revoked',
   link_view: 'Share link details viewed',
   link_download: 'Shared attachment downloaded',
+  link_preview: 'View-only preview opened',
 }
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 

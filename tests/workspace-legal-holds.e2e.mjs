@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHmac, randomUUID } from 'node:crypto'
+import { setTimeout } from 'node:timers/promises'
 import { createClient } from '@supabase/supabase-js'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
@@ -94,7 +95,20 @@ try {
   await button(governance, 'Place hold').click()
   await governance.getByText('Preservation hold placed.', { exact: true }).waitFor()
 
+  await button(nav(memberPage), 'Search').click()
+  await button(memberPage.getByRole('group', { name: 'Search categories' }), 'Room posts').click()
+  await memberPage.getByLabel('Search terms').fill(original)
+  let searchRequests = 0
+  memberPage.on('response', response => {
+    if (response.url().endsWith('/rpc/st_v6_search') && response.ok()) searchRequests++
+  })
+  await memberPage.getByRole('button', { name: 'Search SecTalk', exact: true }).last().click()
+  const visibleOriginal = memberPage.getByRole('article').getByText(original, { exact: true })
+  await visibleOriginal.waitFor()
+  for (let attempt = 0; searchRequests < 2 && attempt < 35; attempt++) await setTimeout(100)
+  assert.ok(searchRequests >= 2, 'Search refresh did not confirm the Realtime subscription')
   data(await owner.client.rpc('st_v6_room_post_action', { p_room: room, p_post: post, p_action: 'redact' }))
+  await visibleOriginal.waitFor({ state: 'detached', timeout: 5000 })
   const removed = data(await member.client.from('st_v6_room_posts').select('body').eq('room_id', room).eq('id', post).single())
   assert.equal(removed.body, 'Message removed')
   const search = data(await member.client.rpc('st_v6_search', { p_query: original, p_kind: 'room', p_filters: {} }))

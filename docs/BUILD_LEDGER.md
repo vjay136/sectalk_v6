@@ -91,11 +91,21 @@
 | P10 | Add idempotent, ordered worker claims and audited replay for notification queues | SQL, real staff TOTP browser, and push/email regressions |
 | P10 | Preserve scoped workspace records under legal hold | Genuine TOTP, encrypted previous content, tenant and date boundaries, purge blocking and audited release |
 | P5 | Schedule reversible archived-room deletion with a retention period | Role-scoped browser controls and SQL verification of grace, actual purge, hold and restore |
+| P10 | Preserve direct attachment bytes on qualified holds | Genuine staff TOTP, independent assignment and overlap tests, real Storage purge after release |
+| P10 | Send and export scheduled private operational reports | Browser and Mailpit verify identical suppressed CSV, proper role checks and pause |
+| P5 | Remove redacted or deleted search results without exposing protected originals | Browser observed live removal under a hold and SQL verified encryption and scope |
+| P10 | Add response targets and filters to the abuse moderation queue | Staff MFA, typed timer tests, normal review, reporter timeline and evidence redaction passed |
+| P5 | Scan validated attachment bytes and support controlled quarantine review | Local ClamAV, real outage recovery, authenticated sender retry, staff step-up and audit |
+| P10 | Manage workspace retention and scoped file preservation in their operator tabs | Separate role-verified browser gates and actual protected room and Storage purge checks |
+| P5 | Record consented meeting audio and a selected camera | Actual isolated LiveKit Egress, playable OGG/MP4, exact tracks, private downloads and fail-closed discard |
+| P10 | Verify visible audit rows and sign filtered workspace exports | Genuine MFA, database integrity checks, Edge file export and independent Ed25519 verification |
+| P10 | Export anonymized daily and weekly security reports | Browser and API verified PDF and CSV, period boundaries and small-cohort suppression |
+| P5 | Add expiring view-only attachment sharing and optional watermark | Browser and SQL verify safe guest pixels, original-byte denial, view limits, expiry, revoke and audit |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 107 verified features. The next checkpoint is due at 117, and the matrix records evidence as each feature passes.
+Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 117 verified features. The next checkpoint is due at 127, and the matrix records evidence as each feature passes.
 
 ## Remaining work by dependency
 

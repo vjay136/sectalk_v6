@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { db } from '../lib/data'
 import { SectionTabs } from './section-tabs'
+import { ScheduledOperationalReports } from './scheduled-operational-reports'
 import styles from './operational-metrics.module.css'
 
 const operations = {
@@ -75,5 +76,6 @@ export function OperationalMetrics() {
         </tr>)}</tbody>
       </table>
     </div>}
+    <ScheduledOperationalReports/>
   </section>
 }

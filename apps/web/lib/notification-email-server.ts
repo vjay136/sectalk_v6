@@ -22,24 +22,31 @@ function appOrigin() {
   return null
 }
 
-export function notificationMailConfiguration() {
+export function notificationSMTPConfiguration() {
   const {
     SECTALK_NOTIFICATION_SMTP_HOST: host, SECTALK_NOTIFICATION_SMTP_PORT: portValue,
     SECTALK_NOTIFICATION_SMTP_FROM: from, SECTALK_NOTIFICATION_SMTP_USER: user,
-    SECTALK_NOTIFICATION_SMTP_PASSWORD: pass, SECTALK_NOTIFICATION_DRAIN_SECRET: secret,
+    SECTALK_NOTIFICATION_SMTP_PASSWORD: pass,
   } = process.env
   const port = Number(portValue)
   const origin = appOrigin()
   const loopback = host === '127.0.0.1' && !process.env.VERCEL
-  if (!origin || !host || !from || !mailbox.test(from) || !secret || Buffer.byteLength(secret) < 32
+  if (!origin || !host || !from || !mailbox.test(from)
     || !Number.isSafeInteger(port) || port < 1 || port > 65535
     || (!loopback && (!user || !pass || ![465, 587, 2525].includes(port)))) return null
-  return { from, secret, origin, transport: nodemailer.createTransport({
+  return { from, origin, transport: nodemailer.createTransport({
     host, port, secure: port === 465, requireTLS: !loopback && port !== 465,
     auth: user && pass ? { user, pass } : undefined,
     connectionTimeout: 4000, greetingTimeout: 4000, socketTimeout: 6000,
     disableFileAccess: true, disableUrlAccess: true, maxRecipients: 1,
   }) }
+}
+
+export function notificationMailConfiguration() {
+  const secret = process.env.SECTALK_NOTIFICATION_DRAIN_SECRET
+  if (!secret || Buffer.byteLength(secret) < 32) return null
+  const mail = notificationSMTPConfiguration()
+  return mail ? {...mail, secret} : null
 }
 
 export function notificationDrainAuthorized(request: Request, secret: string) {

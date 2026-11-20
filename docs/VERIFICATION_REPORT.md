@@ -5,9 +5,9 @@
 | Check | Result |
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
-| Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
-| Unit tests | 29 passed, including SMTP handling, VAPID payload encryption, credential detection, provider log redaction and the existing safety, locale, file and readiness checks |
-| Supabase database integration | All 72 staged checkpoint rollback suites passed, including media quality, workspace holds, room retirement, queue replay and attachment retention |
+| Clean source snapshot | The staged 117-feature snapshot passed locked dependency installation, its production build and targeted Edge tests before commit. The Windows npm launcher reported Node 26 while the project declares Node 22 and 24. |
+| Unit tests | 32 passed, including signed-report payload, SMTP, VAPID encryption, provider log redaction, safety, locale, file and readiness checks |
+| Supabase database integration | All 79 staged checkpoint rollback suites passed, including audit integrity scope, abuse timers, scanner review and view-only sharing |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -82,6 +82,10 @@
 | Network diagnostics and call recovery | Edge and isolated Coturn verified UDP, TCP and TLS relay checks, then restored an active real call after TURN and signaling disruption. LiveKit preserved the attendee during signaling resume. |
 | Attachment processing | Edge, real private Storage and a separate worker verified safe image/text/PDF preview, delete access revocation, purge grace and physical bytes removal. |
 | Search and governance | Browser verified phrase and partial searches, protected files and room navigation, real TOTP, private hold status, scheduling and room restore. SQL verified no early purge, hold precedence, encrypted preservation, and audited release. |
+| Abuse queue and signed audits | A clean Edge build verified genuine TOTP, report timer filters, review and reporter progress, and Ed25519-signed audit downloads. Database fixtures denied other tenants and detected a changed audit row. |
+| Protected file rendering and review | ClamAV and real private Storage verified scanner outage quarantine, clean re-scan, staff review and sender retry. Clean Edge verified password-protected guest rendering with a pixel watermark and denial of original-byte retrieval from view-only links. |
+| Meeting recordings | Disposable LiveKit Egress encoded real synthetic audio and single-camera video. Both outputs decoded in Edge. Consent, exact tracks, withdrawal, camera loss, late joins and private download boundaries passed. |
+| Reports | A local Mailpit inbox received privacy-suppressed scheduled CSV, and the browser exported the identical file. Clean Edge and the protected export API passed daily and weekly PDF and CSV checks. |
 | Updated candidate | `npm run build` passed with synchronized drafts, private notification controls, media checks and scoped analytics. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |

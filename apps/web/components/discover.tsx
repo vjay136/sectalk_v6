@@ -95,8 +95,10 @@ export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initial
   useEffect(()=>{if(initialQuery)void search({query:initialQuery,kind:'all',filters:{}})},[initialQuery,search])
 
   const directIds=results?.filter(row=>row.kind==='direct').map(row=>row.id).sort().join(',')
+  const roomPostIds=results?.filter(row=>row.kind==='room').map(row=>row.id).sort().join(',')
+  const hasResults=!!results?.length
   useEffect(()=>{
-    if(view!=='search'||!directIds||!matched)return
+    if(view!=='search'||!hasResults||!matched)return
     let active=true
     let version=0
     const refresh=async()=>{
@@ -106,17 +108,25 @@ export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initial
       if(error){setResults(null);setError('Search is unavailable. Try again.');return}
       setResults(data as Result[])
     }
-    const channel=liveChannel('search-results:'+crypto.randomUUID(),refresh)
-      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'st_messages',filter:'id=in.('+directIds+')'},event=>{
+    const channel=directIds||roomPostIds?liveChannel('search-results:'+crypto.randomUUID(),refresh):null
+    if(directIds)channel?.on('postgres_changes',{event:'UPDATE',schema:'public',table:'st_messages',filter:'id=in.('+directIds+')'},event=>{
         if(event.new.revoked_at){
           ++version
           setResults(current=>current?.filter(row=>row.kind!=='direct'||row.id!==event.new.id)||null)
         }else void refresh()
-      }).subscribe(status=>{if(status==='SUBSCRIBED')void refresh()})
+      })
+    if(roomPostIds)channel?.on('postgres_changes',{event:'UPDATE',schema:'public',table:'st_v6_room_posts',
+      filter:'id=in.('+roomPostIds+')'},event=>{
+        if(event.new.removed_at){
+          ++version
+          setResults(current=>current?.filter(row=>row.kind!=='room'||row.id!==event.new.id||row.scope_id!==event.new.room_id)||null)
+        }else void refresh()
+      })
+    channel?.subscribe(status=>{if(status==='SUBSCRIBED')void refresh()})
     const reconnect=onReconnect(refresh)
     const timer=window.setInterval(()=>{if(document.visibilityState==='visible')void refresh()},15000)
-    return ()=>{active=false;clearInterval(timer);reconnect();void db!.removeChannel(channel)}
-  },[directIds,matched,view])
+    return ()=>{active=false;clearInterval(timer);reconnect();if(channel)void db!.removeChannel(channel)}
+  },[directIds,roomPostIds,hasResults,matched,view])
 
   const sender=filters.sender?.trim().replace(/^@/,'').toLowerCase()
   const normalizedFilters={...filters,sender:sender||undefined}

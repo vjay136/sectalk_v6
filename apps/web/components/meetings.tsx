@@ -12,6 +12,7 @@ import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './worksp
 import { MeetingEngagement } from './meeting-engagement'
 import { MeetingCollaboration } from './meeting-collaboration'
 import { MeetingModeratorActions, MeetingParticipantModeration, useMeetingModeration } from './meeting-moderation'
+import { MeetingRecording } from './meeting-recording'
 import type { MeetingChoices } from './meeting-prejoin'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
@@ -266,6 +267,7 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
         busy={actionBusy} moderate={moderation.act}/>}
     {self==='admitted' && meeting.status==='live' && !ended && mediaReady && !media &&
       <MeetingPrejoin busy={busy} join={connect} requestMedia={requestMedia}/>}
+    <MeetingRecording meeting={meeting.id} workspace={meeting.workspace_id} ended={ended}/>
     {media && self==='admitted' && !ended && <MeetingMedia {...media} meeting={meeting.id} focus={focus}
       screenShareDisabled={meeting.screen_share_disabled} leave={refreshMedia}/>}
     {self==='admitted'&&meeting.status==='live'&&!ended&&<>

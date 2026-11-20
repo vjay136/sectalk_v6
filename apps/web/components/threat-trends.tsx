@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { categories, db } from '../lib/data'
+import { SecurityReports } from './security-reports'
 import styles from './threat-trends.module.css'
 
 type Category = keyof typeof categories
@@ -62,5 +63,6 @@ export function ThreatTrends() {
         </tr>)}</tbody>
       </table>
     </div>}
+    <SecurityReports/>
   </section>
 }

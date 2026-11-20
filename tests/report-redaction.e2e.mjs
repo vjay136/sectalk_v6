@@ -52,9 +52,10 @@ data(await author.client.rpc('st_respond',{p_chat:chat,p_accept:true}))
 const id=randomUUID()
 const body='Shared redaction evidence '+suffix
 data(await author.client.rpc('st_send',{p_chat:chat,p_id:id,p_body:body}))
-data(await reporter.client.rpc('st_v5_report',{
+const report=data(await reporter.client.rpc('st_v5_report',{
   p_chat:chat,p_message:id,p_category:'harassment',p_details:'Review fixture '+suffix,
 }))
+assert.equal((await reporter.client.rpc('st_v6_abuse_queue')).error?.code,'42501')
 
 const browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER})
 try{
@@ -76,9 +77,21 @@ try{
   await moderator.getByRole('button',{name:'Set up authenticator',exact:true}).click()
   const secret=(await moderator.locator('.mfa-setup code').textContent()).trim()
   await moderator.getByLabel('Authenticator code',{exact:true}).fill(currentCode(secret))
+  const verification=moderator.waitForResponse(response=>response.url().includes('/auth/v1/factors/')&&response.url().endsWith('/verify'))
   await moderator.getByRole('button',{name:'Verify access',exact:true}).click()
+  assert.equal((await verification).status(),200)
+  const filters=moderator.getByRole('group',{name:'Moderation queue filters'})
+  await filters.getByRole('combobox',{name:'Report category'}).selectOption('harassment')
+  await filters.getByRole('combobox',{name:'Deadline'}).selectOption('next_day')
   await moderator.getByRole('button',{name:new RegExp(author.handle)}).click()
   await moderator.getByText(body,{exact:true}).waitFor()
+  await moderator.getByText('Acknowledge by',{exact:true}).waitFor()
+  await moderator.getByText('Resolve by',{exact:true}).waitFor()
+  await moderator.locator('select[name="action"]').selectOption('reviewing')
+  await moderator.getByLabel('Reason',{exact:true}).fill('Verified initial review')
+  await moderator.getByRole('button',{name:'Record decision',exact:true}).click()
+  await moderator.getByText('Verified initial review',{exact:true}).waitFor()
+  assert.ok(data(await reporter.client.rpc('st_v5_report_timeline',{p_report:report})).some(entry=>entry.action==='reviewing'))
   await moderator.locator('select[name="action"]').selectOption('redact_message')
   await moderator.getByLabel('Reason',{exact:true}).fill('Moderated shared evidence')
   moderator.once('dialog',dialog=>dialog.accept())
@@ -90,7 +103,7 @@ try{
   await nav(recipient).getByRole('button',{name:'Safety',exact:true}).click()
   await recipient.getByRole('button',{name:/Harassment/}).click()
   await recipient.getByText('Reported message removed',{exact:true}).waitFor()
-  console.log('Passed real TOTP redaction, live tombstone, preserved case evidence, and reporter status.')
+  console.log('Passed real TOTP, abuse queue SLA filters, reporter acknowledgment, live redaction and preserved case evidence.')
 }finally{
   await browser.close()
 }
