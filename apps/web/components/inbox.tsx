@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import dynamic from 'next/dynamic'
 import {
   ArrowLeft, Ban, Bell, BellOff, CalendarDays, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Inbox as InboxIcon, LockKeyhole, LogOut, ShieldAlert,
-  Hash, ListChecks, MessageCircle, Phone, Pin, Plus, Search, Send, Shield, ShieldCheck, UserRound, Users, Video, X,
+  Download, Hash, ListChecks, MessageCircle, MoreHorizontal, Paperclip, Phone, Pin, Search, Send, Shield, ShieldCheck, Smile, UserPlus, UserRound, Users, Video, X,
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
 import { useCalling } from '../lib/calling'
@@ -17,10 +18,17 @@ import { Meetings } from './meetings'
 import { Vault } from './vault'
 import { GlobalSearch, Notifications } from './discover'
 import { SectionTabs } from './section-tabs'
+import { downloadChatFile, extensions, sendChatFile, supportedFile, type ChatFile } from '../lib/chat-files'
+import { EmojiText } from './emoji-text'
+import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
 
-export function Avatar({ name, tint = 'green' }: { name: string; tint?: string }) {
+const ChatEmoji=dynamic(()=>import('./chat-emoji'))
+const Friends=dynamic(()=>import('./friends').then(module=>module.Friends))
+const DiscoverySettings=dynamic(()=>import('./friends').then(module=>module.DiscoverySettings))
+
+export function Avatar({ name, tint = 'green', photo }: { name:string; tint?:string; photo?:string }) {
   const initials = name.trim().split(/\s+/).slice(0, 2).map(word => [...word][0]).join('').toUpperCase()
-  return <span className={'avatar ' + tint} aria-hidden="true">{initials || '?'}</span>
+  return <span className={'avatar ' + tint} aria-hidden="true">{photo?<img src={photo} alt="" width={42} height={42}/>:initials||'?'}</span>
 }
 
 type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id: string | null; latest_at: string | null }
@@ -33,14 +41,16 @@ export function Inbox({ user }: { user: string }) {
   const [blocks, setBlocks] = useState<string[]>([])
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar'>(() =>
+  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends'>(() =>
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
-  const [mode, setMode] = useState<'chats' | 'requests'>('chats')
-  const [profileTab, setProfileTab] = useState<'account' | 'availability'>('account')
+  const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
+  const [profileTab, setProfileTab] = useState<'account' | 'availability' | 'discovery' | 'activity' | 'blocked'>('account')
+  const [managedBlock,setManagedBlock]=useState<Chat|null>(null)
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
-  const [newContact, setNewContact] = useState(false)
-  const [report, setReport] = useState<{ chat: string; message: Message | null } | null>(null)
+  const [onboarding,setOnboarding]=useState(false)
+  const [report, setReport] = useState<{ chat: string; message: Message | null; file?:ChatFile } | null>(null)
+  const [lastSeen,setLastSeen]=useState<{chat:string;at:string}|null>(null)
   const [blockCheck, setBlockCheck] = useState(false)
   const [online, setOnline] = useState(false)
   const [broadcastOnline, setBroadcastOnline] = useState(false)
@@ -171,8 +181,25 @@ export function Inbox({ user }: { user: string }) {
   const peerPresence = peer ? presence[peer.id] : undefined
   const peerState = peerPresence && Date.parse(peerPresence.expires_at)>Date.now() && peerPresence.state!=='offline' ? peerPresence.state : null
   const blocked = chat ? blocks.includes(peerId(chat, user)) : false
+  const acceptedChat=chat?.status==='accepted'&&!blocked?chat.id:null
+  const myExtras=useProfileExtras(profile?.id)
+  const peerExtras=useProfileExtras(acceptedChat?peer?.id:undefined)
+  useEffect(()=>{
+    if(!acceptedChat) return
+    let active=true
+    const check=async()=>{
+      const {data,error}=await db!.rpc('st_v5_last_seen',{p_chat:acceptedChat})
+      if(active) setLastSeen(!error&&typeof data==='string'?{chat:acceptedChat,at:data}:null)
+    }
+    void check()
+    const timer=window.setInterval(check,12000)
+    return ()=>{active=false;window.clearInterval(timer)}
+  },[acceptedChat])
+  const lastSeenLabel=lastSeen&&lastSeen.chat===acceptedChat
+    ? 'Last seen '+new Date(lastSeen.at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : ''
   const requests = chats.filter(item => item.status === 'pending' && item.requester !== user && !blocks.includes(peerId(item, user)))
-  const visible = chats.filter(item => (mode === 'requests' ? item.status === 'pending' : item.status === 'accepted') &&
+  const visible = chats.filter(item => (mode==='chats'?item.status==='accepted':
+    item.status==='pending'&&(mode==='sent'?item.requester===user:item.requester!==user&&!blocks.includes(peerId(item,user)))) &&
     (!search || [profiles[peerId(item, user)]?.name, profiles[peerId(item, user)]?.handle]
       .some(value => value?.toLowerCase().includes(search.toLowerCase().trim()))))
   const callerId = call.call ? (call.call.caller === user ? call.call.callee : call.call.caller) : ''
@@ -186,17 +213,36 @@ export function Inbox({ user }: { user: string }) {
     setRequestedMeeting(id)
     setTab('meetings')
   }
+  function openRequests() {
+    setMode('requests');select(null)
+  }
+  async function sendRequest(handle:string) {
+    if(working)return
+    setWorking(true)
+    try{
+      const request=await db!.rpc('st_request',{p_handle:handle})
+      if(request.error)throw request.error
+      if(!request.data)throw new Error('This contact is unavailable.')
+      const {data,error}=await db!.from('st_chats').select('id,status,requester').eq('id',request.data).single()
+      if(error)throw error
+      const sent=data.requester===user
+      setMode(data.status==='accepted'?'chats':sent?'sent':'requests')
+      setNotice(data.status==='accepted'?'You’re already connected.':data.status==='declined'?'This request is closed.':
+        sent?'Contact request is pending.':'This person already sent you a request.')
+      await refresh()
+      select(data.id)
+    }catch(error){setNotice(formatError(error,'Could not send the request.'))}
+    finally{setWorking(false)}
+  }
 
   async function run(name: string, input: Record<string, unknown>, success: () => void = () => {}) {
     if (working) return
     setWorking(true)
     try {
-      const { data, error } = await db!.rpc(name, input)
+      const { error } = await db!.rpc(name, input)
       if (error) throw error
-      if (name === 'st_request' && !data) throw new Error('This contact is unavailable.')
       success()
       await refresh()
-      if (name === 'st_request') select(data)
     } catch (error) {
       setNotice(formatError(error, 'Please try again.'))
     } finally {
@@ -205,12 +251,14 @@ export function Inbox({ user }: { user: string }) {
   }
 
   if (profile === undefined) return <main className="center-page"><Brand /><p role="status">{notice || 'Loading your workspace…'}</p>{notice && <button className="secondary" onClick={refresh}>Try again</button>}<button className="text-button" onClick={() => void db!.auth.signOut({ scope: 'local' })}>Sign out</button></main>
-  if (!profile) return <main className="center-page"><Brand /><ProfileForm profile={null} onSave={refresh} /><button className="text-button" onClick={() => void db!.auth.signOut({ scope: 'local' })}>Sign out</button></main>
+  if (!profile) return <main className="center-page"><Brand /><ProfileForm profile={null} onSave={async()=>{setOnboarding(true);await refresh()}}/><button className="text-button" onClick={() => void db!.auth.signOut({ scope: 'local' })}>Sign out</button></main>
+  if(onboarding) return <main className="discovery-onboarding"><Brand/><DiscoverySettings user={user} complete={()=>setOnboarding(false)}/></main>
 
   return <main className={'workspace ' + (selected && tab === 'inbox' ? 'thread-open' : '') + (tab !== 'inbox' ? ' full-panel' : '')}>
     <nav className="rail" aria-label="SecTalk features">
       <Brand compact />
       <button className={tab === 'inbox' ? 'active' : ''} aria-current={tab === 'inbox' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>Inbox</span></button>
+      <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>Friends</span></button>
       <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>Calls</span></button>
       <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>Workspaces</span></button>
       <button className={tab==='rooms'?'active':''} aria-current={tab==='rooms'?'page':undefined} onClick={()=>setTab('rooms')}><Hash size={19}/><span>Rooms</span></button>
@@ -225,15 +273,16 @@ export function Inbox({ user }: { user: string }) {
         <button onClick={async () => { await call.end(); void db!.auth.signOut({ scope: 'local' }) }}><LogOut size={19} /><span>Sign out</span></button></div>
     </nav>
     <aside className="inbox-list">
-      <header><Brand /><div className="inbox-heading"><h1>Inbox</h1><button className="primary square" onClick={() => setNewContact(true)} title="New contact" aria-label="New contact"><Plus size={21} /></button></div>
+      <header><Brand /><div className="inbox-heading"><h1>Inbox</h1><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> Find Friends</button></div>
         <div className="input-icon search"><Search size={17} /><input aria-label="Search contacts" placeholder="Search contacts" value={search} onChange={e => setSearch(e.target.value)} /></div>
       </header>
       <div className="tabs" aria-label="Conversation filters">
         <button aria-pressed={mode === 'chats'} className={mode === 'chats' ? 'active' : ''} onClick={() => setMode('chats')}>Chats</button>
-        <button aria-pressed={mode === 'requests'} className={mode === 'requests' ? 'active' : ''} onClick={() => setMode('requests')}>Requests {requests.length > 0 && <span>{requests.length}</span>}</button>
+        <button aria-pressed={mode === 'requests'} className={mode === 'requests' ? 'active' : ''} onClick={openRequests}>Incoming {requests.length > 0 && <span>{requests.length}</span>}</button>
+        <button aria-pressed={mode==='sent'} className={mode==='sent'?'active':''} onClick={()=>{setMode('sent');select(null)}}>Sent</button>
       </div>
       <div className="chat-list">
-        {visible.length === 0 && <div className="list-empty"><InboxIcon size={22} /><strong>{search ? 'No matching contacts' : mode === 'requests' ? 'No pending requests' : 'No conversations yet'}</strong><p>{!search && mode === 'chats' ? 'Send a request to someone you know.' : ''}</p></div>}
+        {visible.length === 0 && <div className="list-empty"><InboxIcon size={22} /><strong>{search ? 'No matching contacts' : mode==='chats'?'No conversations yet':mode==='sent'?'No sent requests':'No incoming requests'}</strong><p>{!search&&mode==='chats'?'Send a request to someone you know.':''}</p></div>}
         {visible.map(item => {
           const person = profiles[peerId(item, user)]
           return <button key={item.id} className={'chat-item ' + (item.id === selected ? 'selected' : '')} onClick={() => select(item.id)}>
@@ -244,20 +293,40 @@ export function Inbox({ user }: { user: string }) {
           </button>
         })}
       </div>
-      <div className="list-footer"><Avatar name={profile.name} /><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
+      <div className="list-footer"><Avatar name={profile.name} photo={myExtras.photo}/><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
     </aside>
     {tab === 'profile' ? <section className="content-page"><h1>Profile</h1>
-      <SectionTabs label="Profile sections" value={profileTab} onChange={setProfileTab} options={ [['account', 'Account'], ['availability', 'Availability']] }/>
+      <SectionTabs label="Profile sections" value={profileTab} onChange={setProfileTab} options={ [['account','Account'],['availability','Availability'],['discovery','Discovery'],['activity','Activity & reports'],['blocked','Blocked contacts']] }/>
       {profileTab === 'account' ? <><div className="profile-handle"><code>@{profile.handle}</code><button className="secondary" onClick={async () => {
         try { await navigator.clipboard.writeText(profile.handle); setNotice('Handle copied.') }
         catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
       }}><Copy size={15} /> Copy handle</button></div>
-      <ProfileForm profile={profile} onSave={refresh} /></> :
+      <ProfileForm profile={profile} onSave={refresh} /><ProfileAppearance user={user} profile={myExtras}/></> :
+      profileTab==='discovery'?<DiscoverySettings user={user}/>:
+      profileTab==='activity'?<ProfileActivity openReports={()=>setTab('safety')}/>:
+      profileTab==='blocked'?<div className="panel release-panel"><h2>Contact controls</h2>
+        <p>Blocking prevents new messages, audio calls, and video calls from the contact. Existing messages remain in your chat.</p>
+        {!chats.length&&<p>No contacts to manage.</p>}
+        {[...chats].sort((a,b)=>Number(blocks.includes(peerId(b,user)))-Number(blocks.includes(peerId(a,user)))).map(item=>{
+          const contact=peerId(item,user)
+          const restricted=blocks.includes(contact)
+          return <div className="release-row" key={item.id}><strong>{profiles[contact]?.name||'Contact'}</strong>
+            <span className="pill">{restricted?'Blocked':item.status==='accepted'?'Accepted':'Request'}</span>
+            <button type="button" className={restricted?'secondary':'danger'} disabled={working} onClick={()=>setManagedBlock(item)}>
+              {restricted?'Unblock':'Block'}
+            </button>
+          </div>
+        })}
+      </div> :
       <div className="panel release-panel"><label>Availability for approved contacts
         <select value={presence[user]?.state||'offline'} disabled={working} onChange={event=>void run('st_v3_set_presence',{p_state:event.target.value})}>
           <option value="offline">Hidden</option><option value="online">Online</option><option value="away">Away</option><option value="busy">Busy</option>
-        </select></label><p>Availability expires while you are away from SecTalk.</p></div>}
+        </select></label>
+        <label className="task-check"><input type="checkbox" checked={myExtras.details?.share_last_seen||false} disabled={working}
+          onChange={event=>void run('st_v5_set_last_seen',{p_enabled:event.target.checked},()=>void myExtras.refresh())}/> Share last seen</label>
+        <p>Accepted contacts can see your last activity for up to seven days when both availability and last seen are shared.</p></div>}
       </section> :
+      tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}/>:
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} /> :
       tab==='workspaces'||tab==='rooms'||tab==='tasks'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} /> :
       tab === 'billing' ? <Billing user={user} /> :
@@ -267,8 +336,9 @@ export function Inbox({ user }: { user: string }) {
       tab === 'notifications' ? <Notifications user={user} openMeeting={openMeeting}/> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
-        <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} />
-          <div><h2>{peer?.name || 'Contact'}</h2><p>{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : chat.status === 'accepted' ? 'Accepted contact' : 'Contact request'}</p></div>
+        <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={peerExtras.photo}/>
+          <div><h2>{peer?.name || 'Contact'}</h2><p>{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : lastSeenLabel || (chat.status === 'accepted' ? 'Accepted contact' : 'Contact request')}</p>
+            {peerExtras.details?.status_message&&<p className="thread-profile-status" title={peerExtras.details.status_message}>{peerExtras.details.status_message}</p>}</div>
           <div className="thread-actions">
             {chat.status === 'accepted' && !blocked && <>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start audio call" title="Start audio call" onClick={() => void call.start(chat.id, false)}><Phone size={18} /></button>
@@ -279,7 +349,8 @@ export function Inbox({ user }: { user: string }) {
           </div>
         </header>
         {blockCheck && <div className="inline-warning"><span>{blocked ? 'Allow this contact to reach you again?' : 'Block new messages and calls from this contact?'}</span><button className="danger" disabled={working} onClick={() => void run('st_set_block', { p_chat: chat.id, p_block: !blocked }, () => { setBlockCheck(false); setNotice(blocked ? 'Contact unblocked.' : 'Contact blocked.') })}>{blocked ? 'Unblock' : 'Block'}</button><button className="secondary" onClick={() => setBlockCheck(false)}>Cancel</button></div>}
-        {chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} hints={hints} blocked={blocked} inform={setNotice} onReport={message => setReport({ chat: chat.id, message })} /> :
+        {chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} selfName={profile.name} peerName={peer?.name||'Contact'} hints={hints}
+          blocked={blocked} inform={setNotice} onReport={(message,file) => setReport({ chat:chat.id,message,file })} /> :
           <div className="empty-thread"><div className="card-icon"><ShieldCheck size={26} /></div>
             <h2>{chat.status === 'declined' ? 'Request declined' : chat.requester === user ? 'Request sent' : 'New contact request'}</h2>
             <p>{chat.status === 'declined' ? 'This conversation is closed.' : chat.requester === user ? 'You can chat and call once this contact accepts.' : 'Accept to allow this person to message or call you.'}</p>
@@ -289,16 +360,19 @@ export function Inbox({ user }: { user: string }) {
             </div>}
           </div>}
       </section> : <section className="thread"><header className="thread-header default-header"><h2>Messages</h2><span className="pill"><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} />{online || broadcastOnline ? 'Live updates' : 'Syncing'}</span></header>
-        <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>Your conversations</h2><p>Choose a chat or add a contact to start talking.</p><button className="primary" onClick={() => setNewContact(true)}><Plus size={17} /> New contact</button></div>
+        <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>Your conversations</h2><p>Choose a chat or add a contact to start talking.</p><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> Find Friends</button></div>
       </section>}
     {notice && <div className="toast" role="status"><CircleHelp size={18} /><span>{notice}</span><button className="icon" aria-label="Dismiss notice" onClick={() => setNotice('')}><X size={17}/></button></div>}
-    {newContact && <Dialog title="New contact" close={() => setNewContact(false)}><form onSubmit={event => {
-      event.preventDefault()
-      const value = new FormData(event.currentTarget).get('handle')
-      void run('st_request', { p_handle: value }, () => { setNewContact(false); setMode('requests') })
-    }}><p>Send a request using the contact’s exact SecTalk handle.</p><label>SecTalk handle<input name="handle" required maxLength={24} pattern="[a-zA-Z0-9_]{3,24}" placeholder="e.g. avery_m" /></label><button className="primary" disabled={working}>Send request <Send size={16}/></button></form></Dialog>}
-    {report && <ReportDialog chat={report.chat} message={report.message} close={() => setReport(null)} inform={setNotice} />}
-    {call.call && <CallPanel key={call.call.id} state={call} self={user} name={profiles[callerId]?.name || 'Contact'} />}
+    {managedBlock&&<Dialog title={blocks.includes(peerId(managedBlock,user))?'Unblock contact?':'Block contact?'} close={()=>setManagedBlock(null)}>
+      <p>{blocks.includes(peerId(managedBlock,user))?'Allow new messages and calls from this contact.':'Stop new messages and calls from this contact.'}</p>
+      <button className="danger" type="button" disabled={working} onClick={()=>{
+        const block=!blocks.includes(peerId(managedBlock,user))
+        void run('st_set_block',{p_chat:managedBlock.id,p_block:block},()=>{setManagedBlock(null);setNotice(block?'Contact blocked.':'Contact unblocked.')})
+      }}>{blocks.includes(peerId(managedBlock,user))?'Unblock':'Block'}</button>
+    </Dialog>}
+    {report && <ReportDialog chat={report.chat} message={report.message} file={report.file} close={() => setReport(null)} inform={setNotice} />}
+    {call.call && <CallPanel key={call.call.id} state={call} self={user} name={profiles[callerId]?.name || 'Contact'}
+      openChat={select} reportContact={chatId => setReport({chat:chatId,message:null})} />}
   </main>
 }
 
@@ -387,8 +461,9 @@ const reactionOptions = [
   { emoji: '✅', label: 'Check mark' }, { emoji: '👀', label: 'Eyes' },
 ]
 
-function Thread({ chat, self, hints, blocked, onReport, inform }: {
-  chat: Chat; self: string; hints: EventTarget; blocked: boolean; onReport: (message: Message) => void; inform: (notice: string) => void
+function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, inform }: {
+  chat: Chat; self: string; selfName:string; peerName:string; hints: EventTarget; blocked: boolean
+  onReport: (message: Message,file?:ChatFile) => void; inform: (notice: string) => void
 }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
@@ -399,6 +474,15 @@ function Thread({ chat, self, hints, blocked, onReport, inform }: {
   const [showSearch, setShowSearch] = useState(false)
   const [results, setResults] = useState<Message[] | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
+  const [removing,setRemoving]=useState<{message:Message;action:'hide'|'revoke'}|null>(null)
+  const [hidden,setHidden]=useState<string[]>([])
+  const [files,setFiles]=useState<Record<string,ChatFile>>({})
+  const [attachment,setAttachment]=useState<{file:File;id:string}|null>(null)
+  const [emoji,setEmoji]=useState(false)
+  const [reacting,setReacting]=useState<string|null>(null)
+  const filePicker=useRef<HTMLInputElement>(null)
+  const composerInput=useRef<HTMLTextAreaElement>(null)
+  const cursor=useRef<{start:number;end:number}|null>(null)
   const [replying, setReplying] = useState<Message | null>(null)
   const [history, setHistory] = useState<{ id: number; body: string; created_at: string }[] | null>(null)
   const [clock, setClock] = useState(0)
@@ -409,10 +493,17 @@ function Thread({ chat, self, hints, blocked, onReport, inform }: {
   const feed = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
   const pending = useRef<{ id: string; body: string; reply: string | null } | null>(null)
+  const revoked=useRef(new Map<string,Message>())
   const [loadingOlder, setLoadingOlder] = useState(false)
   const merge = useCallback((rows: Message[]) => {
-    setMessages(previous => [...new Map([...previous, ...rows].map(row => [row.id, row])).values()]
+    for(const row of rows)if(row.revoked_at)revoked.current.set(row.id,row)
+    const current=rows.map(row=>revoked.current.get(row.id)||row)
+    setMessages(previous => [...new Map([...previous, ...current].map(row => [row.id, row])).values()]
       .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)))
+    const updates=new Map(current.map(row=>[row.id,row]))
+    setResults(previous=>previous?.map(row=>updates.get(row.id)||row)??null)
+    setReplying(previous=>previous&&(updates.get(previous.id)?.revoked_at?null:previous))
+    setEditing(previous=>previous&&(updates.get(previous.id)?.revoked_at?null:previous))
   }, [])
 
   const load = useCallback(async (before?: Message) => {
@@ -421,7 +512,17 @@ function Thread({ chat, self, hints, blocked, onReport, inform }: {
     const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(51)
     if (error) { inform('Could not sync messages.'); return }
     if (before || !loaded) setOlder(data.length > 50)
-    merge(data.slice(0, 50))
+    const page=data.slice(0,50) as Message[]
+    const ids=page.map(row=>row.id)
+    if(ids.length){
+      const [removed,attachments]=await Promise.all([
+        db!.from('st_v5_hidden_messages').select('message_id').in('message_id',ids),
+        db!.from('st_v5_files').select('id,message_id,filename,size_bytes').in('message_id',ids),
+      ])
+      if(removed.data) setHidden(previous=>[...new Set([...previous,...removed.data.map(row=>row.message_id)])])
+      if(attachments.data) setFiles(previous=>({...previous,...Object.fromEntries(attachments.data.map(file=>[file.message_id,file]))}))
+    }
+    merge(page)
     setLoaded(true)
   }, [chat.id, inform, loaded, merge])
 
@@ -510,7 +611,19 @@ function Thread({ chat, self, hints, blocked, onReport, inform }: {
   async function send(event: FormEvent) {
     event.preventDefault()
     const body = draft.trim()
-    if (!body || busy || blocked) return
+    if ((!body&&!attachment) || busy || blocked) return
+    if(attachment){
+      setBusy(true)
+      try{
+        await sendChatFile(chat.id,attachment.id,attachment.file,body)
+        nearBottom.current=true
+        setAttachment(null)
+        setDraft(previous=>previous.trim()===body?'':previous)
+        await load()
+      }catch(error){inform(formatError(error,'Could not send the attachment. Try again.'))}
+      finally{setBusy(false)}
+      return
+    }
     const reply = replying?.id ?? null
     const id = pending.current?.body === body && pending.current.reply === reply ? pending.current.id : crypto.randomUUID()
     pending.current = { id, body, reply }
@@ -528,6 +641,26 @@ function Thread({ chat, self, hints, blocked, onReport, inform }: {
     setBusy(false)
   }
 
+  function pickEmoji(value:string) {
+    const range=cursor.current??{start:draft.length,end:draft.length}
+    const text=draft.slice(0,range.start)+value+draft.slice(range.end)
+    if(text.length>4000){inform('The message exceeds the character limit.');return}
+    changeDraft(text);setEmoji(false)
+    requestAnimationFrame(()=>{
+      composerInput.current?.focus()
+      composerInput.current?.setSelectionRange(range.start+value.length,range.start+value.length)
+    })
+  }
+
+  async function download(file:ChatFile) {
+    try{ await downloadChatFile(file) }
+    catch(error){inform(formatError(error,'Could not download the attachment.'))}
+  }
+  async function react(messageId:string,value:string) {
+    const enabled=!reactions.some(row=>row.message_id===messageId&&row.user_id===self&&row.reaction===value)
+    if(await update('st_v2_react',{p_message:messageId,p_reaction:value,p_enabled:enabled})) setReacting(null)
+  }
+
   return <>
     <div className="thread-toolbar">
       <button type="button" className="secondary" aria-expanded={showSearch} onClick={() => { setShowSearch(!showSearch); setResults(null) }}><Search size={15}/> Search messages</button>
@@ -541,10 +674,16 @@ function Thread({ chat, self, hints, blocked, onReport, inform }: {
       const query = String(new FormData(event.currentTarget).get('query')).trim()
       const { data, error } = await db!.rpc('st_v2_search_messages', { p_chat: chat.id, p_query: query })
       if (error) inform('Could not search this conversation.')
-      else setResults((data as Message[]).reverse())
+      else{
+        const rows=(data as Message[]).filter(row=>!row.revoked_at&&!revoked.current.has(row.id))
+        const removed=rows.length?await db!.from('st_v5_hidden_messages').select('message_id').in('message_id',rows.map(row=>row.id)):null
+        if(removed?.error){inform('Could not search this conversation.');return}
+        const hiddenIds=new Set(removed?.data?.map(row=>row.message_id))
+        setResults(rows.filter(row=>!hiddenIds.has(row.id)).reverse())
+      }
     }}><input name="query" aria-label="Search term" placeholder="Search within this chat" required minLength={2} maxLength={150}/>
       <button className="primary">Search</button>{results && <button className="secondary" type="button" onClick={() => setResults(null)}>Clear</button>}</form>}
-    {pin && <div className="thread-pin"><Pin size={16}/><span title={pin.body}>{pin.body}</span>{!blocked && <button type="button" className="text-button" onClick={() => void update('st_v2_pin', { p_chat: chat.id, p_message: null })}>Unpin</button>}</div>}
+    {pin&&!pin.revoked_at&&!hidden.includes(pin.id) && <div className="thread-pin"><Pin size={16}/><span><EmojiText value={pin.body}/></span>{!blocked && <button type="button" className="text-button" onClick={() => void update('st_v2_pin', { p_chat: chat.id, p_message: null })}>Unpin</button>}</div>}
     <div ref={feed} className="feed" role="log" aria-label="Messages" onScroll={() => {
       const node = feed.current
       if (node) nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100
@@ -558,53 +697,111 @@ function Thread({ chat, self, hints, blocked, onReport, inform }: {
       }}>Load earlier messages</button>}
       {results?.length === 0 && <p>No messages match that search.</p>}
       {results === null && loaded && !messages.length && <div className="empty-thread"><div className="card-icon"><MessageCircle size={24}/></div><h2>Say hello</h2><p>This is the start of your conversation.</p></div>}
-      {(results ?? messages).map(message => {
+      {(results ?? messages).filter(message=>!hidden.includes(message.id)).map(message => {
         const own = message.sender === self
+        const file=message.revoked_at?undefined:files[message.id]
+        const original=messages.find(row=>row.id===message.reply_to&&!hidden.includes(row.id))
         const read = own && activity?.read_at && (message.created_at < activity.read_at || message.created_at === activity.read_at && message.id <= (activity.read_id ?? ''))
         const selectedReactions = reactions.filter(reaction => reaction.message_id === message.id)
         return <div className={'message ' + (own ? 'own' : '')} key={message.id}>
-          {message.reply_to && <blockquote className="reply-preview">{messages.find(row => row.id === message.reply_to)?.body || 'Reply to an earlier message'}</blockquote>}
-          <div className="bubble">{message.body}</div>
-          {!own && riskIndicators(message.body).map(flag => <p key={flag} className="risk"><ShieldAlert size={14} />{flag}</p>)}
-          {selectedReactions.length > 0 && <div className="reaction-row">{reactionOptions.filter(option => selectedReactions.some(row => row.reaction === option.emoji)).map(option => <span className="pill" key={option.emoji}>{option.emoji} {selectedReactions.filter(row => row.reaction === option.emoji).length}</span>)}</div>}
+          <div className="message-reaction-header"><strong className="message-sender">{own?selfName+' (you)':peerName}</strong>
+            {!blocked&&!message.revoked_at&&<button className="small-icon add-reaction" type="button" title="Add reaction" aria-label="Add reaction"
+              onClick={()=>setReacting(message.id)}><Smile size={16}/></button>}
+          </div>
+          {!message.revoked_at&&selectedReactions.length>0&&<div className="reaction-row">
+            {[...new Set(selectedReactions.map(row=>row.reaction))].map(value=>{
+              const active=selectedReactions.some(row=>row.reaction===value&&row.user_id===self)
+              const count=selectedReactions.filter(row=>row.reaction===value).length
+              return <button className="pill" type="button" key={value} aria-pressed={active} disabled={blocked}
+                title={active?'Remove your reaction':'Add this reaction'} onClick={()=>void react(message.id,value)}>
+                <EmojiText value={value}/> {count}
+              </button>
+            })}
+          </div>}
+          {message.reply_to&&!message.revoked_at && <blockquote className="reply-preview"><EmojiText value={original?.body||'Reply to an earlier message'}/></blockquote>}
+          <div className={'bubble'+(message.revoked_at?' revoked-message':'')}>
+            {(!file||message.body!=='Attachment: '+file.filename)&&<EmojiText value={message.body}/>}
+            {file&&<button className="attachment-file" type="button" onClick={()=>void download(file)}>
+              <Download size={16}/><span>{file.filename}<small>{Math.ceil(file.size_bytes/1024)} KiB</small></span>
+            </button>}
+          </div>
+          {!own&&!message.revoked_at && riskIndicators(message.body).map(flag => <p key={flag} className="risk"><ShieldAlert size={14} />{flag}</p>)}
           <div className="message-meta"><time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
-            {message.edited_at && <button type="button" className="text-button" onClick={async () => {
+            {message.edited_at&&!message.revoked_at && <button type="button" className="text-button" onClick={async () => {
               const { data, error } = await db!.from('st_v2_message_edits').select('id,body,created_at').eq('message_id', message.id).order('id', { ascending: false }).limit(25)
               if (error) inform('Could not load edit history.')
               else setHistory(data)
             }}>Edited</button>}
-            {own ? read ? <CheckCheck size={15} aria-label="Read" /> : <Check size={13} aria-label="Sent" /> :
-              <button className="small-icon" title="Report message" aria-label="Report message" onClick={() => onReport(message)}><Flag size={13} /></button>}
-            {!blocked && <details className="message-menu">
-              <summary aria-label="Message actions">•••</summary>
+            {!message.revoked_at && (own ? read ? <CheckCheck size={15} aria-label="Read" /> : <Check size={13} aria-label="Sent" /> :
+              <button className="small-icon" title="Report message" aria-label="Report message" onClick={() => onReport(message,file)}><Flag size={13} /></button>)}
+            <details className="message-menu">
+              <summary className="small-icon" aria-label="Message actions" title="Message actions"><MoreHorizontal size={17}/></summary>
               <div className="message-menu-panel">
-                <div className="reaction-row">{reactionOptions.map(option => {
+                {!blocked&&!message.revoked_at&&<><div className="reaction-row">{reactionOptions.map(option => {
                   const active = selectedReactions.some(row => row.user_id === self && row.reaction === option.emoji)
                   return <button type="button" className="small-icon" key={option.emoji} aria-label={option.label} aria-pressed={active}
-                    onClick={() => void update('st_v2_react', { p_message: message.id, p_reaction: option.emoji, p_enabled: !active })}>{option.emoji}</button>
+                    onClick={() => void react(message.id,option.emoji)}>{option.emoji}</button>
                 })}</div>
+                <button type="button" className="text-button" onClick={()=>setReacting(message.id)}>More reactions</button>
                 <button type="button" className="text-button" onClick={() => void update('st_v2_pin', { p_chat: chat.id, p_message: message.id })}>Pin message</button>
                 <button type="button" className="text-button" onClick={() => setReplying(message)}>Reply</button>
-                {own && Date.now() - Date.parse(message.created_at) < 86400000 && <button type="button" className="text-button" onClick={() => setEditing(message)}>Edit message</button>}
+                {own&&!file&&Date.now()-Date.parse(message.created_at)<86400000&&<button type="button" className="text-button" onClick={()=>setEditing(message)}>Edit message</button>}</>}
+                {file&&<button type="button" className="text-button" onClick={()=>void download(file)}>Download attachment</button>}
+                {!own&&!message.revoked_at&&<button type="button" className="text-button" onClick={()=>onReport(message,file)}>Report message</button>}
+                <button type="button" className="text-button" onClick={()=>setRemoving({message,action:'hide'})}>Delete for me</button>
+                {own&&!message.revoked_at&&<button type="button" className="text-button remove-text" onClick={()=>setRemoving({message,action:'revoke'})}>Revoke for everyone</button>}
               </div>
-            </details>}
+            </details>
           </div>
         </div>
       })}
     </div>
     {activity?.typing_until && Date.parse(activity.typing_until) > clock && <p className="thread-typing" role="status">Contact is typing…</p>}
+    {removing&&<Dialog title={removing.action==='hide'?'Delete for me?':'Revoke for everyone?'} close={()=>setRemoving(null)}>
+      <p>{removing.action==='hide'?'This message will be hidden in your SecTalk chat.':'SecTalk will replace this message with a removal notice. Copies already saved and evidence already reported can remain.'}</p>
+      <button type="button" className="danger" disabled={busy} onClick={async()=>{
+        setBusy(true)
+        try{
+          if(await update('st_v5_message_action',{p_message:removing.message.id,p_action:removing.action})){
+            if(removing.action==='hide') setHidden(previous=>[...new Set([...previous,removing.message.id])])
+            else {
+              const {data}=await db!.from('st_messages').select('*').eq('id',removing.message.id).maybeSingle()
+              if(data)merge([data as Message])
+            }
+            setHistory(null);setRemoving(null)
+          }
+        }finally{setBusy(false)}
+      }}>{removing.action==='hide'?'Delete for me':'Revoke message'}</button>
+    </Dialog>}
     {editing && <Dialog title="Edit message" close={() => setEditing(null)}><form onSubmit={async event => {
       event.preventDefault()
       const body = new FormData(event.currentTarget).get('body')
       if (await update('st_v2_edit_message', { p_message: editing.id, p_body: body })) { setEditing(null); setResults(null) }
     }}><label>Message<textarea name="body" required maxLength={4000} defaultValue={editing.body}/></label><button className="primary">Save changes</button></form></Dialog>}
     {history && <Dialog title="Edit history" close={() => setHistory(null)}>{history.map(edit => <article className="release-board-item" key={edit.id}><time dateTime={edit.created_at}>{new Date(edit.created_at).toLocaleString()}</time><p>{edit.body}</p></article>)}</Dialog>}
-    {replying && <div className="thread-pin"><span>Replying to {replying.body}</span><button type="button" className="icon" aria-label="Cancel reply" onClick={() => setReplying(null)}><X size={16}/></button></div>}
+    {replying && <div className="thread-pin"><span>Replying to <EmojiText value={replying.body}/></span><button type="button" className="icon" aria-label="Cancel reply" onClick={() => setReplying(null)}><X size={16}/></button></div>}
+    {attachment&&<div className="thread-pin"><Paperclip size={16}/><span>{attachment.file.name}</span>
+      <button type="button" className="icon" disabled={busy} aria-label="Remove attachment" onClick={()=>setAttachment(null)}><X size={16}/></button>
+    </div>}
+    {emoji&&<Dialog title="Add emoji" close={()=>setEmoji(false)}><ChatEmoji onPick={pickEmoji}/></Dialog>}
+    {reacting&&<Dialog title="Add a reaction" close={()=>setReacting(null)}><ChatEmoji onPick={value=>void react(reacting,value)}/></Dialog>}
     <form className="composer" onSubmit={send}>
-      <textarea aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} required rows={1} maxLength={4000} value={draft} onChange={e => changeDraft(e.target.value)} onKeyDown={event => {
+      <input ref={filePicker} hidden type="file" accept={extensions} onChange={event=>{
+        const file=event.target.files?.[0]
+        event.target.value=''
+        if(!file)return
+        if(!supportedFile(file)){inform('Choose an image, PDF or text file up to 4 MiB.');return}
+        setReplying(null);setAttachment({file,id:crypto.randomUUID()})
+      }}/>
+      <button type="button" className="icon" title="Attach file" aria-label="Attach file" disabled={blocked||busy} onClick={()=>filePicker.current?.click()}><Paperclip size={19}/></button>
+      <button type="button" className="icon" title="Add emoji" aria-label="Add emoji" disabled={blocked||busy} onClick={()=>{
+        if(composerInput.current)cursor.current={start:composerInput.current.selectionStart,end:composerInput.current.selectionEnd}
+        setEmoji(true)
+      }}><Smile size={20}/></button>
+      <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => changeDraft(e.target.value)} onKeyDown={event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
       }} />
-      <button className="primary square" title="Send message" aria-label="Send message" disabled={busy || !draft.trim() || blocked}><Send size={19} /></button>
+      <button className="primary square" title="Send message" aria-label="Send message" disabled={busy||(!draft.trim()&&!attachment)||blocked}><Send size={19} /></button>
     </form>
   </>
 }

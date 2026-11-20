@@ -15,3 +15,10 @@ test('suspicious links get one warning without being visited', () => {
   assert.equal(riskIndicators('https://example.org@other.example/path').length, 1)
   assert.deepEqual(riskIndicators('https://%'), [])
 })
+
+test('messages can show separate warnings for spam, harassment and intimate requests', () => {
+  assert.match(riskIndicators('Claim your prize, click https://example.org')[0], /spam/i)
+  assert.match(riskIndicators("I'm going to hurt you")[0], /harassment/i)
+  assert.match(riskIndicators('Send me explicit photos')[0], /intimate/i)
+  assert.deepEqual(riskIndicators('The campus club hosts a sexual health discussion today.'), [])
+})

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Mic, MicOff, Monitor, MonitorOff, Phone, PhoneOff, Video, VideoOff } from 'lucide-react'
+import { Mic, MicOff, Monitor, MonitorOff, MoreHorizontal, Phone, PhoneOff, Video, VideoOff } from 'lucide-react'
 import { type useCalling } from '../lib/calling'
 
 function Media({ stream, muted, label }: { stream: MediaStream; muted?: boolean; label: string }) {
@@ -18,7 +18,9 @@ function Media({ stream, muted, label }: { stream: MediaStream; muted?: boolean;
   </div>
 }
 
-export function CallPanel({ state, self, name }: { state: ReturnType<typeof useCalling>; self: string; name: string }) {
+export function CallPanel({ state, self, name, openChat, reportContact }: {
+  state: ReturnType<typeof useCalling>; self:string; name:string; openChat:(chat:string)=>void; reportContact:(chat:string)=>void
+}) {
   const [muted, setMuted] = useState(false)
   const [camera, setCamera] = useState(true)
   const { call, local, remote, connection, busy, answer, end, screen, sharingBusy, shareScreen, stopSharing } = state
@@ -33,6 +35,14 @@ export function CallPanel({ state, self, name }: { state: ReturnType<typeof useC
     {remote && <Media stream={remote} label="Remote participant" />}
     {local && call.video && <div className="self-media"><Media stream={screen || local} label={screen ? 'Your shared screen' : 'Your camera preview'} muted /></div>}
     <div className="action-row">
+      <details className="call-menu">
+        <summary className="secondary" aria-label="Call menu"><MoreHorizontal size={18}/> Call menu</summary>
+        <div className="message-menu-panel">
+          <button type="button" className="text-button" onClick={()=>openChat(call.chat_id)}>Open conversation</button>
+          <button type="button" className="text-button" onClick={()=>reportContact(call.chat_id)}>Report contact</button>
+          <button type="button" className="text-button remove-text" onClick={()=>void end()}>{incoming?'Decline call':'End call'}</button>
+        </div>
+      </details>
       {incoming && <button disabled={busy} className="primary" onClick={answer}><Phone size={17} /> Answer</button>}
       {local && <button title={muted ? 'Unmute' : 'Mute microphone'} aria-label={muted ? 'Unmute' : 'Mute microphone'} className="secondary" onClick={() => {
         local.getAudioTracks().forEach(track => { track.enabled = muted })

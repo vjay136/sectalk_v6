@@ -21,7 +21,16 @@ export function GlobalSearch({ openChat,openMeeting }: { openChat:(id:string)=>v
     try {
       const {data,error}=await db!.rpc('st_v3_search',{p_query:values.get('query'),p_kind:kind==='all'?null:kind})
       if(error) throw error
-      setResults(data)
+      const rows=data as Result[]
+      const ids=rows.filter(row=>row.kind==='direct').map(row=>row.id)
+      if(!ids.length){setResults(rows);return}
+      const [hidden,removed]=await Promise.all([
+        db!.from('st_v5_hidden_messages').select('message_id').in('message_id',ids),
+        db!.from('st_messages').select('id').in('id',ids).not('revoked_at','is',null),
+      ])
+      if(hidden.error||removed.error)throw new Error('Search privacy check failed')
+      const excluded=new Set([...hidden.data.map(row=>row.message_id),...removed.data.map(row=>row.id)])
+      setResults(rows.filter(row=>row.kind!=='direct'||!excluded.has(row.id)))
     } catch {setError('Search is unavailable. Try again.')}
     finally {setLoading(false)}
   }

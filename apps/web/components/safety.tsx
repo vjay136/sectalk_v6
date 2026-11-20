@@ -5,25 +5,31 @@ import { ArrowLeft, ArrowRight, Flag, Shield, ShieldAlert, ShieldCheck } from 'l
 import { categories, db, formatError, type Message } from '../lib/data'
 import { Dialog } from './inbox'
 import { SectionTabs } from './section-tabs'
+import { downloadChatFile, type ChatFile } from '../lib/chat-files'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
 type Queue = Report & { subject_handle: string }
 type Case = Queue & {
   details: string; evidence: string | null; suspended_until: string | null
+  attachment?: ChatFile | null
   history: { id: number; action: string; note: string; created_at: string }[]
 }
+type TimelineItem = { action:string; at:string }
+type Notice = { id:number; action:string; until_at:string|null; created_at:string }
 
 const labels: Record<string, string> = {
   open: 'Open', reviewing: 'In review', resolved: 'Resolved', dismissed: 'Dismissed',
   suspend: '24-hour suspension', restore: 'Restriction lifted', viewed: 'Evidence viewed',
+  submitted:'Report received', escalated:'Escalated for review', warn:'Account warning issued',
+  restrict:'Seven-day restriction', remove:'Indefinite restriction',
 }
 
 function DateLabel({ value }: { value: string }) {
   return <time dateTime={value}>{new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>
 }
 
-export function ReportDialog({ chat, message, close, inform }: { chat: string; message: Message | null; close: () => void; inform: (notice: string) => void }) {
+export function ReportDialog({ chat, message, file, close, inform }: { chat:string;message:Message|null;file?:ChatFile;close:()=>void;inform:(notice:string)=>void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -32,7 +38,7 @@ export function ReportDialog({ chat, message, close, inform }: { chat: string; m
     const values = new FormData(event.currentTarget)
     setBusy(true)
     setError('')
-    const result = await db!.rpc('st_report', { p_chat: chat, p_message: message?.id ?? null, p_category: values.get('category'), p_details: values.get('details') })
+    const result = await db!.rpc('st_v5_report', { p_chat: chat, p_message: message?.id ?? null, p_category: values.get('category'), p_details: values.get('details'), p_share_file:values.has('share-file') })
     setBusy(false)
     if (result.error) { setError(formatError(result.error, 'Could not submit your report.')); return }
     close()
@@ -41,6 +47,7 @@ export function ReportDialog({ chat, message, close, inform }: { chat: string; m
   return <Dialog title={message ? 'Report this message' : 'Report this contact'} close={close}><form onSubmit={submit}>
     <p>{message ? 'You’re sharing this message and your notes with SecTalk safety staff.' : 'Your notes will be shared with SecTalk safety staff.'}</p>
     {message && <blockquote>{message.body}</blockquote>}
+    {file&&<label className="task-check"><input type="checkbox" name="share-file"/> Share the attached file with safety staff</label>}
     <label>Reason<select name="category" required>{Object.entries(categories).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
     <label>Details <span className="muted">(optional)</span><textarea name="details" maxLength={1500} rows={4} placeholder="What happened?" /></label>
     {error && <p className="error" role="alert">{error}</p>}
@@ -51,24 +58,69 @@ export function ReportDialog({ chat, message, close, inform }: { chat: string; m
 export function Safety({ staff, refresh }: { staff: string; refresh: () => Promise<void> }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices'>('mine')
+  const [selected,setSelected]=useState<Report|null>(null)
+  const [timeline,setTimeline]=useState<TimelineItem[]|null>(null)
+  const [notices,setNotices]=useState<Notice[]>([])
 
   const load = useCallback(async () => {
-    const { data, error } = await db!.from('st_reports').select('id,category,status,created_at').order('created_at', { ascending: false }).limit(100)
-    if (error) setError('Could not load your reports.')
-    else { setError(''); setReports(data as Report[]) }
+    const [reports,account]=await Promise.all([
+      db!.from('st_reports').select('id,category,status,created_at').order('created_at', { ascending: false }).limit(100),
+      db!.from('st_v5_account_notices').select('id,action,until_at,created_at').order('id',{ascending:false}).limit(100),
+    ])
+    if(reports.error||account.error) setError('Could not load the Safety center.')
+    else{setError('');setReports(reports.data as Report[]);setNotices(account.data)}
   }, [])
-  useEffect(() => { void load() }, [load, view])
+  useEffect(() => {
+    void load()
+    const timer=window.setInterval(load,15000)
+    return ()=>window.clearInterval(timer)
+  }, [load, view])
+  useEffect(()=>{
+    if(!selected)return
+    let live=true
+    const refreshTimeline=async()=>{
+      const {data,error}=await db!.rpc('st_v5_report_timeline',{p_report:selected.id})
+      if(!live)return
+      if(error)setError('Could not load the report timeline.')
+      else setTimeline(data as TimelineItem[])
+    }
+    void refreshTimeline()
+    const timer=window.setInterval(refreshTimeline,10000)
+    return ()=>{live=false;window.clearInterval(timer)}
+  },[selected])
   const staffAccess=staff==='mfa'||staff==='verified'
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
-    {staffAccess&&<SectionTabs label="Safety center sections" value={view} onChange={setView} options={ [['mine','My reports'],['queue','Staff console']] }/>}
+    <SectionTabs label="Safety center sections" value={view==='queue'&&!staffAccess?'mine':view} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
+      ['mine','My reports'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
+    ]}/>
     {view==='queue'&&staffAccess ? (staff === 'verified' ? <QueuePanel /> : <StaffMfa refresh={refresh}/>) :
+      view==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
+        {error&&<p role="alert" className="error">{error}</p>}
+        {!notices.length&&<p>No account notices.</p>}
+        {notices.map(notice=><div className="release-board-item" key={notice.id}><strong>{labels[notice.action]}</strong><p><DateLabel value={notice.created_at}/></p>
+          {notice.until_at&&notice.until_at!=='infinity'&&<p>Restriction ends <DateLabel value={notice.until_at}/></p>}
+          {notice.until_at==='infinity'&&<p>Messaging and calls are restricted until staff restore access.</p>}
+        </div>)}
+      </div> :
+      selected?<div className="panel release-panel"><div className="panel-header"><h2>Report timeline</h2>
+        <button className="secondary" onClick={()=>{setSelected(null);setTimeline(null);setError('')}}>Back to reports</button></div>
+        <p>{categories[selected.category]} · {labels[reports.find(row=>row.id===selected.id)?.status||selected.status]}</p>
+        {error&&<p role="alert" className="error">{error}</p>}
+        {!timeline&&!error&&<p role="status">Loading your timeline…</p>}
+        <ol className="audit">{timeline?.map((item,index)=><li key={item.at+item.action+index}>
+          <strong>{labels[item.action]}</strong><small><DateLabel value={item.at}/></small>
+        </li>)}</ol>
+      </div> :
       <div className="panel"><div className="panel-header"><h2>My reports</h2><button className="secondary" onClick={load}>Refresh</button></div>
         {error && <p role="alert" className="error">{error}</p>}
         {!error && !reports.length && <div className="list-empty"><ShieldCheck size={24}/><strong>No reports yet</strong><p>Use the flag in a conversation to submit a report.</p></div>}
-        {reports.map(row => <div className="report-row" key={row.id}><Flag size={17}/><div><strong>{categories[row.category]}</strong><small><DateLabel value={row.created_at} /></small></div><span className={'pill state-' + row.status}>{labels[row.status]}</span></div>)}
+        {reports.map(row => <button type="button" className="report-row" key={row.id} onClick={()=>{setTimeline(null);setSelected(row)}}>
+          <Flag size={17}/><span><strong>{categories[row.category]}</strong><small><DateLabel value={row.created_at} /></small></span>
+          <span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/>
+        </button>)}
       </div>}
   </section>
 }
@@ -141,7 +193,7 @@ function QueuePanel() {
   async function open(id: string) {
     setWorking(true)
     setError('')
-    const { data, error } = await db!.rpc('st_case', { p_report: id })
+    const { data, error } = await db!.rpc('st_v5_case', { p_report: id })
     if (error) setError(formatError(error, 'Could not load case.'))
     else setSelected(data as Case)
     setWorking(false)
@@ -154,7 +206,8 @@ function QueuePanel() {
     const values = new FormData(form)
     setWorking(true)
     setError('')
-    const { error } = await db!.rpc('st_moderate', { p_report: selected.id, p_action: values.get('action'), p_note: values.get('reason') })
+    if(values.get('action')==='remove'&&!window.confirm('Restrict this account until staff restore access?')){setWorking(false);return}
+    const { error } = await db!.rpc('st_v5_moderate', { p_report: selected.id, p_action: values.get('action'), p_note: values.get('reason') })
     if (error) { setError(formatError(error, 'Could not record action.')); setWorking(false); return }
     form.reset()
     await load()
@@ -168,10 +221,18 @@ function QueuePanel() {
       <span className={'pill state-' + selected.status}>{labels[selected.status]}</span>
       <h2>{categories[selected.category]}</h2><p>@{selected.subject_handle} · <DateLabel value={selected.created_at}/></p>
       {selected.suspended_until && new Date(selected.suspended_until) > new Date() && <p className="warning">Restricted until <DateLabel value={selected.suspended_until}/></p>}
+      {selected.suspended_until==='infinity'&&<p className="warning">Restricted until staff restore access</p>}
       <h3>Reporter notes</h3><p className="case-text">{selected.details || 'No notes provided.'}</p>
       <h3>Shared evidence</h3>{selected.evidence ? <blockquote>{selected.evidence}</blockquote> : <p>No message was attached.</p>}
+      {selected.attachment&&<button type="button" className="secondary" onClick={async()=>{
+        if(!selected.attachment)return
+        try{await downloadChatFile(selected.attachment)}catch{setError('Evidence attachment could not be downloaded.')}
+      }}>Download shared file</button>}
       <form onSubmit={action}><h3>Record a decision</h3><label>Action<select name="action" required defaultValue="reviewing">
-        <option value="reviewing">Mark in review</option><option value="resolved">Resolve</option><option value="dismissed">Dismiss</option><option value="suspend">Restrict contact for 24 hours</option><option value="restore">Lift restriction</option>
+        <option value="reviewing">Mark in review</option><option value="escalated">Escalate for review</option>
+        <option value="warn">Warn account</option><option value="suspend">Restrict for 24 hours</option>
+        <option value="restrict">Restrict for seven days</option><option value="remove">Restrict until restored</option>
+        <option value="restore">Lift restriction</option><option value="resolved">Resolve</option><option value="dismissed">Dismiss</option>
       </select></label><label>Reason<textarea name="reason" minLength={4} maxLength={500} required rows={3}/></label><button className="primary" disabled={working}>Record decision</button></form>
       <h3>Audit trail</h3><ol className="audit">{selected.history.map(entry => <li key={entry.id}><strong>{labels[entry.action]}</strong><small><DateLabel value={entry.created_at}/></small>{entry.note && <p>{entry.note}</p>}</li>)}</ol>
     </div> : <>
