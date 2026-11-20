@@ -33,8 +33,14 @@ begin
   insert into public.st_v6_saved_messages(message_id) values(m),(m2) on conflict(user_id,message_id) do nothing;
   insert into public.st_v6_saved_messages(message_id) values(m) on conflict(user_id,message_id) do nothing;
   if (select count(*) from public.st_v6_saved_messages)<>2 then raise exception 'Save failed or duplicated'; end if;
+  insert into public.st_v6_saved_searches(query,kind) values('Saved sample','direct') on conflict(user_id,query,kind) do nothing;
+  insert into public.st_v6_saved_searches(query,kind) values('Saved sample','direct') on conflict(user_id,query,kind) do nothing;
+  if (select count(*) from public.st_v6_saved_searches)<>1 then raise exception 'Saved query duplicated'; end if;
   perform set_config('request.jwt.claims',json_build_object('sub',receiver,'role','authenticated')::text,true);
   if exists(select 1 from public.st_v6_saved_messages) then raise exception 'Another participant saw these bookmarks'; end if;
+  if exists(select 1 from public.st_v6_saved_searches) then raise exception 'Another participant saw private search terms'; end if;
+  insert into public.st_v6_saved_searches(query,kind) values('Saved sample','direct');
+  delete from public.st_v6_saved_searches where query='Saved sample';
   insert into public.st_v6_saved_messages(message_id) values(m) on conflict(user_id,message_id) do nothing;
   delete from public.st_v6_saved_messages where message_id=m;
   if exists(select 1 from public.st_v6_saved_messages) then raise exception 'Remove saved message failed'; end if;
@@ -45,6 +51,7 @@ begin
   exception when insufficient_privilege then null;
   end;
   perform set_config('request.jwt.claims',json_build_object('sub',sender,'role','authenticated')::text,true);
+  if not exists(select 1 from public.st_v6_saved_searches where query='Saved sample') then raise exception 'Other account removed owner saved search'; end if;
   perform public.st_v5_message_action(m,'revoke');
   perform public.st_v5_message_action(m2,'hide');
   if exists(select 1 from public.st_v6_saved_messages) then raise exception 'Hidden or revoked content remained visible'; end if;
@@ -55,5 +62,5 @@ begin
   end;
 end $$;
 reset role;
-select 'passed: private saves, idempotent writes, removal, inaccessible chats, hide, revoke, readiness' as result;
+select 'passed: private saves and searches, idempotent writes, removal, inaccessible chats, hide, revoke, readiness' as result;
 rollback;

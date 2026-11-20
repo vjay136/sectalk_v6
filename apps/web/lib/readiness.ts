@@ -17,3 +17,10 @@ export async function checkReadiness(config: PublicDatabase, request: typeof fet
     return false
   }
 }
+
+export function checkConfiguredDatabase() {
+  return checkReadiness({
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    key: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  })
+}

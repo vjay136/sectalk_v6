@@ -6,6 +6,10 @@
 | P1 | Extract and validate the 239 IDs | `features.md`, `docs/FEATURE_MATRIX.md`, `npm run verify:registry` |
 | P2 | Add an anonymous readiness probe with a database marker | `tests/readiness.test.mjs`, `tests/v6-database.sql` |
 | P5 | Add a private Saved messages view and a permission-scoped Files tab | `tests/v6-database.sql`, local two-account browser and storage checks |
+| P5 | Add tenant-scoped rooms, invites, request approval, moderation, pins and room audit | `tests/v6-rooms-database.sql` and two-browser role and synchronization checks |
+| P5 | Add scoped thread replies, synchronized reply counts and private follow/unfollow | `tests/v6-rooms-database.sql`, two-browser thread checks |
+| P5 | Add account-private saved search terms and filters | `tests/v6-database.sql`, browser save, run and remove flow |
+| P10 | Add a public status page and installable PWA with an offline shell | Local HTTP probes and `tests/pwa.e2e.mjs` |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { CalendarDays, Hash, ListChecks, MessageCircle, Plus, Send, Users } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
+import { RoomDirectory } from './room-directory'
 
 type Space = { id: string; name: string; owner: string }
 type Invite = { id: string; workspace_name: string }
@@ -123,6 +124,7 @@ export function Workspaces({ user, view = 'workspaces' }: { user:string;view?:Wo
 
 function WorkspaceArea({ space, user, view }: { space:Space;user:string;view:WorkspaceView }) {
   const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'activity'>('people')
+  const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
   const [members, setMembers] = useState<Member[]>([])
@@ -165,7 +167,9 @@ function WorkspaceArea({ space, user, view }: { space:Space;user:string;view:Wor
       ['people', <><Users size={15}/> People</>], ...(manager ? [['activity','Activity'] as const] : []),
     ]}/>}
     {error && <p role="alert" className="error">{error}</p>}
-    {(view==='rooms'||(view==='workspaces'&&tab==='channels')) && <div className="release-section">
+    {view==='rooms'&&<SectionTabs label="Room sections" value={roomView} onChange={setRoomView} options={ [['rooms','Room directory'],['channels','Workspace channels']] }/>}
+    {view==='rooms'&&roomView==='rooms'&&<RoomDirectory space={space.id} user={user} manager={manager} profiles={profiles}/>}
+    {((view==='rooms'&&roomView==='channels')||(view==='workspaces'&&tab==='channels')) && <div className="release-section">
       <div className="release-flex">
         <label>Channel<select value={channelId} onChange={event => setChannelId(event.target.value)}>{channels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</select></label>
         {manager && <details className="release-create"><summary>New channel</summary><QuickForm label="New channel" button="Create channel" send={async fields => {

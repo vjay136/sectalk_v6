@@ -2,7 +2,7 @@
 
 The existing SecTalk v5 Vercel project and GitHub release are the live baseline. V6 is a release candidate. Production promotion and a published release require the full verification described in the supplied brief.
 
-Run `npm run verify:registry -- --release` to check feature completion. The structural registry check runs separately as `npm run verify:registry`. The release gate also requires the brief's integration, security, accessibility, load, recovery, and provider tests.
+Run `npm run verify:registry -- --release` to check feature completion. V6 requires all 239 rows to be DONE before publication or deployment. The structural registry check runs separately as `npm run verify:registry`. The release gate also requires the brief's integration, security, accessibility, load, recovery, and provider tests.
 
 | External setup | What the target environment requires |
 | --- | --- |

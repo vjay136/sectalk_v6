@@ -29,7 +29,7 @@ assert.deepEqual([...registryNames.keys()].sort(),expected.sort())
 assert.deepEqual([...states.keys()].sort(),expected)
 const counts = Object.fromEntries(validStates.map(state=>[state,[...states.values()].filter(value=>value===state).length]))
 console.log(JSON.stringify({ registry:expected.length, ...counts }))
-if (process.argv.includes('--release') && counts.DONE+counts.BLOCKED_EXTERNAL!==expected.length) {
-  console.error('Release blocked by unfinished registry entries.')
+if (process.argv.includes('--release') && counts.DONE!==expected.length) {
+  console.error('Release blocked. All 239 entries must have status DONE.')
   process.exitCode=1
 }
