@@ -8,7 +8,7 @@ import { ScopedTasks } from './scoped-tasks'
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
 type Room={id:string;name:string;kind:Kind;template:Template;archived:boolean;locked:boolean;slow_seconds:number}
-type Post={id:string;sender:string;body:string;kind:'message'|'announcement';created_at:string}
+type Post={id:string;sender:string;body:string;kind:'message'|'announcement';created_at:string;edited_at:string|null;removed_at:string|null}
 type Roster={user_id:string;role:Role}
 type Entry={user_id:string;kind:'invite'|'request';invited_role:Role;expires_at:string}
 type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:string}
@@ -24,6 +24,7 @@ const templates={
 } as const
 type Template=keyof typeof templates
 const roleLabel=(value:string)=>value.replaceAll('_',' ')
+const postFields='id,sender,body,kind,created_at,edited_at,removed_at'
 
 async function call(name:string,input:Record<string,unknown>) {
   const result=await db!.rpc(name,input)
@@ -134,8 +135,11 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
   const activeThread=useRef<string|null>(null)
   const [threadStates,setThreadStates]=useState<ThreadState[]>([])
   const [threadRoot,setThreadRoot]=useState<Post|null>(null)
+  const refreshVersion=useRef(0)
+  const replyVersion=useRef(0)
   const [view,setView]=useState<'messages'|'threads'|'pins'|'people'|'settings'|'audit'|'tasks'>('messages')
   const [taskSource,setTaskSource]=useState<string|null>(null)
+  const [editingPost,setEditingPost]=useState<string|null>(null)
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
   const [working,setWorking]=useState(false)
@@ -143,17 +147,19 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
   const staff=role==='moderator'||role==='owner'
   const canPost=role&&role!=='read_only'&&!room.archived&&(staff||(!room.locked&&!['announcement','broadcast'].includes(room.kind)))
   const refresh=useCallback(async()=>{
+    const version=++refreshVersion.current
     const [identity,requests,members,messages,pinned,activity,blocked]=await Promise.all([
       db!.rpc('st_v6_room_my_role',{p_room:room.id}),
       db!.from('st_v6_room_entries').select('*').eq('room_id',room.id).gt('expires_at',new Date().toISOString()).limit(100),
       db!.from('st_v6_room_members').select('user_id,role').eq('room_id',room.id).limit(500),
-      db!.from('st_v6_room_posts').select('id,sender,body,kind,created_at').eq('room_id',room.id)
+      db!.from('st_v6_room_posts').select(postFields).eq('room_id',room.id)
         .is('parent_id',null).order('created_at',{ascending:false}).order('id',{ascending:false}).limit(80),
-      db!.from('st_v6_room_pins').select('post_id,message:st_v6_room_posts!st_v6_room_pins_room_id_post_id_fkey(id,sender,body,kind,created_at)').eq('room_id',room.id).limit(80)
+      db!.from('st_v6_room_pins').select(`post_id,message:st_v6_room_posts!st_v6_room_pins_room_id_post_id_fkey(${postFields})`).eq('room_id',room.id).limit(80)
         .returns<{post_id:string;message:Post|null}[]>(),
       db!.from('st_v6_room_audit').select('*').eq('room_id',room.id).order('id',{ascending:false}).limit(50),
       db!.from('st_v6_room_bans').select('user_id').eq('room_id',room.id).limit(100),
     ])
+    if(version!==refreshVersion.current)return
     if([identity,requests,members,messages,pinned,activity,blocked].some(result=>result.error)){
       setError('Could not load room data.');return
     }
@@ -164,18 +170,19 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
     setBans((blocked.data||[]).map(row=>row.user_id));setPins((pinned.data||[]).flatMap(row=>row.message?[row.message]:[]))
     if(!identity.data){setThreadStates([]);return}
     const summaries=await db!.rpc('st_v6_room_thread_state',{p_room:room.id,p_roots:roomPosts.map(post=>post.id)})
+    if(version!==refreshVersion.current)return
     if(summaries.error)setError('Could not load thread summaries.')
     else setThreadStates(summaries.data as ThreadState[])
   },[room.id])
   const [replies,setReplies]=useState<Post[]>([])
   const refreshReplies=useCallback(async()=>{
     if(!thread)return
-    const fields='id,sender,body,kind,created_at'
+    const version=++replyVersion.current
     const [root,replies]=await Promise.all([
-      db!.from('st_v6_room_posts').select(fields).eq('room_id',room.id).eq('id',thread).is('parent_id',null).maybeSingle(),
-      db!.from('st_v6_room_posts').select(fields).eq('room_id',room.id).eq('parent_id',thread).order('created_at').order('id').limit(150),
+      db!.from('st_v6_room_posts').select(postFields).eq('room_id',room.id).eq('id',thread).is('parent_id',null).maybeSingle(),
+      db!.from('st_v6_room_posts').select(postFields).eq('room_id',room.id).eq('parent_id',thread).order('created_at').order('id').limit(150),
     ])
-    if(activeThread.current!==thread)return
+    if(activeThread.current!==thread||version!==replyVersion.current)return
     if(root.error||replies.error)setError('Could not load thread.')
     else{setReplies(replies.data as Post[]);setThreadRoot(root.data as Post|null)}
   },[room.id,thread])
@@ -184,6 +191,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
     sync()
     const channel=liveChannel('v6-room:'+room.id,sync)
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'st_v6_room_posts',filter:'room_id=eq.'+room.id},sync)
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'st_v6_room_posts',filter:'room_id=eq.'+room.id},sync)
       .subscribe(status=>{ if(status==='SUBSCRIBED')sync() })
     const timer=window.setInterval(sync,5000)
     const reconnect=onReconnect(sync)
@@ -220,7 +228,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
   const invite=entries.some(entry=>entry.kind==='invite'&&entry.user_id===user)
   const name=(id:string|null)=>id?profiles[id]?.name||'Workspace member':''
   const actualView=(!staff&&(view==='settings'||view==='audit'))||(role==='guest'&&view==='people')?'messages':view
-  const parent=posts.find(post=>post.id===thread)||threadRoot
+  const parent=threadRoot||posts.find(post=>post.id===thread)
 
   function openThread(id:string){
     activeThread.current=id;setReplies([]);setThreadRoot(null);setThread(id);setView('threads')
@@ -235,17 +243,49 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
     })
   }
 
+  function updatePost(post:Post,action:'edit'|'delete'|'redact',body?:FormDataEntryValue|null){
+    return perform(async()=>{
+      await call('st_v6_room_post_action',{p_room:room.id,p_post:post.id,p_action:action,...(action==='edit'?{p_body:body}:{})})
+      setEditingPost(null)
+    })
+  }
+
   function renderPost(post:Post,actions:boolean) {
     const pinned=pins.some(entry=>entry.id===post.id)
     const summary=threadStates.find(entry=>entry.post_id===post.id)
+    const canModify=Boolean(role&&role!=='read_only'&&!room.archived&&!post.removed_at)
+    const canEdit=canModify&&canPost&&post.sender===user&&Date.now()-Date.parse(post.created_at)<=86400000
+    const canDelete=canModify&&post.sender===user
+    const senderRole=roster.find(person=>person.user_id===post.sender)?.role
+    const senderIsStaff=room.kind==='admin'?workspaceAdminIds.includes(post.sender):senderRole==='owner'||senderRole==='moderator'
+    const canRedact=canModify&&staff&&post.sender!==user&&(role==='owner'||!senderIsStaff)
     return <article className="release-board-item" key={post.id}>
       <div className="release-row"><strong>{name(post.sender)}</strong><time dateTime={post.created_at}>{new Date(post.created_at).toLocaleString()}</time>
-        {post.kind==='announcement'&&<span className="pill">Announcement</span>}</div>
-      <p className="meeting-agenda">{post.body}</p>
+        {post.kind==='announcement'&&<span className="pill">Announcement</span>}
+        {post.edited_at&&!post.removed_at&&<span className="pill">Edited</span>}</div>
+      <p className={post.removed_at?'meeting-agenda revoked-message':'meeting-agenda'}>{post.body}</p>
+      {editingPost===post.id&&canEdit?<form className="release-form" onSubmit={event=>{
+        event.preventDefault()
+        void updatePost(post,'edit',new FormData(event.currentTarget).get('editedBody'))
+      }}>
+        <label>Edit room message<textarea name="editedBody" required maxLength={4000} defaultValue={post.body}/></label>
+        <div className="action-row">
+          <button className="primary" disabled={working}>Save edit</button>
+          <button className="secondary" type="button" onClick={()=>setEditingPost(null)}>Cancel edit</button>
+        </div>
+      </form>:(canEdit||canDelete||canRedact)&&<details>
+        <summary>Room message actions</summary>
+        <div className="action-row">
+          {canEdit&&<button className="secondary" type="button" onClick={()=>setEditingPost(post.id)}>Edit message</button>}
+          {(canDelete||canRedact)&&<button className="danger" type="button" disabled={working} onClick={()=>{
+            if(window.confirm('Remove this message? Replies and follows will remain.'))void updatePost(post,canDelete?'delete':'redact')
+          }}>{canDelete?'Delete message':'Redact message'}</button>}
+        </div>
+      </details>}
       {actions&&<div className="action-row">
         <button className="secondary" type="button" onClick={()=>openThread(post.id)}>Open thread{summary?' ('+summary.replies+')':''}</button>
-        {canPost&&<button className="secondary" type="button" onClick={()=>{setTaskSource(post.id);setView('tasks')}}>Create task from message</button>}
-        {staff&&!room.archived&&<button className="secondary" type="button" disabled={working} onClick={()=>void settings(pinned?'unpin':'pin',{p_post:post.id})}>
+        {canPost&&!post.removed_at&&<button className="secondary" type="button" onClick={()=>{setTaskSource(post.id);setView('tasks')}}>Create task from message</button>}
+        {staff&&!room.archived&&(pinned||!post.removed_at)&&<button className="secondary" type="button" disabled={working} onClick={()=>void settings(pinned?'unpin':'pin',{p_post:post.id})}>
           {pinned?'Unpin':'Pin'}
         </button>}
       </div>}

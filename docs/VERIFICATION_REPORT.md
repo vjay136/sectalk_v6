@@ -6,8 +6,8 @@
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
-| Unit tests | 11 passed, including readiness failure handling, safety heuristics, vault authentication, emoji data and disclosure configuration validation |
-| Supabase database integration | All 15 rollback suites passed, including pin permissions, audit search, room templates and presence expiry |
+| Unit tests | 12 passed, including calendar export format, readiness failure handling, safety heuristics, vault authentication, emoji data and disclosure configuration validation |
+| Supabase database integration | All 17 rollback suites passed, including room thread integrity, time-zone recurrence, pin permissions, audit search, room templates and presence expiry |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -27,6 +27,9 @@
 | Room templates | SQL and two browsers verified all four templates with starter pins, visibility defaults, Class slow mode and idempotent creation. |
 | Contact presence | SQL and two browsers verified all four availability states, heartbeat throttling, expiry, and permission changes when a contact is blocked. |
 | Onboarding and help | A fresh account completed profile and discovery setup. The browser verified the empty Inbox, the Help tab, keyboard shortcuts, help links, and mobile access. |
+| Recurring meetings | SQL verified recurrence across a daylight-saving change and retry and role checks. Browser verified a weekly series and downloaded three calendar events. A linked occurrence opened in a member session and the same link disclosed no meeting details to an outsider. |
+| Room thread integrity | Two browsers verified that edit and redaction retain replies, counts and follows. SQL checked author deletion, moderator authorization, removal of pins, and hiding both copies of a linked task source. |
+| Local database security advisor | No warning or error reported for the isolated candidate at test time. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
 | Updated candidate | `npm run build` passed after the rooms, search, status, PWA and thread changes. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |

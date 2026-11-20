@@ -20,6 +20,8 @@
 | P5 | Enforce pin permissions and publish room templates with pinned guides | SQL permission fixtures and two-browser pin, template and directory checks |
 | P5 | Synchronize contact presence with rate-limited heartbeats | `tests/v6-presence-database.sql` and two-browser state, expiry and block checks |
 | P5 | Add a separate admin audit search with workspace scoping | `tests/v6-audit-search-database.sql` and two-browser admin and member verification |
+| P5 | Schedule recurring meetings and export calendar invites with scoped join links | Recurrence SQL fixture, ICS unit check and browser download and link tests |
+| P5 | Preserve room threads after a parent is edited, deleted or redacted | Room thread SQL fixture and two-browser edit, follow and redaction checks |
 | P10 | Add public vulnerability disclosure routes and repository reporting guidance | Unit and production HTTP tests passed with local configuration. A monitored contact is pending for v6. |
 | P10 | Add portable PostgreSQL backup and restore verification | Disposable recovery drill passed. Managed PITR, private Storage, Auth and cutover rehearsal are pending. |
 | P10 | Add in-product help and a keyboard shortcut sheet | Fresh-account browser onboarding, empty Inbox, keyboard and mobile help checks |

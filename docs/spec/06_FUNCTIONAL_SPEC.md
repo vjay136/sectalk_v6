@@ -87,3 +87,11 @@ New accounts set up a profile and discovery preferences before entering the Inbo
 ## SRCH-09 · Workspace audit search
 
 An active workspace owner or admin can open Audit logs from Search. Select a workspace, search by event, room name, actor ID or target ID, and filter by source and dates. Room events require the caller’s existing room audit permission. The query returns up to 100 events and runs against audit records separately from message search.
+
+## CALL-04 · Scheduled and recurring meetings
+
+Workspace owners and admins can schedule a one-time meeting or a daily or weekly series of 2 to 12 occurrences in their browser time zone. Meeting details offer a copyable join link and a calendar download. Exporting a series puts each occurrence in one ICS file as a separate event with its own link. The link opens the meeting after sign-in if the account has workspace access. The usual waiting-room and media permissions apply.
+
+## THR-05 · Room thread integrity
+
+Authors can edit eligible room posts for 24 hours or remove their own posts. Eligible moderators can redact another author’s post. Removal replaces the post body with a tombstone, clears any pin, and preserves the parent reference, replies, reply count and private follows. Tasks linked to a removed post stay available while their source text and snapshot become inaccessible.

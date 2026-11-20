@@ -18,6 +18,7 @@ import { Meetings } from './meetings'
 import { FilesLibrary } from './files-library'
 import { GlobalSearch, Notifications } from './discover'
 import { InProductHelp } from './in-product-help'
+import { meetingFromQuery } from '../lib/meeting-calendar'
 import { ScopedTasks } from './scoped-tasks'
 import { SectionTabs } from './section-tabs'
 import { CommandPalette, type Command } from './command-palette'
@@ -46,8 +47,9 @@ export function Inbox({ user }: { user: string }) {
   const [blocks, setBlocks] = useState<string[]>([])
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
+  const [requestedMeeting,setRequestedMeeting] = useState<string|null>(()=>typeof window==='undefined'?null:meetingFromQuery(window.location.search))
   const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
+    requestedMeeting?'meetings':typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
   const [taskSection,setTaskSection]=useState<'scoped'|'workspace'>('scoped')
   const [paletteOpen,setPaletteOpen]=useState(false)
@@ -65,7 +67,6 @@ export function Inbox({ user }: { user: string }) {
   const [online, setOnline] = useState(false)
   const [broadcastOnline, setBroadcastOnline] = useState(false)
   const [working, setWorking] = useState(false)
-  const [requestedMeeting,setRequestedMeeting] = useState<string|null>(null)
   const [presence,setPresence] = useState<Record<string,Presence>>({})
   const [inboxStatus, setInboxStatus] = useState<Record<string, InboxStatus>>({})
   const activeChat = useRef<string | null>(null)

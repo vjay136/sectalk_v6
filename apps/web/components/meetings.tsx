@@ -4,10 +4,12 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import dynamic from 'next/dynamic'
 import { CalendarDays, Video } from 'lucide-react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
+import { saveDownload } from '../lib/chat-files'
+import { meetingCalendar, meetingLink } from '../lib/meeting-calendar'
 import { SectionTabs } from './section-tabs'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
-type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended' }
+type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null }
 type Attendance = { user_id:string; status:'waiting'|'admitted'|'declined'|'left'; requested_at:string; admitted_at:string|null; left_at:string|null }
 type Space = { id:string; name:string; role:string }
 
@@ -19,12 +21,19 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
   const [ready,setReady] = useState(false)
   const [error,setError] = useState('')
   const [busy,setBusy] = useState(false)
+  const [frequency,setFrequency]=useState('once')
   const pendingMeeting = useRef<{ input:string; id:string } | null>(null)
   const reload = useCallback(async () => {
     const { data,error } = await db!.from('st_v3_meetings').select('*').order('starts_at',{ascending:false}).limit(100)
     if (error) setError('Could not load meetings.')
-    else setMeetings(data as Meeting[])
-  },[])
+    else {
+      if(requested&&!data.some(row=>row.id===requested)){
+        const linked=await db!.from('st_v3_meetings').select('*').eq('id',requested).maybeSingle()
+        if(linked.data)data.push(linked.data)
+      }
+      setMeetings(data as Meeting[])
+    }
+  },[requested])
   useEffect(() => {
     void reload()
     const subscription=liveChannel('meetings:'+user,reload)
@@ -50,16 +59,19 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
     setBusy(true);setError('')
     try {
       const common={p_workspace:data.get('workspace'),p_title:data.get('title')}
+      const repeats=!instant&&frequency!=='once'
       const input=instant?{...common,p_minutes:Number(data.get('duration'))}:{
         ...common,p_agenda:data.get('agenda'),p_start:new Date(String(data.get('start'))).toISOString(),
         p_end:new Date(String(data.get('end'))).toISOString(),
+        ...(repeats?{p_frequency:frequency,p_count:Number(data.get('count')),p_zone:Intl.DateTimeFormat().resolvedOptions().timeZone}:{}),
       }
       const key=JSON.stringify(input)
       if (pendingMeeting.current?.input!==key) pendingMeeting.current={input:key,id:crypto.randomUUID()}
-      const result=await db!.rpc(instant?'st_v6_start_instant_meeting':'st_v3_schedule',{...input,p_id:pendingMeeting.current.id})
+      const action=instant?'st_v6_start_instant_meeting':repeats?'st_v6_schedule_series':'st_v3_schedule'
+      const result=await db!.rpc(action,{...input,p_id:pendingMeeting.current.id})
       if (result.error) throw result.error
       pendingMeeting.current=null
-      form.reset();await reload();setView('upcoming');setId(result.data)
+      form.reset();setFrequency('once');await reload();setView('upcoming');setId(result.data)
     } catch(error) { setError(formatError(error,instant?'Could not start the meeting.':'Could not schedule the meeting.')) }
     finally { setBusy(false) }
   }
@@ -87,16 +99,21 @@ export function Meetings({ user, requested }: { user:string; requested:string|nu
         </select></label> : <>
           <label>Agenda<textarea name="agenda" rows={2} maxLength={2000}/></label>
           <div className="release-flex"><label>Starts at<input type="datetime-local" name="start" required/></label><label>Ends at<input type="datetime-local" name="end" required/></label></div>
+          <div className="release-flex"><label>Repeat<select value={frequency} disabled={busy} onChange={event=>setFrequency(event.target.value)}>
+            <option value="once">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option>
+          </select></label>{frequency!=='once'&&<label>Occurrences<input name="count" type="number" min="2" max="12" defaultValue="4" required/></label>}</div>
         </>}
         <button className="primary" disabled={busy}>{instant?<Video size={16}/>:<CalendarDays size={16}/>} {instant?'Start meeting':'Schedule meeting'}</button>
       </form>
     </div> : <div className="panel release-panel">
       <h2>{view==='past'?'Past meetings':'Upcoming and live meetings'}</h2>
       {meetings===null && <p>Loading meetings…</p>}
+      {meetings&&requested&&id===requested&&!selected&&<p role="status">This meeting is unavailable to your account.</p>}
       {list?.length===0 && <p>{view==='past'?'No past meetings.':'No upcoming meetings.'}</p>}
       {list?.map(meeting=><div className="release-row" key={meeting.id}>
         <button className={id===meeting.id?'primary':'secondary'} onClick={()=>setId(meeting.id)}>{meeting.title}</button>
         <span className="pill">{meeting.status}</span><time dateTime={meeting.starts_at}>{new Date(meeting.starts_at).toLocaleString()}</time>
+        {meeting.series_index&&<small>Occurrence {meeting.series_index} of {meeting.series_total}</small>}
       </div>)}
     </div>}
     {selected && <MeetingDetail key={selected.id} meeting={selected} user={user} mediaReady={ready}
@@ -113,6 +130,8 @@ function MeetingDetail({meeting,user,mediaReady,host,refresh}: {
   const [busy,setBusy]=useState(false)
   const [media,setMedia]=useState<{url:string;token:string}|null>(null)
   const [lobbyNotice,setLobbyNotice]=useState('')
+  const [calendarNotice,setCalendarNotice]=useState('')
+  const [manualLink,setManualLink]=useState('')
   const reload=useCallback(async () => {
     const result=await db!.from('st_v3_attendance').select('*').eq('meeting_id',meeting.id).order('requested_at').limit(100)
     if(result.error) return
@@ -162,10 +181,36 @@ function MeetingDetail({meeting,user,mediaReady,host,refresh}: {
     finally{setBusy(false)}
   }
   const refreshMedia=useCallback(()=>setMedia(null),[])
+  async function exportCalendar(series:boolean){
+    setCalendarNotice('')
+    try{
+      let occurrences=[meeting]
+      if(series&&meeting.series_id){
+        const {data,error}=await db!.from('st_v3_meetings').select('*').eq('series_id',meeting.series_id)
+          .neq('status','ended').order('series_index').limit(12)
+        if(error||!data.length)throw new Error('Calendar export unavailable')
+        occurrences=data as Meeting[]
+      }
+      const content=meetingCalendar(occurrences,window.location.origin)
+      saveDownload(new Blob([content],{type:'text/calendar;charset=utf-8'}),series?'sectalk-meeting-series.ics':'sectalk-meeting.ics')
+    }catch{setCalendarNotice('Could not export the meeting calendar.')}
+  }
+  async function copyLink(){
+    const link=meetingLink(window.location.origin,meeting.id)
+    try{await navigator.clipboard.writeText(link);setCalendarNotice('Join link copied.')}
+    catch{setManualLink(link)}
+  }
   return <div className="panel release-panel">
     <div className="release-row"><h2>{meeting.title}</h2><span className="pill">{ended?'ended':meeting.status}</span></div>
     {meeting.agenda&&<p className="meeting-agenda">{meeting.agenda}</p>}
     {error&&<p role="alert" className="error">{error}</p>}
+    {!ended&&<div className="release-row">
+      <button type="button" className="secondary" onClick={()=>void exportCalendar(false)}>Add to calendar</button>
+      {meeting.series_id&&<button type="button" className="secondary" onClick={()=>void exportCalendar(true)}>Add series to calendar</button>}
+      <button type="button" className="secondary" onClick={()=>void copyLink()}>Copy join link</button>
+    </div>}
+    {calendarNotice&&<p role="status">{calendarNotice}</p>}
+    {manualLink&&<label>Meeting link<input readOnly value={manualLink} onFocus={event=>event.target.select()}/></label>}
     {!ended && <div className="release-row">
       {host && meeting.status==='scheduled' && <button className="primary" disabled={busy} onClick={()=>void action('st_v3_meeting_state',{p_state:'live'})}>Open waiting room</button>}
       {host && meeting.status==='live' && <button className="danger" disabled={busy} onClick={()=>{if(window.confirm('End this meeting for the workspace?')) void action('st_v3_meeting_state',{p_state:'ended'})}}>End meeting</button>}
