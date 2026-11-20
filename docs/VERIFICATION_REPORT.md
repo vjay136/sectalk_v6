@@ -6,8 +6,8 @@
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
-| Unit tests | 28 passed, including VAPID payload encryption, credential detection, provider log redaction and the existing safety, locale, file and readiness checks |
-| Supabase database integration | All 65 staged checkpoint rollback suites passed, including invitation policies, sharing limits, web push delivery, call quality and metrics |
+| Unit tests | 29 passed, including SMTP handling, VAPID payload encryption, credential detection, provider log redaction and the existing safety, locale, file and readiness checks |
+| Supabase database integration | All 72 staged checkpoint rollback suites passed, including media quality, workspace holds, room retirement, queue replay and attachment retention |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -76,9 +76,12 @@
 | Analytics | Edge and local cron verified minute-based delivery and usage refresh and WebSocket recovery. SQL and browser tested rounded weekly threat-reporting and enforcement counts. |
 | Workspace invitations and profiles | Local SMTP and Edge verified single-use emailed invitations, role and recipient limits, and manual link sharing. SQL and the browser verified four available presets and effective meeting, room and invite controls. |
 | Attachment quota and guest links | Browser and SQL verified upload limits, concurrency, password checks, guest bytes, link revocation and access history. Attachment scope is personal direct chats. |
-| Push and fallback | Local provider and browser checks verified encrypted version-only payload, real service-worker notification, subscription removal and in-app fallback after failed Push delivery. Email fallback remains open. |
+| Push and email fallback | Browser, Mailpit, database and provider fixtures verified consent, encrypted version-only push, subtype and cadence selection, generic private fallback for both channels, retry and unsubscribe. |
 | Staff metrics and QoS | Genuine TOTP protected aggregate metrics. Client and server tests measured request latency and concurrency, real call setup and audio quality, and a direct ICE restart. Relay rate used controlled fixtures. |
 | Meeting moderation | Three local browsers verified co-host, mute, lock, removal, communication restrictions and ending a call. Self-hosted provider token replay remains open. |
+| Network diagnostics and call recovery | Edge and isolated Coturn verified UDP, TCP and TLS relay checks, then restored an active real call after TURN and signaling disruption. LiveKit preserved the attendee during signaling resume. |
+| Attachment processing | Edge, real private Storage and a separate worker verified safe image/text/PDF preview, delete access revocation, purge grace and physical bytes removal. |
+| Search and governance | Browser verified phrase and partial searches, protected files and room navigation, real TOTP, private hold status, scheduling and room restore. SQL verified no early purge, hold precedence, encrypted preservation, and audited release. |
 | Updated candidate | `npm run build` passed with synchronized drafts, private notification controls, media checks and scoped analytics. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |

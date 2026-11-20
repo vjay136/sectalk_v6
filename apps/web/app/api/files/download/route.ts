@@ -37,6 +37,8 @@ async function handleGet(request:Request){
   if(denied)return denied
   const {data,error}=await auth.storage.storage.from('sectalk-chat-files').download(ticket.file)
   if(error||!data)return failure(404,'Attachment unavailable.')
+  const current=await checkAccess(auth.client,ticket.file)
+  if(current)return current
   const {error:logError}=await auth.storage.rpc('st_v6_log_file_download',{p_file:ticket.file,p_actor:auth.actor,p_ticket:ticket.nonce})
   if(logError)return failure(503,'Attachment download could not be recorded.')
   return new Response(data,{headers:{...headers,'Content-Type':'application/octet-stream','Content-Disposition':'attachment'}})

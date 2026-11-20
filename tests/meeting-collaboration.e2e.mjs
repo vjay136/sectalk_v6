@@ -37,9 +37,14 @@ data(await host.client.rpc('st_v2_invite', { p_workspace: workspace, p_handle: g
 const invite = data(await guest.client.from('st_v2_invites').select('id').eq('workspace_id', workspace).single())
 data(await guest.client.rpc('st_v2_reply_invite', { p_invite: invite.id, p_accept: true }))
 const title = 'Collaboration ' + suffix
-const meeting = data(await host.client.rpc('st_v6_start_instant_meeting', {
+const testRecovery = process.env.SECTALK_TEST_RECONNECT === '1'
+const meeting = testRecovery ? data(await host.client.rpc('st_v3_schedule', {
+  p_id: randomUUID(), p_workspace: workspace, p_title: title, p_agenda: '',
+  p_start: new Date(Date.now() + 120_000).toISOString(), p_end: new Date(Date.now() + 900_000).toISOString(),
+})) : data(await host.client.rpc('st_v6_start_instant_meeting', {
   p_id: randomUUID(), p_workspace: workspace, p_title: title, p_minutes: 15,
 }))
+if (testRecovery) data(await host.client.rpc('st_v3_meeting_state', { p_meeting: meeting, p_state: 'live' }))
 const link = new URL(app.href)
 link.searchParams.set('meeting', meeting)
 const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
@@ -56,6 +61,11 @@ const browser = await chromium.launch({
 
 const diagnostics = []
 let setHostQuality
+let hostSocket
+let signalConnections = 0
+let signalResumes = 0
+const hostJoins = []
+let resumedHostSid
 const videoSettings = []
 const subscriptions = []
 async function open(person) {
@@ -113,7 +123,11 @@ async function open(person) {
     // Replace the host's own quality updates while forwarding real signaling and media traffic.
     await page.routeWebSocket(/^ws:\/\/127\.0\.0\.1:7880\/rtc(?:[/?]|$)/, client => {
       const server = client.connectToServer()
-      let hostSid
+      if (testRecovery) {
+        signalConnections++
+        hostSocket = client
+      }
+      let hostSid = resumedHostSid
       let forced = false
       client.onMessage(message => {
         if (typeof message !== 'string') {
@@ -126,7 +140,12 @@ async function open(person) {
       server.onMessage(message => {
         if (typeof message === 'string') return client.send(message)
         const response = SignalResponse.fromBinary(message)
-        if (response.message.case === 'join') hostSid = response.message.value.participant?.sid
+        if (testRecovery && response.message.case === 'reconnect') signalResumes++
+        if (response.message.case === 'join') {
+          hostSid = response.message.value.participant?.sid
+          resumedHostSid = hostSid
+          if (testRecovery && hostSid) hostJoins.push(hostSid)
+        }
         if (response.message.case === 'connectionQuality' && forced) {
           response.message.value.updates = response.message.value.updates.filter(update => update.participantSid !== hostSid)
           return client.send(Buffer.from(response.toBinary()))
@@ -320,6 +339,27 @@ try {
     const participant = document.querySelector('[data-lk-participant-name="' + name + '"]')
     return (participant?.closest('.lk-participant-tile')?.querySelector('video')?.videoWidth ?? 0) > 0
   }, host.name)
+  if (testRecovery) {
+    const signalCount = signalConnections
+    const resumeCount = signalResumes
+    const joinedSessions = hostJoins.length
+    const playing = tile(guestPage, host.name).locator('video')
+    const before = await playing.evaluate(video => video.currentTime)
+    await hostSocket.close({ code: 1011, reason: 'loopback signaling recovery test' })
+    const deadline = Date.now() + 20_000
+    while ((signalConnections <= signalCount || signalResumes <= resumeCount) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    assert.ok(signalConnections > signalCount)
+    assert.ok(signalResumes > resumeCount, 'LiveKit should acknowledge resumed signaling')
+    assert.equal(hostJoins.length, joinedSessions, 'A resumed signal session should keep the same LiveKit participant')
+    await guestPage.waitForFunction(({ person, time }) => {
+      const participant = document.querySelector('[data-lk-participant-name="' + person + '"]')
+      return (participant?.closest('.lk-participant-tile')?.querySelector('video')?.currentTime ?? 0) > time + 0.1
+    }, { person: host.name, time: before })
+    assert.equal(await stage(guestPage).locator('[data-lk-participant-name="' + host.name + '"]').count(), 1)
+    if (testQuality) assert.equal(await samples.get(hostPage)('recovery'), 'recovered')
+  }
   await microphone.click()
   await hostPage.waitForSelector('button[data-lk-source="microphone"][aria-pressed="true"]')
   if (testQuality) for (const page of [hostPage, guestPage]) {
@@ -393,3 +433,4 @@ console.log('Passed pre-join device tests, network probe, ' + (testBlur ? 'live 
   (testSharing ? ', screen video and audio, one-presenter enforcement, and capture and permission loss' : '') +
   ', two-browser roster, chat, camera and microphone, quality adaptation, audio-only recovery, pin, spotlight, and access cleanup.')
 if (testQuality) console.log('Passed LiveKit setup and selected ICE route sample privacy and delivery.')
+if (testRecovery) console.log('Passed scheduled meeting signaling resume with the same participant and live video.')

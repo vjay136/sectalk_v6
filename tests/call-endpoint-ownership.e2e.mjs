@@ -1,6 +1,7 @@
 // Run against the isolated loopback candidate with synthetic call networking.
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { createClient } from '@supabase/supabase-js'
 import { watchCallQos } from './helpers/call-qos.mjs'
 
@@ -16,7 +17,9 @@ const suffix=randomUUID().slice(0,8)
 const password=randomUUID()+'1!Q'
 const sampleQuality = process.env.SECTALK_TEST_QOS === '1'
 const testAnalytics = process.env.SECTALK_TEST_ANL_02 === '1'
+const realRecovery = process.env.SECTALK_TEST_RECONNECT === '1'
 const qualitySamples = new WeakMap()
+const realtime = { connections: 0, blocked: false, close: null }
 
 function data(result){
   if(result.error)throw new Error(result.error.message)
@@ -45,18 +48,37 @@ const browser=await chromium.launch({
 
 async function openChat(person,peerName){
   const page=await browser.newPage({locale:'en-US'})
+  if (realRecovery && person === caller) await page.routeWebSocket(/\/realtime\/v1\/websocket/, client => {
+    if (realtime.blocked) { void client.close({ code: 1011 }); return }
+    realtime.connections++
+    client.connectToServer()
+    realtime.close = () => client.close({ code: 1011, reason: 'loopback recovery test' })
+  })
+  if (realRecovery && person === caller) await page.addInitScript(() => {
+    const fetchRequest = window.fetch.bind(window)
+    window.testSignalFailures = 0
+    window.fetch = (input, options) => {
+      const path = new URL(input instanceof Request ? input.url : input, window.location.href).pathname
+      if (window.testRejectRestart && window.testSignalFailures === 0 && path.endsWith('/rpc/st_v6_call_signal') &&
+          typeof options?.body === 'string' && JSON.parse(options.body).p_kind === 'offer') {
+        window.testSignalFailures++
+        return Promise.resolve(Response.json({ message: 'test signaling retry' }, { status: 503 }))
+      }
+      return fetchRequest(input, options)
+    }
+  })
   if (sampleQuality) qualitySamples.set(page, watchCallQos(page, 'direct'))
-  await page.addInitScript(()=>{
+  await page.addInitScript(forceRelay=>{
     const Peer=window.RTCPeerConnection
     window.testCallPeers = []
     window.RTCPeerConnection=class extends Peer {
       constructor(config){
-        super({...config,iceServers:[],iceTransportPolicy:'all'})
+        super(forceRelay ? config : {...config,iceServers:[],iceTransportPolicy:'all'})
         window.testCallPeers.push(this)
       }
-      setConfiguration(config){super.setConfiguration({...config,iceServers:[],iceTransportPolicy:'all'})}
+      setConfiguration(config){super.setConfiguration(forceRelay ? config : {...config,iceServers:[],iceTransportPolicy:'all'})}
     }
-  })
+  }, realRecovery)
   await page.goto(app.href)
   await page.getByLabel('Email address',{exact:true}).fill(person.email)
   await page.getByLabel('Password',{exact:true}).fill(password)
@@ -115,7 +137,7 @@ try{
   if (sampleQuality) {
     for (const page of [origin, winner]) {
       assert.match(await qualitySamples.get(page)('setup'), /^(fast|moderate|slow)$/)
-      assert.equal(await qualitySamples.get(page)('relay'), 'non_relayed')
+      assert.equal(await qualitySamples.get(page)('relay'), realRecovery ? 'relayed' : 'non_relayed')
       if (testAnalytics) {
         assert.equal(await qualitySamples.get(page)('join', 'started', false), 'started')
         assert.equal(await qualitySamples.get(page)('join', 'connected'), 'connected')
@@ -123,7 +145,43 @@ try{
       }
     }
     if (testAnalytics) assert.equal(await qualitySamples.get(origin)('ice_restart', 'not_requested'), 'not_requested')
-    await origin.evaluate(() => {
+    if (realRecovery) {
+      assert.ok(realtime.close)
+      const previousConnections = realtime.connections
+      const baseline = await origin.evaluate(async () => {
+        const peer = window.testCallPeers[0]
+        window.testRejectRestart = true
+        window.testOriginalIce = peer.localDescription.sdp.match(/^a=ice-ufrag:(.+)$/m)?.[1]
+        const stats = await peer.getStats()
+        return [...stats.values()].find(item => item.type === 'inbound-rtp' && item.kind === 'audio')?.packetsReceived ?? 0
+      })
+      assert.ok(baseline > 0)
+      realtime.blocked = true
+      await realtime.close()
+      assert.equal(execFileSync('docker', ['restart', '--timeout', '2', 'sectalk-v6-call-coturn'], { encoding: 'utf8' }).trim(),
+        'sectalk-v6-call-coturn')
+      await origin.waitForFunction(async start => {
+        const [peer] = window.testCallPeers
+        const changedIce = peer.localDescription.sdp.match(/^a=ice-ufrag:(.+)$/m)?.[1] !== window.testOriginalIce
+        if (!changedIce || peer.connectionState !== 'connected') return false
+        const stats = await peer.getStats()
+        const inbound = [...stats.values()].find(item => item.type === 'inbound-rtp' && item.kind === 'audio')
+        return (inbound?.packetsReceived ?? 0) > start + 10
+      }, baseline, { timeout: 65_000 })
+      realtime.blocked = false
+      const reconnectDeadline = Date.now() + 20_000
+      while (realtime.connections <= previousConnections && Date.now() < reconnectDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      assert.ok(realtime.connections > previousConnections)
+      assert.equal(await origin.evaluate(() => window.testSignalFailures), 1)
+      if (testAnalytics) assert.equal(await qualitySamples.get(origin)('ice_restart', 'requested'), 'requested')
+      assert.equal(await origin.evaluate(() => window.testCallPeers.length), 1)
+      assert.equal(await winner.evaluate(() => window.testCallPeers.length), 1)
+      assert.deepEqual(data(await caller.client.from('st_calls').select('id').eq('chat_id', chat).eq('status', 'active')), [{ id: active.id }])
+      await callPanel(loser).waitFor({ state: 'hidden' })
+    } else {
+      await origin.evaluate(() => {
       const peer = window.testCallPeers.find(connection => connection.connectionState === 'connected')
       Object.defineProperty(peer, 'connectionState', { value: 'disconnected', configurable: true })
       peer.dispatchEvent(new Event('connectionstatechange'))
@@ -131,9 +189,10 @@ try{
         Reflect.deleteProperty(peer, 'connectionState')
         peer.dispatchEvent(new Event('connectionstatechange'))
       }
-    })
-    if (testAnalytics) assert.equal(await qualitySamples.get(origin)('ice_restart', 'requested'), 'requested')
-    await origin.evaluate(() => window.resumeTestCall())
+      })
+      if (testAnalytics) assert.equal(await qualitySamples.get(origin)('ice_restart', 'requested'), 'requested')
+      await origin.evaluate(() => window.resumeTestCall())
+    }
     assert.equal(await qualitySamples.get(origin)('recovery'), 'recovered')
   }
   data(await callee.client.rpc('st_call_status',{p_call:active.id,p_accept:false}))
@@ -170,3 +229,4 @@ try{
 }
 console.log('Passed three browsers, competing answers, losing-device dismissal, endpoint ownership, busy, decline, and caller cancellation.')
 if (sampleQuality) console.log('Passed direct call setup, selected ICE route, and recovery sample privacy and delivery.')
+if (realRecovery && sampleQuality) console.log('Passed real relay interruption, ICE restart, resumed RTP, signaling retry, and same active call ownership.')

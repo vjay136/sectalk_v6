@@ -10,6 +10,7 @@ import { RoomPostReactions, RoomReactionSettings, useRoomReactionCounts, useWork
 import { AdminNotificationAudit } from './admin-notification-audit'
 import { useReadReceiptSettings, useRoomReadReceipts } from './read-receipts'
 import { DraftStatus, useSyncedDraft } from './synced-draft'
+import { RoomRetirement } from './room-retirement'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
@@ -83,8 +84,11 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
   const [working,setWorking]=useState(false)
   const [creating,setCreating]=useState(false)
   const newId=useRef<{key:string;id:string}|null>(null)
+  const directoryVersion=useRef(0)
   const refresh=useCallback(async()=>{
+    const version=++directoryVersion.current
     const {data,error}=await db!.from('st_v6_rooms').select('id,name,kind,template,archived,locked,slow_seconds,forwarding_allowed').eq('workspace_id',space).order('name')
+    if(version!==directoryVersion.current)return
     if(error){setError('Could not load room directory.');return}
     setRooms(data as Room[])
   },[space])
@@ -92,7 +96,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
     void refresh()
     const timer=window.setInterval(refresh,5000)
     const reconnect=onReconnect(refresh)
-    return ()=>{window.clearInterval(timer);reconnect()}
+    return ()=>{++directoryVersion.current;window.clearInterval(timer);reconnect()}
   },[refresh])
 
   async function perform(run:()=>Promise<void>){
@@ -176,7 +180,11 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
       aria-pressed={selected===room.id} onClick={()=>setSelected(room.id)}>{room.name} <small>{kinds[room.kind]}</small></button>)}
     {current&&<RoomPanel key={current.id} room={current} user={user} profiles={profiles}
       workspaceAdminIds={workspaceAdminIds} manager={manager} allowedRoomKinds={allowedRoomKinds}
-      onArchiveChange={archived=>setFilter(archived?'archived':'active')}
+      onArchiveChange={archived=>{
+        ++directoryVersion.current
+        setRooms(previous=>previous?.map(room=>room.id===current.id?{...room,archived}:room)||null)
+        setFilter(archived?'archived':'active')
+      }}
       refreshDirectory={refresh} reactionPolicy={reactionPolicy.policy}/>}
   </section>
 }
@@ -593,6 +601,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
           event.preventDefault();void settings('slow',{p_seconds:Number(new FormData(event.currentTarget).get('seconds'))})
         }}><label>Slow mode in seconds<input key={room.slow_seconds} name="seconds" type="number" min={0} max={300} required defaultValue={room.slow_seconds}/></label>
           <button className="secondary" disabled={working}>Save slow mode</button></form>}
+        {room.archived&&<RoomRetirement key={room.id} room={room.id}/>}
       </>}
       {actualView==='audit'&&room.kind==='admin'&&staff&&<AdminNotificationAudit key={room.id} room={room.id} name={name}/>}
       {actualView==='audit'&&(notes.length?<ol className="audit">{notes.map(note=><li key={note.id}>

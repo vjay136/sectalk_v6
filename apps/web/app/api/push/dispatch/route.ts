@@ -1,4 +1,5 @@
 import { dispatchAuthorized, pushConfiguration, pushHeaders, sendWebPush } from '../../../../lib/web-push-server'
+import { workerAcquisitionId } from '../../../../lib/worker-acquisition'
 
 export const runtime = 'nodejs'
 type Job = {
@@ -10,7 +11,9 @@ export async function POST(request: Request) {
   const configuration = pushConfiguration()
   if (!configuration) return new Response(null, { status: 503, headers: pushHeaders })
   if (!dispatchAuthorized(request, configuration.dispatchSecret)) return new Response(null, { status: 401, headers: pushHeaders })
-  const claimed = await configuration.service.rpc('st_v6_claim_web_push')
+  const acquisition = workerAcquisitionId(request)
+  if (!acquisition) return new Response(null, { status: 400, headers: pushHeaders })
+  const claimed = await configuration.service.rpc('st_v6_claim_web_push', { p_request: acquisition })
   if (claimed.error) return new Response(null, { status: 503, headers: pushHeaders })
   const jobs = claimed.data as Job[]
   const results = await Promise.all(jobs.map(async job => {

@@ -12,6 +12,7 @@ import { WorkspaceGroups } from './workspace-groups'
 import { WorkspaceOnboarding } from './workspace-onboarding'
 import { WorkspaceNotificationPolicy } from './workspace-notification-policy'
 import { PendingWorkspaceInvite, WorkspaceLinkInvites } from './workspace-link-invites'
+import { WorkspaceLegalHolds } from './workspace-legal-holds'
 
 const ImpersonationWatch = dynamic(() => import('./impersonation-watch').then(module => module.ImpersonationWatch), {
   loading: () => <p role="status">Loading impersonation watch…</p>,
@@ -143,7 +144,7 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
 }
 
 function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;user:string;view:WorkspaceView;initialRoom?:string }) {
-  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'activity' | 'impersonation'>('people')
+  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'activity' | 'impersonation' | 'governance'>('people')
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
@@ -193,10 +194,11 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
   return <div className="panel release-panel">
     {view==='workspaces'&&space.policy&&<p className="muted">{space.policy.details?.label||space.policy.workspace_type} · {
       space.policy.compliance?.label||(space.policy.template==='restricted'?'Restricted policy':'Standard policy')}</p>}
-    {view==='workspaces' && <SectionTabs label="Workspace sections" value={(tab==='activity'||tab==='impersonation')&&!manager?'people':tab} onChange={setTab} options={[
+    {view==='workspaces' && <SectionTabs label="Workspace sections" value={(tab==='activity'||tab==='impersonation'||tab==='governance')&&!manager?'people':tab} onChange={setTab} options={[
       ['channels', <><Hash size={15}/> Channels</>], ['board', <><ListChecks size={15}/> Board</>],
       ['people', <><Users size={15}/> People</>], ['teams','Groups & teams'],
-      ...(manager ? [['activity','Activity'] as const,['impersonation','Impersonation watch'] as const] : []),
+      ...(manager ? [['activity','Activity'] as const,['impersonation','Impersonation watch'] as const,
+        ['governance','Governance'] as const] : []),
     ]}/>}
     {error && <p role="alert" className="error">{error}</p>}
     {view==='rooms'&&<SectionTabs label="Room sections" value={roomView} onChange={setRoomView} options={ [['rooms','Room directory'],['channels','Workspace channels']] }/>}
@@ -223,10 +225,12 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
     {view==='workspaces' && tab==='board' && <Board space={space.id} manager={manager} />}
     {view==='workspaces' && tab==='impersonation' && manager && <ImpersonationWatch workspace={space.id}
       accounts={activeMembers.flatMap(member => profiles[member.user_id] ? [profiles[member.user_id]] : [])} />}
+    {view==='workspaces' && tab==='governance' && manager && <WorkspaceLegalHolds key={space.id} workspace={space.id}
+      members={members.flatMap(member => profiles[member.user_id] ? [profiles[member.user_id]] : [])}/>}
     {view==='workspaces' && tab==='teams' && <WorkspaceGroups workspace={space.id} manager={manager} people={activeMembers} profiles={profiles}/>}
     {view==='tasks'&&<TaskList space={space.id} actor={user} manager={manager} members={members} profiles={profiles}/>}
     {view==='calendar'&&<WorkspaceCalendar space={space.id} />}
-    {view==='workspaces'&&(tab==='people'||(tab==='activity'&&!manager)) && <div className="release-section">
+    {view==='workspaces'&&(tab==='people'||((tab==='activity'||tab==='impersonation'||tab==='governance')&&!manager)) && <div className="release-section">
       {role && <WorkspaceNotificationPolicy workspace={space.id} manager={manager}/>}
       {manager&&<WorkspaceLinkInvites workspace={space.id} profile={space.policy?.compliance}/>}
       {presenceRequired!==null&&<div>

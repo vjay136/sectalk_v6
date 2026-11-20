@@ -34,6 +34,8 @@ Import `vjay136/sectalk_ver2`, select **Next.js**, and set the project's Root Di
 
 Calls use Supabase for signaling and WebRTC for media. With no TURN configured, browsers attempt direct connections using STUN. Direct connections can disclose network information to the other participant and can fail across restrictive networks. Configure a Coturn deployment with a shared secret and quotas before a public release. Set `TURN_URLS` with the relay endpoints and `TURN_SHARED_SECRET` as a server-only secret. The ICE API issues short-lived credentials to authenticated users and enables relay-only mode when TURN is configured. Validate UDP and TLS relay paths on separate networks.
 
+Calls → Network diagnostics runs browser-only probes when requested. Set `CALL_DIAGNOSTICS_TURN_URLS` and `CALL_DIAGNOSTICS_TURN_SECRET` for a dedicated relay with its own credential scope and allocation quotas. Configure `turn:` UDP and TCP endpoints and a `turns:` endpoint with a trusted certificate on port 443. Set `CALL_DIAGNOSTICS_BANDWIDTH=1` to enable the bounded data-channel estimate. `CALL_DIAGNOSTICS_STUN_URL` overrides the regular STUN endpoint for diagnostics.
+
 ## Verify
 
 - `npm test` checks local scam and URL warning rules.

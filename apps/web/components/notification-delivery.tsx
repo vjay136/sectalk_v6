@@ -18,6 +18,7 @@ const labels: Record<string, string> = {
   'security.account': 'Account notice',
   'billing.subscription': 'Billing update',
   'admin.room': 'Admin-room activity',
+  'email.digest': 'Email notification',
 }
 
 export function NotificationDelivery() {
@@ -55,7 +56,7 @@ export function NotificationDelivery() {
     <div className="release-row"><h2>Delivery fallback</h2>
       <button type="button" className="secondary" onClick={() => void load()}>Refresh delivery</button>
     </div>
-    <p>Alerts can appear here for seven days when browser push delivery fails.</p>
+    <p>Alerts can appear here for seven days when browser push or email delivery fails.</p>
     {error && <p role="alert" className="error">{error}</p>}
     {!items && !error && <p role="status">Loading fallback alerts…</p>}
     {items?.length === 0 && <p>No fallback alerts.</p>}

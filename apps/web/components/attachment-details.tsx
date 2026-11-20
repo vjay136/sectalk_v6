@@ -5,6 +5,7 @@ import { formatChatFileBytes } from '../lib/chat-files'
 import { db } from '../lib/data'
 import { Dialog } from './inbox'
 import { AttachmentShareLinks } from './attachment-share-links'
+import { AttachmentPreview } from './attachment-preview'
 
 type Details = { filename: string; size_bytes: number; shared_at: string; can_view_history: boolean }
 type Activity = {
@@ -28,10 +29,12 @@ function DateLabel({ at }: { at: string }) {
   return <time dateTime={at}>{dateFormat.format(new Date(at))}</time>
 }
 
-export function AttachmentDetails({ file, close }: { file: string; close: () => void }) {
+export function AttachmentDetails({ file, close, onDeleted }: { file: string; close: () => void; onDeleted: () => void }) {
   const [details, setDetails] = useState<Details | null | undefined>(undefined)
   const [history, setHistory] = useState<Activity[] | null | undefined>(undefined)
   const [attempt, setAttempt] = useState(0)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const showHistory = details?.can_view_history === true
 
   useEffect(() => {
@@ -53,14 +56,32 @@ export function AttachmentDetails({ file, close }: { file: string; close: () => 
     return () => request.abort()
   }, [file, showHistory, attempt])
 
+  async function remove() {
+    if (deleting || !window.confirm('Delete this attachment for everyone in the chat?')) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      const { error } = await db!.rpc('st_v6_delete_attachment', { p_file: file })
+      if (error) setDeleteError('Could not delete the attachment.')
+      else onDeleted()
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return <Dialog title="Attachment details" close={close}>
     {details === undefined && <p role="status">Loading attachment details…</p>}
     {details === null && <p role="alert" className="error">Attachment details are unavailable.</p>}
     {details && <>
       <h3>{details.filename}</h3>
       <p>{formatChatFileBytes(details.size_bytes)} · Shared <DateLabel at={details.shared_at}/></p>
+      <AttachmentPreview file={file} filename={details.filename}/>
     </>}
     {showHistory && <AttachmentShareLinks file={file} onChanged={() => setAttempt(value => value + 1)}/>}
+    {showHistory && <div>
+      <button className="secondary" type="button" disabled={deleting} onClick={() => void remove()}>Delete attachment</button>
+      {deleteError && <p role="alert" className="error">{deleteError}</p>}
+    </div>}
     {showHistory && <section aria-labelledby="attachment-access-history">
       <div className="panel-header">
         <h3 id="attachment-access-history">Access history</h3>

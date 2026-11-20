@@ -70,24 +70,32 @@
 | P10 | Stream delivery and usage metrics and show threat-reporting trends | SQL and real browser evidence for private hints, reconnect catch-up, completed weeks and suppressed cohorts |
 | P5 | Allow case staff to redact a specifically reported, unchanged conversation message | Real TOTP browser and SQL tests for live removal, retained authorized evidence, and audit status |
 | P10 | Add an English and Arabic locale scaffold with ICU messages | Locale unit tests and production browser checks on public and signed-in screens |
-| P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
-
 | P5 | Add workspace-wide mandatory notification categories and quiet caps | Tenant policy SQL and two browsers with existing notification preferences and quiet hours |
 | P5 | Enforce direct-chat attachment budgets by plan and account policy | Concurrent reservation SQL and browser tests for normal uploads, quota rejection and secure download |
 | P5 | Add live meeting host controls | Three-session LiveKit browser test passed. Replay of outstanding provider tokens remains open. |
 | P5 | Add browser push enrollment and private payloads | VAPID provider contract, local queue tests and Chromium service-worker notification checks. Hosted scheduler and credentials are deployment prerequisites. |
 | P10 | Measure aggregate API latency, errors and instance concurrency | Production-route tests and genuine staff MFA dashboard access |
 | P10 | Collect coarse call and meeting quality metrics | Real direct WebRTC, LiveKit, staff dashboard MFA and privacy SQL tests |
-| P5 | Add uploader access history for direct-chat files | Two-account browser and bounded access-history SQL checks. Tenant-level scope and link lifecycle remain open. |
+| P5 | Add uploader access history for direct-chat files | Two-account browser and bounded access-history SQL checks. Tenant-level scope remains open. |
 | P1 | Add workspace onboarding links with authenticated SMTP delivery | Local mail capture, separate Edge sessions and invite-expiry, domain, replay and seat fixtures |
 | P5 | Add healthcare, education, finance and GDPR-style setup profiles | Workspace wizard browser and database tests verify effective room, admission and invite settings |
-| P5 | Add bounded notification retries, dead letters and in-app fallback | SQL and browser verified Web Push rejection and recipient fallback. Email-channel fallback remains open. |
+| P5 | Add bounded notification retries, dead letters and in-app fallback | SQL, loopback SMTP and browser verified Web Push and email failure paths, valid delivery, private in-app fallback, and consent revocation |
 | P10 | Expand privacy-preserving call quality analytics | WebRTC and LiveKit audio quality samples, actual direct ICE restart offer, controlled relay percentages and verified staff dashboard |
 | P5 | Add password-protected links for direct-chat attachments | Guest browser download and revocation, concurrent limits, source authorization and audit SQL |
+| P5 | Add private opt-in email alerts and digests | Local SMTP and browser verified preference changes, cadence and unsubscribe for room mentions, tasks and missed calls |
+| P5 | Add on-demand network diagnostics for calls | Edge and local Coturn verified STUN, UDP, TCP, TLS on 443 and a bounded relay bandwidth sample |
+| P5 | Index and scope search for rooms, files, people, messages and tasks | Browser and SQL verify categories, phrase and fragment matching, navigation and access boundaries |
+| P5 | Render safe attachment previews | Edge and isolated worker verified image and PDF rasterization, escaped text, deny paths and resource limits |
+| P5 | Recover direct and scheduled calls without duplicating participants or call rows | Forced TURN restart, RTP recovery, Realtime socket replacement and live provider session reconnect |
+| P5 | Soft-delete direct-chat attachments and purge bytes after a grace period | Edge, SQL and real private Storage verified access removal, grace, retries, evidence protection and quota recovery |
+| P10 | Add idempotent, ordered worker claims and audited replay for notification queues | SQL, real staff TOTP browser, and push/email regressions |
+| P10 | Preserve scoped workspace records under legal hold | Genuine TOTP, encrypted previous content, tenant and date boundaries, purge blocking and audited release |
+| P5 | Schedule reversible archived-room deletion with a retention period | Role-scoped browser controls and SQL verification of grace, actual purge, hold and restore |
+| P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 97 verified features. The next checkpoint is due at 107, and the matrix records evidence as each feature passes.
+Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 107 verified features. The next checkpoint is due at 117, and the matrix records evidence as each feature passes.
 
 ## Remaining work by dependency
 

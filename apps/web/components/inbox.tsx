@@ -24,6 +24,7 @@ import { meetingFromQuery } from '../lib/meeting-calendar'
 import { useWorkspaceContext } from './workspace-context'
 import { ScopedTasks } from './scoped-tasks'
 import { SectionTabs } from './section-tabs'
+import { NetworkDiagnostics } from './network-diagnostics'
 import { CommandPalette, type Command } from './command-palette'
 import { ScheduledMessages } from './scheduled-messages'
 import { useOfflineMessages } from '../lib/use-offline-messages'
@@ -486,7 +487,8 @@ export function Inbox({ user }: { user: string }) {
       tab === 'billing' ? <Billing user={user} /> :
       tab === 'meetings' ? <Meetings key={requestedMeeting||'all'} requested={requestedMeeting} user={user}/> :
       tab === 'vault' ? <FilesLibrary user={user} openChat={select}/> :
-      tab === 'search' ? <GlobalSearch key={paletteSearch.sequence} initialQuery={paletteSearch.query} openChat={select} openMeeting={openMeeting} openPalette={()=>setPaletteOpen(true)}/> :
+      tab === 'search' ? <GlobalSearch key={paletteSearch.sequence} initialQuery={paletteSearch.query} openChat={select} openMeeting={openMeeting}
+        openRoom={openRoom} openPalette={()=>setPaletteOpen(true)}/> :
       tab === 'notifications' ? <Notifications user={user} hints={hints} openMeeting={openMeeting} openRoom={openRoom} openChat={select}/> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
@@ -553,7 +555,7 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
   state: ReturnType<typeof useCalling>; openChat: (id: string) => void; openInbox: () => void
 }) {
   const [rows, setRows] = useState<Call[] | null>(null)
-  const [filter, setFilter] = useState<'all' | 'missed' | 'audio' | 'video'>('all')
+  const [filter, setFilter] = useState<'all' | 'missed' | 'audio' | 'video' | 'diagnostics'>('all')
   const [now,setNow]=useState(()=>Date.now())
   const [error, setError] = useState(false)
   const reload = useCallback(async () => {
@@ -577,8 +579,8 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
 
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Phone size={22} /></div><div><h1>Calls</h1><p>Start a call from an approved conversation or return a recent call.</p></div></header>
-    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['missed','Missed'], ['audio', 'Audio'], ['video', 'Video']] }/>
-    <div className="panel">
+    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['missed','Missed'], ['audio', 'Audio'], ['video', 'Video'], ['diagnostics', 'Network diagnostics']] }/>
+    {filter==='diagnostics' ? <NetworkDiagnostics inCall={Boolean(state.call)}/> : <div className="panel">
       <div className="panel-header"><h2>Recent calls</h2><button className="secondary" onClick={openInbox}>Open inbox <ChevronRight size={16} /></button></div>
       {error && <div className="list-empty"><p role="alert">Could not load call history.</p><button className="secondary" onClick={reload}>Try again</button></div>}
       {!error && rows === null && <div className="list-empty" role="status">Loading calls…</div>}
@@ -603,7 +605,7 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
           </span>}
         </div>
       })}
-    </div>
+    </div>}
   </section>
 }
 
@@ -768,7 +770,12 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       if(signal.aborted)return
       if(removed.error||attachments.error)throw new Error('Message metadata unavailable')
       if(removed.data.length)setHidden(previous=>[...new Set([...previous,...removed.data.map(row=>row.message_id)])])
-      if(attachments.data) setFiles(previous=>({...previous,...Object.fromEntries(attachments.data.map(file=>[file.message_id,file]))}))
+      setFiles(previous=>{
+        const next={...previous}
+        for(const id of ids)delete next[id]
+        for(const file of attachments.data)next[file.message_id]=file
+        return next
+      })
     }
     if(!signal.aborted)merge(page)
   },[loadQuotes,merge])

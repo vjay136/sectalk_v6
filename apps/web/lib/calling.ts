@@ -239,6 +239,8 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     let pc: RTCPeerConnection | undefined
     let retry: number | undefined
     let timeout: number | undefined
+    let recoveryTimeout: number | undefined
+    let restartInFlight = false
     let polling: number | undefined
     let iceTimer: number | undefined
     let iceDeadline = Infinity
@@ -251,6 +253,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     const arriving = new Map<string, Signal>()
     let pending: RTCIceCandidateInit[] = []
     let remoteUfrags = new Set<string>()
+    let lastRemoteSdp: string | undefined
     let routeSampled = false
     let mosTimer: number | undefined
     let mosAttempts = 0
@@ -263,9 +266,13 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     }
 
     async function transmit(kind: Signal['kind'], payload: Signal['payload']) {
-      if (disposed) return
-      const { error } = await db!.rpc('st_v6_call_signal', { p_call: activeId, p_kind: kind, p_payload: payload, p_device: device })
-      if (error && !disposed) throw error
+      for (const delay of [0, 350, 1000]) {
+        if (delay) await new Promise<void>(resolve => window.setTimeout(resolve, delay))
+        if (disposed) return
+        const result = await db!.rpc('st_v6_call_signal', { p_call: activeId, p_kind: kind, p_payload: payload, p_device: device })
+        if (!result.error || disposed) return
+        if (result.status > 0 && result.status < 500 || delay === 1000) throw result.error
+      }
     }
 
     function scheduleIceRenewal(peer: RTCPeerConnection, ttlSeconds: number | null) {
@@ -302,6 +309,27 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       if (restart && !disposed) qos.iceRestart()
     }
 
+    function recover(peer: RTCPeerConnection) {
+      if (recoveryTimeout === undefined) {
+        recoveryTimeout = window.setTimeout(() => fail('The call disconnected.'), 22_000)
+      }
+      if (!isCaller || retry !== undefined || restartInFlight) return
+      retry = window.setTimeout(async () => {
+        retry = undefined
+        if (disposed || peer.connectionState === 'connected' || recoveryTimeout === undefined) return
+        if (peer.signalingState === 'stable') {
+          restartInFlight = true
+          try { await offer(peer, true) }
+          catch {
+            if (!disposed) {
+              await peer.setLocalDescription({ type: 'rollback' }).catch(() => {})
+            }
+          } finally { restartInFlight = false }
+        }
+        if (!disposed && recoveryTimeout !== undefined) recover(peer)
+      }, 2500)
+    }
+
     async function sampleAudioQuality(peer: RTCPeerConnection) {
       if (disposed || mosAttempts >= 3) return
       mosAttempts++
@@ -327,7 +355,8 @@ export function useCalling(user: string, notice: (message: string) => void, hint
           needsSnapshot = false
           if (readHistory) {
             const { data } = await db!.from('st_signals').select('id,sender,kind,payload,created_at')
-              .eq('call_id', activeId).neq('sender', user).order('created_at').order('id').limit(750)
+              .eq('call_id', activeId).neq('sender', user).order('created_at', { ascending: false })
+              .order('id', { ascending: false }).limit(750)
             for (const row of (data ?? []) as Signal[]) {
               if (!seen.has(row.id)) arriving.set(row.id, row)
             }
@@ -348,9 +377,12 @@ export function useCalling(user: string, notice: (message: string) => void, hint
               continue
             }
             const description = row.payload as RTCSessionDescriptionInit
+            if (lastRemoteSdp === description.sdp ||
+                (row.kind === 'answer' && peer.signalingState !== 'have-local-offer')) continue
             if (row.kind === 'offer' && iceDeadline - performance.now() <= 60000) await renewIce(peer)
             if (disposed) return
             await peer.setRemoteDescription(description)
+            lastRemoteSdp = description.sdp
             remoteUfrags = new Set([...description.sdp?.matchAll(/^a=ice-ufrag:([^\r\n]+)/gm) ?? []].map(match => match[1]))
             const remaining: RTCIceCandidateInit[] = []
             for (const candidate of pending) {
@@ -390,10 +422,13 @@ export function useCalling(user: string, notice: (message: string) => void, hint
         }
         peer.onconnectionstatechange = () => {
           if (disposed) return
-          window.clearTimeout(retry)
           setConnection(peer.connectionState)
           if (peer.connectionState === 'connected') {
             window.clearTimeout(timeout)
+            window.clearTimeout(recoveryTimeout)
+            window.clearTimeout(retry)
+            recoveryTimeout = undefined
+            retry = undefined
             qos.connected()
             if (mosTimer === undefined) mosTimer = window.setTimeout(() => void sampleAudioQuality(peer), 2500)
             if (!routeSampled) {
@@ -403,14 +438,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
           }
           if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') {
             qos.reconnecting()
-            retry = window.setTimeout(() => {
-              if (disposed || peer.connectionState === 'connected') return
-              if (isCaller && peer.signalingState === 'stable') {
-                void offer(peer, true).catch(() => fail('The call disconnected.'))
-              }
-              window.clearTimeout(timeout)
-              timeout = window.setTimeout(() => fail('The call disconnected.'), 18000)
-            }, 2500)
+            recover(peer)
           }
         }
         const channel = liveChannel('signals:' + activeId, () => void readSignals(peer))
@@ -438,6 +466,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     return () => {
       disposed = true
       window.clearTimeout(retry)
+      window.clearTimeout(recoveryTimeout)
       window.clearTimeout(timeout)
       window.clearInterval(polling)
       window.clearTimeout(iceTimer)

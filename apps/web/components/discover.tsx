@@ -8,14 +8,16 @@ import { TaskNotices } from './scoped-tasks'
 import { AuditSearch, type AuditWorkspace } from './audit-search'
 import { WebPushSettings } from './web-push-settings'
 import { NotificationDelivery } from './notification-delivery'
+import { NotificationEmailSettings } from './notification-email-settings'
 
-type Result = { kind:'direct'|'channel'|'room'|'board'|'task'|'meeting'; id:string; scope_id:string; title:string; snippet:string; at:string }
+type Result = { kind:'direct'|'channel'|'room'|'board'|'task'|'meeting'|'room_name'|'file'|'person'; id:string; scope_id:string; title:string; snippet:string; at:string }
 type SearchKind=Result['kind']|'all'
 type SearchFilters={room?:string;sender?:string;from?:string;until?:string;status?:string;has_file?:boolean;mentions_me?:boolean}
 type SearchRequest={query:string;kind:SearchKind;filters:SearchFilters}
 type SavedSearch=SearchRequest&{id:string}
 type SearchRoom={id:string;name:string;workspace:{name:string}|null}
-const searchOptions=[['all','All content'],['direct','Direct messages'],['channel','Channel posts'],['room','Room posts'],['board','Board items'],['task','Tasks'],['meeting','Meetings']] as const
+const searchOptions=[['all','All content'],['direct','Direct messages'],['channel','Channel posts'],['room','Room posts'],
+  ['room_name','Rooms'],['file','Files'],['person','People'],['board','Board items'],['task','Tasks'],['meeting','Meetings']] as const
 const statusOptions=[['todo','To do'],['in_progress','In progress'],['blocked','Blocked'],['done','Done'],['cancelled','Cancelled'],['scheduled','Scheduled'],['live','Live'],['ended','Ended']] as const
 const searchParams=({query,kind,filters}:SearchRequest)=>{
   const {from,until,...other}=filters
@@ -40,8 +42,8 @@ function highlight(text:string,terms:string) {
     index%2===1?<mark key={index}>{part}</mark>:part)
 }
 
-export function GlobalSearch({ openChat,openMeeting,openPalette,initialQuery='' }: {
-  openChat:(id:string)=>void;openMeeting:(id:string)=>void;openPalette:()=>void;initialQuery?:string
+export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initialQuery='' }: {
+  openChat:(id:string)=>void;openMeeting:(id:string)=>void;openRoom:(workspace:string,id:string)=>void;openPalette:()=>void;initialQuery?:string
 }) {
   const [results,setResults]=useState<Result[]|null>(null)
   const [kind,setKind]=useState<SearchKind>('all')
@@ -121,7 +123,8 @@ export function GlobalSearch({ openChat,openMeeting,openPalette,initialQuery='' 
   const terms=query.trim()
   const invalidDates=!!(filters.from&&filters.until&&filters.from>filters.until)
   const invalidSender=!!sender&&!/^[a-z0-9_]{3,24}$/.test(sender)
-  const canSearch=!invalidDates&&!invalidSender&&(terms.length>=2||(!terms&&(kind!=='all'||Object.values(normalizedFilters).some(Boolean))))
+  const canSearch=!invalidDates&&!invalidSender&&(terms.length>=2||
+    (!terms&&kind!=='person'&&(kind!=='all'||Object.values(normalizedFilters).some(Boolean))))
 
   function changeFilter<Key extends keyof SearchFilters>(key:Key,value:SearchFilters[Key]){
     setFilters(previous=>({...previous,[key]:value||undefined}))
@@ -138,7 +141,7 @@ export function GlobalSearch({ openChat,openMeeting,openPalette,initialQuery='' 
     finally{setEditing(false)}
   }
   return <section className="content-page">
-    <header className="content-title"><div className="card-icon"><Search size={22}/></div><div><h1>Search</h1><p>Find messages, room and channel posts, board items, tasks, and meetings you can access.</p>
+    <header className="content-title"><div className="card-icon"><Search size={22}/></div><div><h1>Search</h1><p>Find messages, rooms, files, people, tasks, and meetings you can access.</p>
       <button className="secondary" type="button" aria-keyshortcuts="Control+K Meta+K" onClick={openPalette}>Open command palette</button>
     </div></header>
     <SectionTabs label="Search tabs" value={view} onChange={next=>{if(!loading&&!editing){setView(next);setError('');setNotice('')}}}
@@ -202,10 +205,12 @@ export function GlobalSearch({ openChat,openMeeting,openPalette,initialQuery='' 
     </form>
     {results?.length===0&&<p role="status">No matching items.</p>}
     {results?.map(item=><article className="panel release-panel" key={item.kind+item.scope_id+item.id}>
-      <div className="release-row"><h2>{highlight(item.title,matched?.query||'')}</h2><time dateTime={item.at}>{new Date(item.at).toLocaleString()}</time></div>
+      <div className="release-row"><h2>{highlight(item.title,matched?.query||'')}</h2>{item.kind!=='person'&&
+        <time dateTime={item.at}>{new Date(item.at).toLocaleString()}</time>}</div>
       {item.snippet&&<p className="meeting-agenda">{highlight(item.snippet,matched?.query||'')}</p>}
       {item.kind==='meeting'&&<button className="secondary" onClick={()=>openMeeting(item.id)}>View meeting</button>}
-      {item.kind==='direct'&&<button className="secondary" onClick={()=>openChat(item.scope_id)}>Open conversation</button>}
+      {(item.kind==='direct'||item.kind==='file')&&<button className="secondary" onClick={()=>openChat(item.scope_id)}>Open conversation</button>}
+      {item.kind==='room_name'&&<button className="secondary" onClick={()=>openRoom(item.scope_id,item.id)}>Open room</button>}
     </article>)}
     </>}
   </section>
@@ -398,7 +403,7 @@ export function Notifications({user,hints,openMeeting,openRoom,openChat}: Digest
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Bell size={22}/></div><div><h1>Notifications</h1></div></header>
     <SectionTabs label="Notification categories" value={category} onChange={next=>{if(next!==category){setItems(null);setCategory(next)}}} options={ [['meetings','Meetings'],['mentions','Mentions'],['tasks','Task updates'],['digest','Digest'],['delivery','Delivery'],['preferences','Preferences']] }/>
-    {category==='preferences'?<><NotificationPreferences hints={hints}/><WebPushSettings/></>:category==='delivery'?<NotificationDelivery/>:category==='tasks'?<TaskNotices user={user}/>:category==='digest'?<NotificationDigest openRoom={openRoom} openChat={openChat}/>:<>
+    {category==='preferences'?<><NotificationPreferences hints={hints}/><WebPushSettings/><NotificationEmailSettings/></>:category==='delivery'?<NotificationDelivery/>:category==='tasks'?<TaskNotices user={user}/>:category==='digest'?<NotificationDigest openRoom={openRoom} openChat={openChat}/>:<>
     {error&&<p role="alert" className="error">{error}</p>}
     <SectionTabs label="Notification filters" value={filter} onChange={setFilter} options={ [['all','All updates'], ['unread','Unread']] }/>
     <button className="secondary" disabled={!visible?.some(item=>!item.read_at)} onClick={()=>void mark(null)}><Check size={15}/> Mark all read</button>

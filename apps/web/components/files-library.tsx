@@ -41,6 +41,7 @@ function ChatLibrary({openChat}: {openChat:(id:string)=>void}) {
   const [error,setError]=useState('')
   const [loadedCriteria,setLoadedCriteria]=useState('')
   const [detailFile,setDetailFile]=useState<string|null>(null)
+  const [deletionRevision,setDeletionRevision]=useState(0)
 
   const criteria=JSON.stringify([page,sort,direction,query])
   const load=useCallback(async (alive:()=>boolean=()=>true)=>{
@@ -122,6 +123,40 @@ function ChatLibrary({openChat}: {openChat:(id:string)=>void}) {
       <span>Page {page+1}</span>
       <button className="secondary" type="button" disabled={!hasMore||busy||!visible} onClick={()=>setPage(page+1)}>Next</button>
     </div>}
-    {detailFile && <AttachmentDetails key={detailFile} file={detailFile} close={()=>setDetailFile(null)}/>}
+    <DeletedAttachments revision={deletionRevision}/>
+    {detailFile && <AttachmentDetails key={detailFile} file={detailFile} close={()=>setDetailFile(null)}
+      onDeleted={()=>{setDetailFile(null);setDeletionRevision(value=>value+1);void load()}}/>}
   </section>
+}
+
+type DeletedAttachment = { filename: string; deleted_at: string; purge_after: string; purged_at: string | null }
+
+function DeletedAttachments({ revision }: { revision: number }) {
+  const [open, setOpen] = useState(false)
+  const [items, setItems] = useState<DeletedAttachment[] | null>(null)
+  const [error, setError] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    if (!open) return
+    const request = new AbortController()
+    void db!.rpc('st_v6_deleted_attachments').abortSignal(request.signal).then(({ data, error }) => {
+      if (!request.signal.aborted) {
+        setError(Boolean(error))
+        setItems(error ? null : data as DeletedAttachment[])
+      }
+    })
+    return () => request.abort()
+  }, [open, revision, attempt])
+
+  return <details onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>Deleted attachments</summary>
+    <button className="secondary" type="button" onClick={() => setAttempt(value => value + 1)}>Refresh deleted attachments</button>
+    {error && <p className="error" role="alert">Could not load deleted attachments.</p>}
+    {items?.length === 0 && <p>No deleted attachments.</p>}
+    {!!items?.length && <ul className="audit">{items.map((file, index) => <li key={file.deleted_at + index}>
+      <strong>{file.filename}</strong>
+      <small>{file.purged_at ? 'Storage purged' : 'Eligible for storage purge'} ·
+        {' '}<time dateTime={file.purged_at ?? file.purge_after}>{new Date(file.purged_at ?? file.purge_after).toLocaleString()}</time></small>
+    </li>)}</ul>}
+  </details>
 }
