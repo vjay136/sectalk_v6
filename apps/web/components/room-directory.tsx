@@ -11,6 +11,9 @@ import { AdminNotificationAudit } from './admin-notification-audit'
 import { useReadReceiptSettings, useRoomReadReceipts } from './read-receipts'
 import { DraftStatus, useSyncedDraft } from './synced-draft'
 import { RoomRetirement } from './room-retirement'
+import { RoomPostReport } from './room-reports'
+import { RoomGuestLinks } from './room-guest-links'
+import { RoomThreadSummary } from './room-thread-summary'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
@@ -215,6 +218,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const [taskSource,setTaskSource]=useState<string|null>(null)
   const [editingPost,setEditingPost]=useState<string|null>(null)
   const [forwarding,setForwarding]=useState<string|null>(null)
+  const [reporting,setReporting]=useState<string|null>(null)
   const [quietHours,setQuietHours]=useState(false)
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
@@ -421,6 +425,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     const senderIsStaff=room.kind==='admin'?workspaceAdminIds.includes(post.sender):senderRole==='owner'||senderRole==='moderator'
     const canRedact=canModify&&staff&&post.sender!==user&&(role==='owner'||!senderIsStaff)
     const canForward=forwardingAvailable&&!post.removed_at&&post.kind==='message'
+    const canReport=Boolean(role&&!post.removed_at&&post.sender!==user)
     const readCount=readCounts?.[post.id]||0
     return <article className="release-board-item" key={post.id} data-room-post={post.id}>
       <div className="release-row"><strong>{name(post.sender)}</strong><time dateTime={post.created_at}>{new Date(post.created_at).toLocaleString()}</time>
@@ -440,16 +445,18 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
           <button className="primary" disabled={working}>Save edit</button>
           <button className="secondary" type="button" onClick={()=>setEditingPost(null)}>Cancel edit</button>
         </div>
-      </form>:(canEdit||canDelete||canRedact||canForward)&&<details>
+      </form>:(canEdit||canDelete||canRedact||canForward||canReport)&&<details>
         <summary>Room message actions</summary>
         <div className="action-row">
           {canEdit&&<button className="secondary" type="button" onClick={()=>setEditingPost(post.id)}>Edit message</button>}
           {canForward&&<button className="secondary" type="button" onClick={()=>setForwarding(post.id)}>Forward message</button>}
+          {canReport&&<button className="secondary" type="button" onClick={()=>setReporting(post.id)}>Report room message</button>}
           {(canDelete||canRedact)&&<button className="danger" type="button" disabled={working} onClick={()=>{
             if(window.confirm('Remove this message? Replies and follows will remain.'))void updatePost(post,canDelete?'delete':'redact')
           }}>{canDelete?'Delete message':'Redact message'}</button>}
         </div>
       </details>}
+      {canReport&&reporting===post.id&&<RoomPostReport key={post.id} room={room.id} post={post.id} close={()=>setReporting(null)}/>}
       {actions&&<div className="action-row">
         <button className="secondary" type="button" onClick={()=>openThread(post.id)}>Open thread{summary?' ('+summary.replies+')':''}</button>
         {canPost&&!post.removed_at&&<button className="secondary" type="button" onClick={()=>{setTaskSource(post.id);setView('tasks')}}>Create task from message</button>}
@@ -499,6 +506,9 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
             onClick={()=>void follow(parent.id,!threadStates.some(item=>item.post_id===parent.id&&item.following))}>
             {threadStates.some(item=>item.post_id===parent.id&&item.following)?'Unfollow thread':'Follow thread'}
           </button></>}
+        {parent&&!parent.removed_at&&!parent.forwarded&&parent.kind==='message'&&room.kind==='public'&&canShareClassification&&
+          !room.archived&&role&&['owner','moderator','member'].includes(role)&&
+          <RoomThreadSummary key={room.id+':'+parent.id} room={room.id} root={parent.id}/>}
         {thread?replies.map(post=>renderPost(post,false)):<p>Open a thread from a message.</p>}
         {thread&&replies.length===0&&<p>No replies yet.</p>}
       </>}
@@ -555,6 +565,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         </>}
       </>}
       {actualView==='settings'&&<>
+        {role==='owner'&&<RoomGuestLinks room={room.id}
+          policyVersion={JSON.stringify([room.kind,room.classification,room.forwarding_allowed,room.archived,room.locked])}/>}
         {manager&&!room.archived&&<form className="release-form" key={room.classification} onSubmit={event=>{
           event.preventDefault()
           const classification=new FormData(event.currentTarget).get('classification')

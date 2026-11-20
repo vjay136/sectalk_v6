@@ -1,6 +1,6 @@
 import { withOperationalMetrics } from '../../../../lib/operational-metrics-server'
 import type Stripe from 'stripe'
-import { billingWriter, planForPrice, stripe, webhookSecret } from '../../../../lib/stripe-server'
+import { billingWriter, legacyOfferForPrice, stripe, webhookSecret } from '../../../../lib/stripe-server'
 
 export const runtime = 'nodejs'
 
@@ -23,14 +23,19 @@ async function handlePost(request: Request) {
     const user = subscription.metadata.sectalk_user
     if (!user || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(user)) return new Response(null, { status: 204 })
     const item = subscription.items.data[0]
-    const plan = item?.price.id ? planForPrice(item.price.id) : null
-    if (!plan || subscription.items.data.length !== 1) return new Response('Unsupported subscription price', { status: 422 })
+    if (!item?.price.id || subscription.items.data.length !== 1 || item.price.unit_amount === null) {
+      return new Response('Unsupported subscription price', { status: 422 })
+    }
+    const legacy = legacyOfferForPrice(item.price.id)
     const customer = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
-    const { error } = await billingWriter.rpc('st_v2_sync_billing', {
+    const { error } = await billingWriter.rpc('st_v6_sync_catalog_subscription', {
       p_event: event.id, p_user: user, p_customer: customer, p_subscription: subscription.id,
-      p_plan: plan, p_status: subscription.status, p_end: new Date(item.current_period_end * 1000).toISOString(),
+      p_provider_price: item.price.id, p_legacy_plan: legacy?.plan ?? null, p_legacy_cadence: legacy?.cadence ?? null,
+      p_status: subscription.status, p_end: new Date(item.current_period_end * 1000).toISOString(),
       p_cancel: subscription.cancel_at_period_end, p_synced: new Date(event.created * 1000).toISOString(),
+      p_currency: item.price.currency.toUpperCase(), p_amount: item.price.unit_amount,
     })
+    if (error?.code === '22023') return new Response('Unsupported subscription price', { status: 422 })
     return error ? new Response('Subscription update failed', { status: 503 }) : new Response(null, { status: 204 })
   } catch {
     return new Response('Provider synchronization failed', { status: 503 })

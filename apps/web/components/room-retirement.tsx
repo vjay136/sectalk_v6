@@ -62,7 +62,7 @@ export function RoomRetirement({ room }: { room: string }) {
   </section>
 }
 
-export function RoomRetentionPolicy({ workspace }: { workspace: string }) {
+export function RoomRetentionPolicy({ workspace, onSaved }: { workspace: string; onSaved: () => void }) {
   const [days, setDays] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
@@ -87,6 +87,7 @@ export function RoomRetentionPolicy({ workspace }: { workspace: string }) {
       if (result.error) throw result.error
       setDays(String(result.data))
       setMessage('Room retention policy saved.')
+      onSaved()
     } catch (cause) {
       setError(formatError(cause, 'Could not save the room retention policy.'))
     } finally {

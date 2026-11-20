@@ -193,6 +193,23 @@ export function Inbox({ user }: { user: string }) {
           if (!error && Array.isArray(data) && data.length) setNotice('You have a new staff case mention.')
         })
       })
+      .on('broadcast', { event: 'case_escalation' }, () => {
+        void db!.rpc('st_v6_case_escalation_assignments').then(({ data, error }) => {
+          if (!error && Array.isArray(data) && data.length) setNotice('You have a new on-call case assignment.')
+        })
+      })
+      .on('broadcast', { event: 'workspace_room_report' }, () => {
+        void db!.rpc('st_v6_room_report_queue', { p_scope: 'workspace' }).then(({ data, error }) => {
+          if (!error && Array.isArray(data) && data.length) setNotice('You have a new workspace room report to review.')
+        })
+      })
+      .on('broadcast', { event: 'room_report_routed' }, () => {
+        void db!.rpc('st_v6_room_report_queue', { p_scope: 'platform' }).then(({ data, error }) => {
+          if (!error && Array.isArray(data) && data.some(row => row.assigned_to_you)) {
+            setNotice('You have a new on-call room report assignment.')
+          }
+        })
+      })
       .on('broadcast', { event: 'workspace_memberships' }, () => { void reloadWorkspaces(); void refresh() })
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))

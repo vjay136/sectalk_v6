@@ -1,5 +1,10 @@
-import { configuredPlans } from '../../../../lib/stripe-server'
+import { configuredCatalog, stripe } from '../../../../lib/stripe-server'
 
-export function GET() {
-  return Response.json({ plans: configuredPlans() }, { headers: { 'Cache-Control': 'no-store' } })
+export async function GET() {
+  const headers = { 'Cache-Control': 'no-store' }
+  try {
+    return Response.json({ plans: await configuredCatalog(), checkoutAvailable: Boolean(stripe) }, { headers })
+  } catch {
+    return Response.json({ error: 'Billing catalog unavailable.' }, { headers, status: 503 })
+  }
 }

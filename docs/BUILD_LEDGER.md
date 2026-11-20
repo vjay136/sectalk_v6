@@ -110,11 +110,21 @@
 | P10 | Add private case notes, staff mentions and shared evidence links | Two TOTP browser sessions and SQL verify recipient-only alerts, audited evidence and reporter isolation |
 | P5 | Add room classification and prevent in-app forwarding downgrades | Browser labels and strong authorization, SQL visibility floors, forwarding rules and audited changes |
 | P10 | Add a role-scoped workspace overview | Browser and SQL verified health, plan seats, invitation alerts, adoption suppression and tenant boundaries |
+| P5 | Draft scoped meeting summaries and action items | Browser verified approved source selection, redaction, editing, policy and withdrawal |
+| P10 | Persist private generated exports under a separate lifecycle | Real Storage verified source reauthorization, exact bytes, expiry, retries and deletion |
+| P10 | Route personal cases and consented workspace room reports through staff escalation | Edge and SQL verified stage assignments, real TOTP, private live alerts, scoped handoff, SLA deadlines, acknowledgment and reporting status |
+| P10 | Add tenant-scoped workspace analytics | SQL and real MFA browser verified usage suppression, meeting quality, role boundaries and room security posture |
+| P5 | Add guest meeting links with a host-controlled lobby | Browser and real LiveKit verified expiry, challenge rejection, owner approval, mic access and revocation. Hosted CAPTCHA still needs a configured domain. |
+| P10 | Version workspace retention and notification policies with simulation and rollback | Edge and SQL verified scoped previews, stale change rejection, applied enforcement and restored settings |
+| P5 | Resume direct attachment uploads after interrupted requests | Edge and local Storage verified offset replay, per-chunk and final checksums, scanner publication, and physical staging cleanup |
+| P10 | Publish a versioned multi-currency billing catalog with grandfathered terms | Edge, SQL and a signed local webhook verified active offers, interval and currency controls, historical pricing and account scope |
+| P5 | Offer room-only guest access for selected owner-authored posts | Edge and SQL verified link and credential expiry, no account privileges, blocked cross-room access, and revocation after edits or policy changes |
+| P5 | Draft private, opt-in summaries of eligible room threads | Edge and local data verified role, per-author consent, scope, unsafe input filtering, and automatic invalidation after edits or withdrawal |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 127 verified features. The next checkpoint is due at 137, and the matrix records evidence as each feature passes.
+Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 137 verified features. The next checkpoint is due at 147, and the matrix records evidence as each feature passes.
 
 ## Remaining work by dependency
 

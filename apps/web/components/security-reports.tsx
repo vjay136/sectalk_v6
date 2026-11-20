@@ -25,25 +25,15 @@ export function SecurityReports() {
     setDownloading(true)
     setError('')
     try {
-      let file: Blob
-      if (format === 'pdf') {
-        const [report, {securityReportPdf}] = await Promise.all([
-          db!.rpc('st_v6_security_report', {p_period: period}),
-          import('../lib/security-report-export'),
-        ])
-        if (report.error || !report.data) throw new Error()
-        const bytes = new Uint8Array(await securityReportPdf(report.data as SecurityReport))
-        file = new Blob([bytes], {type: 'application/octet-stream'})
-      } else {
-        const {data} = await db!.auth.getSession()
-        if (!data.session) throw new Error()
-        const query = new URLSearchParams({period, format})
-        const response = await fetch('/api/security-reports/export?' + query, {
-          headers: {Authorization: 'Bearer ' + data.session.access_token}, cache: 'no-store',
-        })
-        if (!response.ok) throw new Error()
-        file = await response.blob()
-      }
+      const {data} = await db!.auth.getSession()
+      if (!data.session) throw new Error()
+      const query = new URLSearchParams({period, format})
+      const response = await fetch('/api/security-reports/export?' + query, {
+        headers: {Authorization: 'Bearer ' + data.session.access_token,
+          ...(format === 'pdf' ? {Accept: 'application/octet-stream'} : {})}, cache: 'no-store',
+      })
+      if (!response.ok) throw new Error()
+      const file = new Blob([await response.blob()], {type: 'application/octet-stream'})
       const url = URL.createObjectURL(file)
       const link = document.createElement('a')
       link.href = url

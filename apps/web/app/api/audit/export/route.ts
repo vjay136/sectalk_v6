@@ -1,7 +1,9 @@
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
+import { saveExportResponse } from '../../../../lib/export-storage-server'
 
 export const runtime = 'nodejs'
+export const maxDuration = 30
 
 const headers = { 'Cache-Control': 'no-store' }
 const identifier = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
@@ -69,8 +71,10 @@ export async function POST(request: Request) {
     format: 'sectalk-workspace-audit-v1', exported_at: new Date().toISOString(), filters, integrity: integrity.data.state,
     last_local_checkpoint: integrity.data.last_local_checkpoint, limit: 100, entries: audit.data,
   }, null, 2)
-  return Response.json({
+  const envelope = JSON.stringify({
     algorithm: 'Ed25519', key_id: keys.keyId, payload,
     signature: sign(null, Buffer.from(payload, 'utf8'), keys.privateKey).toString('base64url'),
-  }, { headers: { ...headers, 'Content-Disposition': 'attachment; filename="sectalk-audit.json"' } })
+  })
+  return saveExportResponse(auth.data.user.id, { kind: 'audit', scope_id: workspace },
+    { filename: 'sectalk-audit.json', media_type: 'application/json' }, envelope)
 }

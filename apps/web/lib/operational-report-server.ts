@@ -45,7 +45,7 @@ export async function operationalReportViewer(request: Request) {
     global: { headers: { Authorization: 'Bearer ' + token } },
   })
   const user = await client.auth.getUser(token)
-  return user.error || !user.data.user ? null : client
+  return user.error || !user.data.user ? null : { client, actor: user.data.user.id }
 }
 
 export async function sendOperationalReport(

@@ -2,33 +2,13 @@ import { withOperationalMetrics } from '../../../../lib/operational-metrics-serv
 import { authenticateFileRequest, fileFailure, fileHeaders } from '../../../../lib/authenticated-file-request'
 import { validFileId } from '../../../../lib/file-download-ticket'
 import { allowedFileType } from '../../../../lib/file-type-policy'
+import { readAttachmentUpload } from '../../../../lib/attachment-upload-body'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
 const maximumUploadBytes = 4 * 1024 * 1024
 const attachmentBucket = 'sectalk-chat-files'
-
-async function readUpload(request: Request) {
-  const reader = request.body?.getReader()
-  if (!reader) return null
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (done) return Buffer.concat(chunks, size)
-      size += value.byteLength
-      if (size > maximumUploadBytes) {
-        void reader.cancel().catch(() => undefined)
-        return undefined
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-}
 
 async function handlePost(request: Request) {
   const file = new URL(request.url).searchParams.get('file')
@@ -39,7 +19,7 @@ async function handlePost(request: Request) {
   }
   const auth = await authenticateFileRequest(request)
   if (auth instanceof Response) return auth
-  const bytes = await readUpload(request).catch(() => null)
+  const bytes = await readAttachmentUpload(request, maximumUploadBytes).catch(() => null)
   if (bytes === undefined) return fileFailure(413, 'This file exceeds the 4 MiB upload limit.')
   if (!bytes?.length) return fileFailure(400, 'Attach a file that contains data.')
 

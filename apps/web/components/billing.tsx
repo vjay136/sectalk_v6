@@ -2,21 +2,26 @@
 
 import { useEffect, useState } from 'react'
 import { ArrowRight, CreditCard } from 'lucide-react'
-import { type Cadence, type PaidPlan, type Plan, isPaidPlan, plans } from '../lib/billing'
+import { type BillingCurrency, type Cadence, type PaidPlan, type Plan, type PlanVersion, formatBillingAmount, isBillingCurrency, isPaidPlan, plans } from '../lib/billing'
 import { db } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 
-type Option = { plan: PaidPlan; monthly: boolean; annual: boolean }
-type Subscription = { plan: Plan; status: string; period_end: string | null; cancel_at_period_end: boolean; customer_id: string | null }
+type Catalog = { plans: PlanVersion[]; checkoutAvailable: boolean }
+type Subscription = {
+  plan: Plan; status: string; period_end: string | null; cancel_at_period_end: boolean; customer_id: string | null
+  catalog_version: number; billing_currency: string | null; billing_cadence: Cadence | null; billing_amount: number | null
+}
 const labels: Record<string, string> = {
   active: 'Active', trialing: 'Trialing', past_due: 'Payment past due', canceled: 'Canceled', unpaid: 'Unpaid',
   paused: 'Paused', incomplete: 'Checkout incomplete', incomplete_expired: 'Checkout expired',
 }
 
 export function Billing({ user }: { user: string }) {
-  const [catalog, setCatalog] = useState<Option[] | null>(null)
+  const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [subscription, setSubscription] = useState<Subscription | null>(null)
+  const [subscriptionTitle, setSubscriptionTitle] = useState<string | null>(null)
   const [cadence, setCadence] = useState<Cadence>('monthly')
+  const [currency, setCurrency] = useState<BillingCurrency>('USD')
   const [view, setView] = useState<'subscription'|'plans'>('subscription')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -29,20 +34,28 @@ export function Billing({ user }: { user: string }) {
     const controller = new AbortController()
     fetch('/api/billing/catalog', { signal: controller.signal }).then(async res => {
       if (!res.ok) throw new Error('Catalog unavailable')
-      setCatalog((await res.json()).plans)
+      const options = await res.json() as Catalog
+      if (controller.signal.aborted) return
+      setCatalog(options)
+      const currencies = options.plans.flatMap(plan => plan.prices.map(price => price.currency))
+      if (currencies[0] && !currencies.includes('USD')) setCurrency(currencies[0])
     }).catch(() => { if (!controller.signal.aborted) setError('Could not load the billing catalog.') })
-    const reload = () => void db!.from('st_v2_subscriptions').select('plan,status,period_end,cancel_at_period_end,customer_id')
-      .eq('user_id', user).maybeSingle().then(({ data, error }) => {
-        if (controller.signal.aborted) return
-        if (error) setError('Could not load your subscription.')
-        else setSubscription(data as Subscription | null)
-      })
+    const reload = () => void Promise.all([
+      db!.from('st_v2_subscriptions').select('plan,status,period_end,cancel_at_period_end,customer_id,catalog_version,billing_currency,billing_cadence,billing_amount')
+        .eq('user_id', user).maybeSingle(),
+      db!.rpc('st_v6_my_plan_title'),
+    ]).then(([subscription, title]) => {
+      if (controller.signal.aborted) return
+      if (subscription.error || title.error) setError('Could not load your subscription.')
+      if (!subscription.error) setSubscription(subscription.data as Subscription | null)
+      if (!title.error) setSubscriptionTitle(title.data)
+    })
     reload()
     const poll = window.setInterval(reload, 10000)
     return () => { controller.abort(); window.clearInterval(poll) }
   }, [user])
 
-  async function start(action: 'checkout' | 'portal', plan?: PaidPlan) {
+  async function start(action: 'checkout' | 'portal', plan?: PaidPlan, version?: number) {
     if (busy) return
     setBusy(true)
     setError('')
@@ -51,7 +64,7 @@ export function Billing({ user }: { user: string }) {
       const response = await fetch('/api/billing/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token },
-        body: JSON.stringify({ action, plan, cadence }),
+        body: JSON.stringify({ action, plan, cadence, currency, version }),
       })
       const payload = await response.json()
       if (!response.ok || !payload.url) throw new Error(payload.error || 'The billing request failed.')
@@ -68,31 +81,44 @@ export function Billing({ user }: { user: string }) {
     ['active','trialing'].includes(subscription.status) && periodEnd > Date.now()
     || subscription.status === 'past_due' && periodEnd + 72 * 3600000 > Date.now()
   ) ? subscription.plan : 'free'
+  const activeVersion = catalog?.plans.find(plan => plan.plan === currentPlan)
+  const currencies = [...new Set(catalog?.plans.flatMap(plan => plan.prices.map(price => price.currency)) ?? [])]
+  const grandfathered = catalog && currentPlan !== 'free' && subscription && (!activeVersion || activeVersion.version > subscription.catalog_version)
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><CreditCard size={22}/></div><div><h1>Billing</h1><p>Manage your SecTalk subscription and workspace limits.</p></div></header>
     <SectionTabs label="Billing sections" value={view} onChange={setView} options={ [['subscription','My subscription'], ['plans','Compare plans']] }/>
     {view==='subscription'&&<div className="panel release-panel billing-summary">
-      <div><span className="pill">Current plan</span><h2>{plans.find(plan => plan.id === currentPlan)?.name || 'Free'}</h2>
+      <div><span className="pill">Current plan</span><h2>{(currentPlan === 'free' ? null : subscriptionTitle) ?? activeVersion?.title ?? plans.find(plan => plan.id === currentPlan)?.name ?? 'Free'}</h2>
         {status && <p>{status}{subscription?.cancel_at_period_end ? ' · Ends at the end of this billing period' : ''}</p>}
+        {currentPlan !== 'free' && subscription && <p>Terms version {subscription.catalog_version}{grandfathered ? ' · Grandfathered' : ''}</p>}
+        {currentPlan !== 'free' && subscription?.billing_amount != null && subscription.billing_currency &&
+          <p>{formatBillingAmount(subscription.billing_amount, subscription.billing_currency)} per {subscription.billing_cadence === 'annual' ? 'year' : 'month'}</p>}
         {subscription?.period_end && <p>Period ends <time dateTime={subscription.period_end}>{new Date(subscription.period_end).toLocaleDateString()}</time></p>}</div>
       {subscription?.customer_id && <button className="secondary" disabled={busy} onClick={() => void start('portal')}>Manage billing <ArrowRight size={15}/></button>}
     </div>}
     {notice && <p role="status" className="release-info">{notice}</p>}
     {error && <p role="alert" className="error">{error}</p>}
-    {view==='plans'&&<>{catalog && !catalog.some(option => option.monthly || option.annual) && <p className="release-info">Paid checkout is awaiting payment-provider configuration.</p>}
+    {view==='plans'&&<>{!catalog && !error && <p role="status">Loading available plans…</p>}
+    {catalog && !catalog.checkoutAvailable && <p className="release-info">Paid checkout is awaiting payment-provider configuration.</p>}
+    {currencies.length > 0 && <label>Currency <select value={currency} onChange={event => {
+      if (isBillingCurrency(event.target.value)) setCurrency(event.target.value)
+    }}>{currencies.map(code => <option key={code}>{code}</option>)}</select></label>}
     <div className="tabs release-tabs billing-interval" aria-label="Billing interval">
       <button aria-pressed={cadence === 'monthly'} className={cadence === 'monthly' ? 'active' : ''} onClick={() => setCadence('monthly')}>Monthly</button>
       <button aria-pressed={cadence === 'annual'} className={cadence === 'annual' ? 'active' : ''} onClick={() => setCadence('annual')}>Annual</button>
     </div>
     <div className="billing-grid">
-      {plans.map(plan => {
-        const id = plan.id
-        const available = Boolean(catalog?.find(option => option.plan === plan.id)?.[cadence])
-        return <article key={plan.id} className={'panel release-panel billing-card' + (currentPlan === plan.id ? ' billing-current' : '')}>
-          <h2>{plan.name}</h2><p>{plan.features}</p>
-          <ul><li>{plan.workspaces} {plan.workspaces === 1 ? 'workspace' : 'workspaces'}</li><li>Up to {plan.members} members per workspace</li></ul>
-          {isPaidPlan(id) && <button disabled={busy || !available || currentPlan === id || currentPlan !== 'free'} className="primary" onClick={() => void start('checkout', id)}>{currentPlan === id ? 'Current plan' : available ? 'Continue to checkout' : 'Checkout unavailable'}</button>}
-          {plan.id === 'enterprise' && <span className="pill">Contract billing</span>}
+      {catalog?.plans.map(plan => {
+        const id = plan.plan
+        const limits = plans.find(option => option.id === id)
+        const price = plan.prices.find(option => option.cadence === cadence && option.currency === currency)
+        const available = Boolean(price && catalog.checkoutAvailable)
+        return <article key={id} className={'panel release-panel billing-card' + (currentPlan === id ? ' billing-current' : '')}>
+          <h2>{plan.title}</h2><p>{plan.description}</p>
+          {price?.amount != null && <p>{formatBillingAmount(price.amount, price.currency)} per {cadence === 'annual' ? 'year' : 'month'}</p>}
+          {limits && <ul><li>{limits.workspaces} {limits.workspaces === 1 ? 'workspace' : 'workspaces'}</li><li>Up to {limits.members} members per workspace</li></ul>}
+          {isPaidPlan(id) && <button disabled={busy || !available || currentPlan !== 'free'} className="primary" onClick={() => void start('checkout', id, plan.version)}>{currentPlan === id ? 'Current plan' : available ? 'Continue to checkout' : 'Checkout unavailable'}</button>}
+          {id === 'enterprise' && <span className="pill">Contract billing</span>}
         </article>
       })}
     </div></>}

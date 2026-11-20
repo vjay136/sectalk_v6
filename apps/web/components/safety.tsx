@@ -20,6 +20,8 @@ import { QueueOperations } from './queue-operations'
 import { SecurityIncidents } from './security-incidents'
 import { SecurityCenterOverview } from './security-center-overview'
 import { CaseCollaboration, CaseCollaborationAlerts } from './case-collaboration'
+import { CaseEscalation, CaseEscalationAssignments } from './case-escalation'
+import { MyRoomReports, RoomReportQueue } from './room-reports'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
@@ -48,6 +50,7 @@ const labels: Record<string, string> = {
   restrict:'Seven-day restriction', remove:'Indefinite restriction',
   redacted:'Reported message removed',
   case_note_added:'Collaboration note added', case_note_evidence_viewed:'Linked evidence opened',
+  case_routed:'On-call stage assigned', case_route_acknowledged:'On-call stage acknowledged',
 }
 
 function DateLabel({ value }: { value: string }) {
@@ -83,7 +86,8 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 export function Safety({ staff, refresh }: { staff: string; refresh: () => Promise<void> }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports'>('mine')
+  const [roomReviewAccess,setRoomReviewAccess]=useState('none')
   const [incidentRole, setIncidentRole] = useState('none')
   const [incidentReport, setIncidentReport] = useState<string | null>(null)
   const [scanReviewer, setScanReviewer] = useState(false)
@@ -187,15 +191,22 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
     return () => { active = false; window.clearInterval(timer) }
   }, [staff])
   const incidentAccess = staff === 'verified' && incidentRole !== 'none'
+  const loadRoomReviewAccess = useCallback(async () => {
+    const {data,error}=await db!.rpc('st_v6_room_report_review_access')
+    setRoomReviewAccess(error ? 'none' : data)
+  }, [])
+  useEffect(() => { void loadRoomReviewAccess() }, [loadRoomReviewAccess,staff])
   const visibleView=((view==='overview'||view==='latency'||view==='usage'||view==='feedback'||view==='trends'||view==='operations')&&staff!=='verified')||(view==='queue'&&!staffAccess)
     ||(view==='release'&&!releaseAccess)||(view==='tenants'&&tenantStatus==='none')||(view==='delivery-queue'&&queueAccess==='none')
-    ||(view==='holds'&&!holdAccess)||(view==='quarantine'&&!scanAccess)||(view==='incidents'&&!incidentAccess)?'mine':view
+    ||(view==='holds'&&!holdAccess)||(view==='quarantine'&&!scanAccess)||(view==='incidents'&&!incidentAccess)
+    ||(view==='workspace-reports'&&roomReviewAccess==='none')?'mine':view
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
     <SectionTabs label="Safety center sections" value={visibleView} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
       ...(staff==='verified'?[['overview','Security overview'] as const]:[]),
       ['mine','My reports'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
+      ...(roomReviewAccess!=='none'?[['workspace-reports','Workspace report review'] as const]:[]),
       ...(staff==='verified'?[['latency','Delivery metrics'] as const,['usage','Usage metrics'] as const,
         ['feedback','Warning feedback'] as const,['trends','Threat trends'] as const,['operations','Operational metrics'] as const]:[]),
       ...(releaseAccess?[['release','Release controls'] as const]:[]),
@@ -221,9 +232,11 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
         ? <TenantOperations onAccessChanged={refreshTenantStatus}/>
         : <StaffMfa refresh={async () => { await refreshTenantStatus(); await refresh() }}
           explanation="An authenticator code is required to view workspace metadata."/>) :
-      visibleView==='queue' ? (staff === 'verified' ? <QueuePanel linkIncident={incidentAccess ? reportId => {
+      visibleView==='workspace-reports' ? (roomReviewAccess==='verified' ? <RoomReportQueue scope="workspace"/> :
+        <StaffMfa refresh={loadRoomReviewAccess} explanation="Enter a current authenticator code to review eligible workspace reports."/>) :
+      visibleView==='queue' ? (staff === 'verified' ? <><QueuePanel linkIncident={incidentAccess ? reportId => {
         setIncidentReport(reportId);setView('incidents')
-      } : undefined} /> : <StaffMfa refresh={refresh}/>) :
+      } : undefined} /><RoomReportQueue scope="platform"/></> : <StaffMfa refresh={refresh}/>) :
       visibleView==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
         {error&&<p role="alert" className="error">{error}</p>}
         {!notices.length&&<p>No account notices.</p>}
@@ -243,11 +256,12 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
       </div> :
       <div className="panel"><div className="panel-header"><h2>My reports</h2><button className="secondary" onClick={load}>Refresh</button></div>
         {error && <p role="alert" className="error">{error}</p>}
-        {!error && !reports.length && <div className="list-empty"><ShieldCheck size={24}/><strong>No reports yet</strong><p>Use the flag in a conversation to submit a report.</p></div>}
+        {!error && !reports.length && <div className="list-empty"><ShieldCheck size={24}/><strong>No direct chat reports yet</strong><p>Use the flag in a conversation to submit a report.</p></div>}
         {reports.map(row => <button type="button" className="report-row" key={row.id} onClick={()=>{setTimeline(null);setSelected(row)}}>
           <Flag size={17}/><span><strong>{categories[row.category]}</strong><small><DateLabel value={row.created_at} /></small></span>
           <span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/>
         </button>)}
+        <MyRoomReports/>
       </div>}
   </section>
 }
@@ -367,6 +381,7 @@ function QueuePanel({linkIncident}: {linkIncident?: (report: string) => void}) {
     <button className="secondary" disabled={working} onClick={() => { if (selected) { setSelected(null); setError('') } else void load() }}>{selected ? 'Back to queue' : 'Refresh'}</button></div>
     {error && <p className="error" role="alert">{error}</p>}
     {!selected && <CaseCollaborationAlerts open={open}/>}
+    {!selected && <CaseEscalationAssignments open={open}/>}
     {selected ? <div className="case">
       <span className={'pill state-' + selected.status}>{labels[selected.status]}</span>
       <h2>{categories[selected.category]}</h2><p>@{selected.subject_handle} · <DateLabel value={selected.created_at}/></p>
@@ -387,8 +402,9 @@ function QueuePanel({linkIncident}: {linkIncident?: (report: string) => void}) {
         try{await downloadChatFile(selected.attachment)}catch{setError('Evidence attachment could not be downloaded.')}
       }}>Download shared file</button>}
       <CaseCollaboration key={selected.id} report={selected.id}/>
+      <CaseEscalation key={'escalation-' + selected.id} report={selected.id}/>
       <form onSubmit={action}><h3>Record a decision</h3><label>Action<select name="action" required defaultValue="reviewing">
-        <option value="reviewing">Mark in review</option><option value="escalated">Escalate for review</option>
+        <option value="reviewing">Mark in review</option><option value="escalated">Flag for further review</option>
         {selected.message_redaction_available&&<option value="redact_message">Redact reported message</option>}
         <option value="warn">Warn account</option><option value="suspend">Restrict for 24 hours</option>
         <option value="restrict">Restrict for seven days</option><option value="remove">Restrict until restored</option>

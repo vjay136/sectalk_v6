@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
 import { RoomRetentionPolicy } from './room-retirement'
+import { WorkspacePolicyVersions } from './workspace-policy-versions'
 
 type Hold = {
   id: string
@@ -29,6 +30,8 @@ export function WorkspaceLegalHolds({ workspace, members }: { workspace: string;
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [retentionRevision, setRetentionRevision] = useState(0)
+  const [historyRevision, setHistoryRevision] = useState(0)
   const request = useRef<{ id: string; key: string } | null>(null)
   const current = useRef(0)
 
@@ -124,7 +127,11 @@ export function WorkspaceLegalHolds({ workspace, members }: { workspace: string;
       </form>
       : <p>{factor === null ? 'Checking your authenticator…' : 'Set up an authenticator in Profile → Security to manage legal holds.'}</p>)}
     {state?.access === 'verified' && <>
-      <RoomRetentionPolicy workspace={workspace} />
+      <RoomRetentionPolicy key={retentionRevision} workspace={workspace} onSaved={() => setHistoryRevision(value => value + 1)} />
+      <details className="release-create">
+        <summary>Policy changes and rollback</summary>
+        <WorkspacePolicyVersions key={historyRevision} workspace={workspace} onChanged={() => setRetentionRevision(value => value + 1)} />
+      </details>
       <p>Preserve matching workspace posts and protected versions during edits or removal. Date boundaries use your device’s time zone.</p>
       <details className="release-create">
         <summary>Place a preservation hold</summary>

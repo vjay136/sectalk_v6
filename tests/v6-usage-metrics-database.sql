@@ -13,7 +13,17 @@ select format('6a000000-0001-4000-8000-%s',lpad(n::text,12,'0'))::uuid,
   '6a000000-0000-4000-8000-000000000001','accepted' from generate_series(2,12) n;
 
 -- Isolate previous sums in this rollback-only fixture.
-update public.st_messages set created_at=date_trunc('day',now(),'UTC')-interval '45 days';
+do $$
+begin
+  if exists(select 1 from information_schema.columns where table_schema='public'
+    and table_name='st_messages' and column_name='expires_at') then
+    execute 'update public.st_messages set
+      expires_at=date_trunc(''day'',now(),''UTC'')-interval ''45 days''+(expires_at-created_at),
+      created_at=date_trunc(''day'',now(),''UTC'')-interval ''45 days''';
+  else
+    update public.st_messages set created_at=date_trunc('day',now(),'UTC')-interval '45 days';
+  end if;
+end $$;
 update public.st_calls set created_at=date_trunc('day',now(),'UTC')-interval '45 days';
 update public.st_v3_meetings set created_at=date_trunc('day',now(),'UTC')-interval '45 days';
 update public.st_v6_task_audit set created_at=date_trunc('day',now(),'UTC')-interval '45 days';

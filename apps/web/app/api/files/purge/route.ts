@@ -21,6 +21,8 @@ export async function POST(request: Request) {
   const service = createClient(url, key, { ...fileAuthOptions, global: {
     fetch: (input, options) => fetch(input, { ...options, signal: AbortSignal.timeout(5000) }),
   } })
+  const abandoned = await service.rpc('st_v6_expire_resumable_attachments')
+  if (abandoned.error) return new Response(null, { status: 503, headers: fileHeaders })
   const claim = await service.rpc('st_v6_claim_attachment_purge', { p_limit: 20 })
   if (claim.error) return new Response(null, { status: 503, headers: fileHeaders })
   const jobs = claim.data as Claim[]

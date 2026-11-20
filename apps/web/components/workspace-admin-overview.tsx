@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { db, onReconnect } from '../lib/data'
+import { SectionTabs } from './section-tabs'
+import { WorkspaceAnalytics } from './workspace-analytics'
 
 type Snapshot = {
   plan: string; seat_limit: number; occupied: number; active: number
@@ -9,6 +11,15 @@ type Snapshot = {
 }
 
 export function WorkspaceAdminOverview({ workspace }: { workspace: string }) {
+  const [tab, setTab] = useState<'summary' | 'analytics'>('summary')
+  return <>
+    <SectionTabs label="Workspace overview tabs" value={tab} onChange={setTab}
+      options={[['summary', 'Health and seats'], ['analytics', 'Analytics']]} />
+    {tab === 'summary' ? <WorkspaceOverviewSnapshot workspace={workspace} /> : <WorkspaceAnalytics workspace={workspace} />}
+  </>
+}
+
+function WorkspaceOverviewSnapshot({ workspace }: { workspace: string }) {
   const [data, setData] = useState<Snapshot | null>(null)
   const [health, setHealth] = useState<boolean | null>(null)
   const [error, setError] = useState('')

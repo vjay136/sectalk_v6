@@ -14,6 +14,8 @@ import { MeetingCollaboration } from './meeting-collaboration'
 import { MeetingModeratorActions, MeetingParticipantModeration, useMeetingModeration } from './meeting-moderation'
 import { MeetingRecording } from './meeting-recording'
 import { MeetingCaptions } from './meeting-captions'
+import { MeetingSummary } from './meeting-summary'
+import { MeetingGuestHost } from './meeting-guest-host'
 import type { MeetingChoices } from './meeting-prejoin'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
@@ -270,6 +272,8 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
       <MeetingPrejoin busy={busy} join={connect} requestMedia={requestMedia}/>}
     <MeetingRecording meeting={meeting.id} workspace={meeting.workspace_id} ended={ended}/>
     {ended && <MeetingCaptions meeting={meeting.id} ended/>}
+    <MeetingSummary meeting={meeting.id}/>
+    {host && <MeetingGuestHost meeting={meeting.id} locked={meeting.meeting_locked}/>}
     {media && self==='admitted' && !ended && <MeetingMedia {...media} meeting={meeting.id} focus={focus}
       screenShareDisabled={meeting.screen_share_disabled} leave={refreshMedia}/>}
     {self==='admitted'&&meeting.status==='live'&&!ended&&<>
