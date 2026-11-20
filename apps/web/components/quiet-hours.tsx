@@ -88,7 +88,7 @@ function ScheduleForm({ settings, account, busy, save }: {
       p_start: enabled ? fields.get('start') : null,
       p_end: enabled ? fields.get('end') : null,
       p_zone: enabled ? zone.trim() : null,
-      p_status: enabled && account ? fields.get('status') : null,
+      ...(account ? { p_status: enabled ? fields.get('status') : null } : {}),
     })
   }
   return <form onSubmit={submit}>
@@ -119,7 +119,10 @@ function ScheduleForm({ settings, account, busy, save }: {
   </form>
 }
 
-export function QuietHoursSettings({ chat, hints }: { chat: string | null; hints: EventTarget }) {
+export function QuietHoursSettings({ chat = null, room, channel, hints }: {
+  chat?: string | null; room?: string; channel?: string; hints?: EventTarget
+}) {
+  const account = !chat && !room && !channel
   const [settings, setSettings] = useState<QuietSettings | null>(null)
   const [feedback, setFeedback] = useState('')
   const [loadingError, setLoadingError] = useState(false)
@@ -131,41 +134,49 @@ export function QuietHoursSettings({ chat, hints }: { chat: string | null; hints
     let sequence = 0
     const refresh = async () => {
       const request = ++sequence
-      const { data, error } = await db!.rpc('st_v6_quiet_settings', { p_chat: chat })
+      const { data, error } = await readQuietSettings(chat, room, channel)
       if (!current || request !== sequence) return
       setLoadingError(Boolean(error))
       if (!error) setSettings(data as QuietSettings)
     }
     void refresh()
-    hints.addEventListener('availability', refresh)
-    hints.addEventListener('ready', refresh)
+    hints?.addEventListener('availability', refresh)
+    hints?.addEventListener('ready', refresh)
     const timer = window.setInterval(refresh, 15000)
     return () => {
       current = false
-      hints.removeEventListener('availability', refresh)
-      hints.removeEventListener('ready', refresh)
+      hints?.removeEventListener('availability', refresh)
+      hints?.removeEventListener('ready', refresh)
       window.clearInterval(timer)
     }
-  }, [chat, hints])
+  }, [chat, hints, room, channel])
 
-  async function update(action: string, fields: Record<string, unknown>, success: string) {
+  async function update(action: 'mute' | 'snooze' | 'schedule', fields: Record<string, unknown>, success: string) {
     setBusy(true)
     setFeedback('')
-    const { error } = await db!.rpc(action, { p_chat: chat, ...fields })
-    setBusy(false)
+    const { error } = room || channel
+      ? await db!.rpc(room ? 'st_v6_set_room_quiet' : 'st_v6_set_channel_quiet',
+        { ...(room ? { p_room: room } : { p_channel: channel }), p_action: action, ...fields })
+      : await db!.rpc('st_v6_set_quiet_' + action, { p_chat: chat, ...fields, ...(action==='schedule'&&!account?{p_status:null}:{}) })
     if (error) {
+      setBusy(false)
       setFeedback(formatError(error, 'Could not update notification settings.'))
       return false
     }
-    hints.dispatchEvent(new Event('availability'))
-    hints.dispatchEvent(new Event('read_local'))
+    hints?.dispatchEvent(new Event('availability'))
+    hints?.dispatchEvent(new Event('read_local'))
+    if (room || channel) {
+      const result = await readQuietSettings(chat, room, channel)
+      if (!result.error) setSettings(result.data as QuietSettings)
+    }
+    setBusy(false)
     setFeedback(success)
     return true
   }
 
   async function changeMute(muted: boolean) {
     setMuteIntent(muted)
-    if (await update('st_v6_set_quiet_mute', { p_muted: muted }, 'Mute setting saved.')) {
+    if (await update('mute', { p_muted: muted }, 'Mute setting saved.')) {
       setSettings(previous => previous && { ...previous, muted })
     }
     setMuteIntent(null)
@@ -175,8 +186,8 @@ export function QuietHoursSettings({ chat, hints }: { chat: string | null; hints
   const snoozed = settings.snooze_until && Date.parse(settings.snooze_until) > Date.now()
   const scheduleKey = JSON.stringify([settings.days, settings.starts_at, settings.ends_at, settings.zone, settings.scheduled_status])
   return <div className="quiet-hours">
-    {chat === null && <h3>Do not disturb</h3>}
-    <p>{chat ? 'Silence direct message alerts and incoming calls from this contact.' : 'Silence direct message alerts and incoming calls. Your accepted contacts see Busy when you share availability.'}</p>
+    {account && <h3>Do not disturb</h3>}
+    <p>{room || channel ? 'Silence alerts from this conversation.' : chat ? 'Silence direct message alerts and incoming calls from this contact.' : 'Silence conversation alerts and incoming calls. Your accepted contacts see Busy when you share availability.'}</p>
     <p role="status">{settings.active ? 'Notifications are quiet now.' : 'Notifications are enabled.'}</p>
     <label className="task-check"><input type="checkbox" checked={muteIntent ?? settings.muted} disabled={busy}
       onChange={event => void changeMute(event.target.checked)}/> Mute notifications</label>
@@ -187,13 +198,19 @@ export function QuietHoursSettings({ chat, hints }: { chat: string | null; hints
         <option value={10080}>1 week</option>
       </select></label>
       <button className="secondary" type="button" disabled={busy}
-        onClick={() => void update('st_v6_set_quiet_snooze', { p_minutes: minutes }, 'Notifications snoozed.')}>Snooze notifications</button>
+        onClick={() => void update('snooze', { p_minutes: minutes }, 'Notifications snoozed.')}>Snooze notifications</button>
       {snoozed && <button className="secondary" type="button" disabled={busy}
-        onClick={() => void update('st_v6_set_quiet_snooze', { p_minutes: 0 }, 'Snooze ended.')}>End snooze</button>}
+        onClick={() => void update('snooze', { p_minutes: 0 }, 'Snooze ended.')}>End snooze</button>}
     </div>
     {snoozed && settings.snooze_until && <p>Snoozed until {new Date(settings.snooze_until).toLocaleString()}.</p>}
-    <ScheduleForm key={scheduleKey} account={chat === null} settings={settings} busy={busy}
-      save={async fields => { await update('st_v6_set_quiet_schedule', fields, 'Quiet hours saved.') }}/>
+    <ScheduleForm key={scheduleKey} account={account} settings={settings} busy={busy}
+      save={async fields => { await update('schedule', fields, 'Quiet hours saved.') }}/>
     {feedback && <p role="status">{feedback}</p>}
   </div>
+}
+
+function readQuietSettings(chat: string | null, room?: string, channel?: string) {
+  if (room) return db!.rpc('st_v6_room_quiet_settings', { p_room: room })
+  if (channel) return db!.rpc('st_v6_channel_quiet_settings', { p_channel: channel })
+  return db!.rpc('st_v6_quiet_settings', { p_chat: chat })
 }

@@ -141,6 +141,12 @@ export function Inbox({ user }: { user: string }) {
       .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
       .on('broadcast', { event: 'presence' }, () => { hints.dispatchEvent(new Event('presence')); void refresh() })
       .on('broadcast', { event: 'availability' }, () => hints.dispatchEvent(new Event('availability')))
+      .on('broadcast', { event: 'room_activity' }, ({ payload }) => {
+        if (typeof payload?.room_id === 'string') setNotice('New activity in one of your rooms.')
+      })
+      .on('broadcast', { event: 'channel_activity' }, ({ payload }) => {
+        if (typeof payload?.channel_id === 'string') setNotice('New activity in one of your workspace channels.')
+      })
       .on('broadcast', { event: 'workspace_memberships' }, () => void reloadWorkspaces())
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))

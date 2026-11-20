@@ -9,6 +9,18 @@ insert into public.st_profiles(id,handle,name) values
  ('60000000-0000-4000-8000-000000000002','sectalk_v6_billie','Fixture Billie'),
  ('60000000-0000-4000-8000-000000000003','sectalk_v6_casey','Fixture Casey');
 
+insert into public.st_chats(id,member_a,member_b,requester,status) values
+ ('60000000-0000-4000-8000-000000000010','60000000-0000-4000-8000-000000000001',
+  '60000000-0000-4000-8000-000000000002','60000000-0000-4000-8000-000000000001','pending');
+insert into public.st_messages(id,chat_id,sender,body,created_at) values
+ ('60000000-0000-4000-8000-000000000011','60000000-0000-4000-8000-000000000010',
+  '60000000-0000-4000-8000-000000000001','Search filter @Sectalk_v6_billie!', '2026-11-20 00:00:00+00'),
+ ('60000000-0000-4000-8000-000000000012','60000000-0000-4000-8000-000000000010',
+  '60000000-0000-4000-8000-000000000001','Search filter @sectalk_v6_billie_other and email@sectalk_v6_billie', '2026-11-20 00:10:00+00');
+insert into public.st_v5_files(id,chat_id,uploader,message_id,filename,size_bytes) values
+ ('60000000-0000-4000-8000-000000000013','60000000-0000-4000-8000-000000000010',
+  '60000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000011','search.txt',12);
+
 set local role anon;
 select public.st_v6_ready() as anon_ready;
 reset role;
@@ -30,6 +42,12 @@ begin
   chat:=public.st_request('sectalk_v6_billie');
   perform set_config('request.jwt.claims',json_build_object('sub',receiver,'role','authenticated')::text,true);
   perform public.st_respond(chat,true);
+  if (select count(*) from public.st_v6_search('',null,'{"mentions_me":true}'))<>1
+    or (select count(*) from public.st_v6_search('Search filter','direct','{"has_file":true,"sender":"sectalk_v6_alex"}'))<>1
+    or (select count(*) from public.st_v6_search('Search filter','direct','{"from":"2026-11-20T00:00:00Z","until":"2026-11-20T00:10:00Z"}'))<>1
+    or exists(select 1 from public.st_v6_search('Search filter','room','{"has_file":true}'))
+    or exists(select 1 from public.st_v6_search('Search filter','direct','{"sender":"sectalk_v6_billie"}'))
+    then raise exception 'Search filter combination, boundary, or sender identity failed'; end if;
   perform set_config('request.jwt.claims',json_build_object('sub',sender,'role','authenticated')::text,true);
   perform public.st_send(chat,m,'First saved sample');
   perform public.st_send(chat,m2,'Second saved sample');
@@ -44,9 +62,14 @@ begin
   insert into public.st_v6_saved_messages(message_id) values(m),(m2) on conflict(user_id,message_id) do nothing;
   insert into public.st_v6_saved_messages(message_id) values(m) on conflict(user_id,message_id) do nothing;
   if (select count(*) from public.st_v6_saved_messages)<>2 then raise exception 'Save failed or duplicated'; end if;
-  insert into public.st_v6_saved_searches(query,kind) values('Saved sample','direct') on conflict(user_id,query,kind) do nothing;
-  insert into public.st_v6_saved_searches(query,kind) values('Saved sample','direct') on conflict(user_id,query,kind) do nothing;
+  insert into public.st_v6_saved_searches(query,kind) values('Saved sample','direct') on conflict(user_id,query,kind,filters) do nothing;
+  insert into public.st_v6_saved_searches(query,kind) values('Saved sample','direct') on conflict(user_id,query,kind,filters) do nothing;
   if (select count(*) from public.st_v6_saved_searches)<>1 then raise exception 'Saved query duplicated'; end if;
+  insert into public.st_v6_saved_searches(query,kind,filters) values('Saved sample','direct','{"has_file":true}')
+    on conflict(user_id,query,kind,filters) do nothing;
+  insert into public.st_v6_saved_searches(query,kind,filters) values('Saved sample','direct','{"has_file":true}')
+    on conflict(user_id,query,kind,filters) do nothing;
+  if (select count(*) from public.st_v6_saved_searches)<>2 then raise exception 'Saved variants did not deduplicate independently'; end if;
   perform set_config('request.jwt.claims',json_build_object('sub',receiver,'role','authenticated')::text,true);
   if exists(select 1 from public.st_v6_saved_messages) then raise exception 'Another participant saw these bookmarks'; end if;
   if exists(select 1 from public.st_v6_saved_searches) then raise exception 'Another participant saw private search terms'; end if;
@@ -57,6 +80,8 @@ begin
   if exists(select 1 from public.st_v6_saved_messages) then raise exception 'Remove saved message failed'; end if;
   perform set_config('request.jwt.claims',json_build_object('sub',outside_user,'role','authenticated')::text,true);
   if exists(select 1 from public.st_v6_search('[sectalk-qa]','direct')) then raise exception 'Search leaked a private snippet'; end if;
+  if exists(select 1 from public.st_v6_search('Search filter','direct','{"has_file":true}'))
+    then raise exception 'Attachment filter leaked another chat'; end if;
   if exists(select 1 from public.st_v6_reply_quotes(chat,array[m,m2])) then raise exception 'Quote API leaked a private message'; end if;
   begin
     perform public.st_v2_pin(chat,m);
@@ -88,6 +113,8 @@ begin
   end loop;
   if exists(select 1 from public.st_v6_search('saved sample','direct'))
     or exists(select 1 from public.st_v6_search('Message removed','direct') s where s.id=m)
+    or exists(select 1 from public.st_v6_search('saved sample','direct','{"sender":"sectalk_v6_alex"}'))
+    or exists(select 1 from public.st_v6_search('Message removed','direct','{}') s where s.id=m)
     or exists(select 1 from public.st_v3_search('saved sample','direct'))
     then raise exception 'Hidden or revoked data appeared in an API search'; end if;
   if exists(select 1 from public.st_v6_saved_messages) then raise exception 'Hidden or revoked content remained visible'; end if;

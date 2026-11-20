@@ -7,7 +7,7 @@
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
 | Unit tests | 14 passed, including file type and ticket checks, calendar export, readiness, safety heuristics, vault, emoji data and disclosure configuration |
-| Supabase database integration | All 32 rollback suites passed, including room reactions, quiet hours, meeting collaboration and feature flag authorization |
+| Supabase database integration | All 36 rollback suites passed, including channel and room lifecycle, quiet-hours delivery, search filters, and the audit chain |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -48,9 +48,13 @@
 | Scheduled presence and direct alerts | Two accounts tested scheduled status, Busy and Online transitions, direct chat muting and snoozing, and incoming call alert suppression. SQL verified time zones, overnight boundaries and schedule privacy. Room-level notification settings remain open. |
 | Meeting collaboration | Two authenticated browsers used a local LiveKit server and synthetic devices to verify audio and video tracks, mute and camera changes, live roster and chat, private pin and host spotlight. SQL and browser checks covered waiting and departed participants. |
 | Staged feature release | SQL verified stable rollout cohorts, account and workspace precedence, audited changes, MFA and role checks, and enforced emergency stop for both capabilities. A browser performed authenticator step-up and exercised rollout changes and the emergency stop. |
+| Conversation quiet hours | Two browsers verified mute, snooze and schedules in direct chats and rooms, channel alert suppression, notification scope, and incoming call alert suppression. SQL verified room and channel isolation, global suppression and continued message delivery. |
+| Room and channel management | Browser and SQL checks covered changing visibility, explicit private membership, ownership transfer, archive and restore, posting restrictions and audit scope. Managers without private membership could manage metadata while message reads remained restricted. |
+| Search filters | SQL checked permissions and filter semantics. The browser verified room, sender, dates, type, status, has-file, mentions and saved filter restoration. |
+| Audit integrity | SQL checked the SHA-256 journal, hourly verifier configuration, source-row changes, cascades, and rewind detection with an independently held digest. A hosted destination for independent receipt retention is pending. |
 | Local database security advisor | No warning or error reported for the isolated candidate at test time. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
-| Updated candidate | `npm run build` passed with room reaction policy, quiet hours, meeting collaboration and staged feature releases. |
+| Updated candidate | `npm run build` passed with room and channel management, conversation quiet hours and search filters. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |
 | Production npm dependency advisory check | 0 reported advisories at test time |

@@ -45,6 +45,10 @@
 | P5 | Schedule profile status and mute, snooze or silence global and direct alerts | Quiet-hours SQL and two-browser settings and presence checks. Room-level notification settings remain open. |
 | P5 | Add meeting media controls, chat, roster, private pin and host spotlight | Meeting collaboration SQL and two authenticated browser sessions with local LiveKit |
 | P10 | Add audited feature rollouts and an emergency stop | Feature flag SQL and authenticator step-up browser checks for Release controls. The first flags cover tasks and recurring meetings. |
+| P5 | Add room and channel quiet hours and suppress incoming call-end alerts | Quiet-hours SQL fixtures and two-browser tests across account, direct chat, room and workspace channel scopes |
+| P5 | Manage visibility, ownership, membership and archives for rooms and workspace channels | Room and channel lifecycle SQL and browser tests, including private history restrictions for managers |
+| P5 | Add saved room, sender, date, type, status, file and mention filters | Search SQL and integrated browser checks for all filters and saved value restoration |
+| P10 | Journal existing audit changes and periodically verify and checkpoint the chain | Audit integrity SQL fixture covers edit, delete, chain corruption and a checkpoint held outside the database. Independent log retention for the hosted target remains open. |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.

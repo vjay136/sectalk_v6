@@ -25,6 +25,7 @@ declare
   broadcast constant uuid:=gen_random_uuid();
   root_message constant uuid:=gen_random_uuid();
   reply_message constant uuid:=gen_random_uuid();
+  room_task constant uuid:=gen_random_uuid();
   workspace uuid;
   invitation uuid;
 begin
@@ -40,6 +41,12 @@ begin
   perform public.st_v6_room_create(broadcast,workspace,'Broadcast','broadcast','blank');
   perform public.st_v6_room_post(public_room,root_message,'Root message');
   perform public.st_v6_room_post(private_room,gen_random_uuid(),'Private fixture');
+  perform public.st_v6_task_create(room_task,private_room,null,'Private fixture task');
+  if (select count(*) from public.st_v6_search('Private fixture','room',jsonb_build_object('room',private_room)))<>1
+    or exists(select 1 from public.st_v6_search('Private fixture','room',jsonb_build_object('room',public_room)))
+    or (select count(*) from public.st_v6_search('','task',jsonb_build_object('room',private_room,'status','todo')))<>1
+    or exists(select 1 from public.st_v6_search('','task',jsonb_build_object('room',private_room,'status','done')))
+    then raise exception 'Room or task status filter failed'; end if;
   perform public.st_v6_room_post(admin_room,gen_random_uuid(),'Admin fixture');
   perform public.st_v6_room_post(announcements,gen_random_uuid(),'Announcement fixture','announcement');
   perform public.st_v6_room_post(broadcast,gen_random_uuid(),'Broadcast fixture');
@@ -47,6 +54,8 @@ begin
   perform set_config('request.jwt.claims',json_build_object('sub',member_id,'role','authenticated')::text,true);
   select id into invitation from public.st_v2_invites where invitee=member_id;
   perform public.st_v2_reply_invite(invitation,true);
+  if exists(select 1 from public.st_v6_search('Private fixture',null,jsonb_build_object('room',private_room)))
+    then raise exception 'Room filter leaked private posts or tasks'; end if;
   if (select count(*) from public.st_v6_rooms where workspace_id=workspace)<>3
     or exists(select 1 from public.st_v6_room_posts) then raise exception 'Directory or pre-join visibility failed'; end if;
   perform public.st_v6_room_membership(public_room,'join');
@@ -132,6 +141,8 @@ begin
   perform public.st_v6_room_membership(private_room,'ban',guest_id);
   perform public.st_v6_room_settings(private_room,'lock');
   perform public.st_v6_room_settings(public_room,'archive');
+  if not exists(select 1 from public.st_v6_search('Root message','room',jsonb_build_object('room',public_room)) s where s.id=root_message)
+    then raise exception 'Archiving hid accessible room history from Search'; end if;
   perform public.st_v6_room_settings(public_room,'restore');
   if not exists(select 1 from public.st_v6_room_audit where room_id=private_room and action='membership.ban' and target=guest_id)
     then raise exception 'Room audit did not record moderation'; end if;
@@ -139,6 +150,8 @@ begin
   perform set_config('request.jwt.claims',json_build_object('sub',guest_id,'role','authenticated')::text,true);
   if exists(select 1 from public.st_v6_rooms where id=private_room) or exists(select 1 from public.st_v6_room_posts where room_id=private_room)
     then raise exception 'Banned member retained room access'; end if;
+  if exists(select 1 from public.st_v6_search('',null,jsonb_build_object('room',private_room)))
+    then raise exception 'Banned user retained filtered search access'; end if;
   perform set_config('request.jwt.claims',json_build_object('sub',member_id,'role','authenticated')::text,true);
   begin
     perform public.st_v6_room_post(private_room,gen_random_uuid(),'Locked room write');

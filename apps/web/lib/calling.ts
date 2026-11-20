@@ -67,12 +67,16 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       !stopped.current.has(next.id) &&
       (owned.current === next.id || (next.callee === user && next.status === 'ringing')) ? next : null
     if (!visible && previous?.status === 'ringing' && next?.id === previous.id && !stopped.current.has(next.id)) {
-      if (next.status === 'active' && previous.callee === user) notice('Call answered on another device.')
-      else if (next.end_reason === 'cancelled' && previous.callee === user) notice('The caller cancelled.')
-      else if (next.end_reason === 'busy' && previous.caller === user) notice('Your contact is busy.')
-      else if (next.end_reason === 'declined' && previous.caller === user) notice('Your contact declined the call.')
-      else if (next.end_reason === 'busy') notice('Call marked busy on another device.')
-      else if (next.end_reason === 'declined') notice('Call declined on another device.')
+      if (previous.callee === user) {
+        const message = next.status === 'active' ? 'Call answered on another device.'
+          : next.end_reason === 'cancelled' ? 'The caller cancelled.'
+          : next.end_reason === 'busy' ? 'Call marked busy on another device.'
+          : next.end_reason === 'declined' ? 'Call declined on another device.' : null
+        if (message) void db!.rpc('st_v6_quiet_active', { p_chat: previous.chat_id }).then(({ data }) => {
+          if (data === false && mounted.current && !current.current) notice(message)
+        })
+      } else if (next.end_reason === 'busy') notice('Your contact is busy.')
+      else if (next.end_reason === 'declined') notice('Your contact declined the call.')
     }
     if (!visible && owned.current) {
       owned.current = null

@@ -5,12 +5,15 @@ import { CalendarDays, Hash, ListChecks, MessageCircle, Plus, Send, Users } from
 import { db, formatError, formatTime, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { RoomDirectory } from './room-directory'
+import { QuietHoursSettings } from './quiet-hours'
 import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
 import { WorkspaceGroups } from './workspace-groups'
 import { WorkspaceOnboarding } from './workspace-onboarding'
 
 type Invite = { id: string; workspace_name: string }
-type Channel = { id: string; name: string }
+type Channel = {id:string;name:string;owner:string;visibility:'workspace'|'private';archived:boolean}
+type ChannelEvent = {id:number;actor:string;action:string;target:string|null;detail:string|null;occurred_at:string}
+type ChannelDetails = {can_read:boolean;can_manage:boolean;members?:string[];audit?:ChannelEvent[]}
 type Member = { user_id: string; role: 'owner' | 'admin' | 'member' }
 type Post = { id: string; sender: string; body: string; created_at: string }
 type ItemKind = 'task' | 'note' | 'event' | 'announcement'
@@ -27,7 +30,7 @@ const workspaceViews = {
 const itemLabels: Record<ItemKind, string> = { task: 'Task', note: 'Note', event: 'Calendar event', announcement: 'Announcement' }
 
 function QuickForm({ label, button, children, send }: {
-  label: string; button: string; children: ReactNode; send: (values: FormData) => Promise<unknown>
+  label: string; button: string; children?: ReactNode; send: (values: FormData) => Promise<unknown>
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -114,6 +117,7 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
+  const [archivedChannels,setArchivedChannels] = useState(false)
   const [members, setMembers] = useState<Member[]>([])
   const [profiles, setProfiles] = useState<Record<string, Profile>>({})
   const [audit, setAudit] = useState<Audit[]>([])
@@ -122,7 +126,7 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
   const manager = role === 'owner' || role === 'admin'
   const load = useCallback(async () => {
     const [channelResult, memberResult] = await Promise.all([
-      db!.from('st_v2_channels').select('id,name').eq('workspace_id', space.id).order('name'),
+      db!.from('st_v2_channels').select('id,name,owner,visibility,archived').eq('workspace_id', space.id).order('name'),
       db!.from('st_v2_members').select('user_id,role').eq('workspace_id', space.id).order('joined_at').limit(500),
     ])
     if (channelResult.error || memberResult.error) { setError('Could not load the workspace.'); return }
@@ -148,6 +152,9 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
     return () => { reconnect(); window.clearInterval(timer) }
   }, [load])
 
+  const visibleChannels=channels.filter(channel=>channel.archived===archivedChannels)
+  const selectedChannel=visibleChannels.find(channel=>channel.id===channelId)||visibleChannels[0]
+
   return <div className="panel release-panel">
     {view==='workspaces'&&space.policy&&<p className="muted">{space.policy.details?.label||space.policy.workspace_type} · {space.policy.template==='restricted'?'Restricted policy':'Standard policy'}</p>}
     {view==='workspaces' && <SectionTabs label="Workspace sections" value={tab==='activity'&&!manager?'people':tab} onChange={setTab} options={[
@@ -160,15 +167,21 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
       allowedRoomKinds={space.policy?.room_kinds}
       workspaceAdminIds={members.filter(member=>member.role!=='member').map(member=>member.user_id)}/>}
     {((view==='rooms'&&roomView==='channels')||(view==='workspaces'&&tab==='channels')) && <div className="release-section">
+      <SectionTabs label="Channel filters" value={archivedChannels?'archived':'active'}
+        onChange={next=>setArchivedChannels(next==='archived')} options={ [['active','Active channels'],['archived','Archived channels']] }/>
       <div className="release-flex">
-        <label>Channel<select value={channelId} onChange={event => setChannelId(event.target.value)}>{channels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</select></label>
+        {selectedChannel&&<label>Channel<select value={selectedChannel.id} onChange={event => setChannelId(event.target.value)}>
+          {visibleChannels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</select></label>}
         {manager && <details className="release-create"><summary>New channel</summary><QuickForm label="New channel" button="Create channel" send={async fields => {
           const id = await rpc('st_v2_create_channel', { p_workspace: space.id, p_name: fields.get('name') })
           await load()
           setChannelId(id)
+          setArchivedChannels(false)
         }}><label>Channel name<input name="name" required maxLength={40} pattern="[a-z0-9][a-z0-9\-]{0,39}" placeholder="product-updates" /></label></QuickForm></details>}
       </div>
-      {channelId && <ChannelFeed key={channelId} channelId={channelId} profiles={profiles} user={user}/>}
+      {selectedChannel?<ChannelPanel key={selectedChannel.id+selectedChannel.visibility} channel={selectedChannel} profiles={profiles} user={user}
+        refresh={load} onArchiveChange={archived=>{setChannelId(selectedChannel.id);setArchivedChannels(archived)}}/>
+        :<p>No {archivedChannels?'archived':'active'} channels.</p>}
     </div>}
     {view==='workspaces' && tab==='board' && <Board space={space.id} manager={manager} />}
     {view==='workspaces' && tab==='teams' && <WorkspaceGroups workspace={space.id} manager={manager} people={members} profiles={profiles}/>}
@@ -194,7 +207,83 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
   </div>
 }
 
-function ChannelFeed({ channelId, profiles, user }: { channelId: string; profiles: Record<string, Profile>; user: string }) {
+function ChannelPanel({channel,profiles,user,refresh,onArchiveChange}: {
+  channel:Channel;profiles:Record<string,Profile>;user:string;refresh:()=>Promise<void>;onArchiveChange:(archived:boolean)=>void
+}) {
+  const [details,setDetails]=useState<ChannelDetails|null>(null)
+  const [error,setError]=useState('')
+  const version=useRef(0)
+  const load=useCallback(async()=>{
+    const request=++version.current
+    const result=await db!.rpc('st_v6_channel_details',{p_channel:channel.id})
+    if(request!==version.current)return
+    if(result.error){setDetails(null);setError('Could not load channel access.');return}
+    setDetails(result.data as ChannelDetails);setError('')
+  },[channel.id])
+  useEffect(()=>{
+    void load()
+    const timer=window.setInterval(load,5000)
+    const reconnect=onReconnect(load)
+    return ()=>{version.current++;window.clearInterval(timer);reconnect()}
+  },[load])
+
+  const name=(id:string)=>profiles[id]?.name||'Workspace member'
+  const people=Object.values(profiles).filter(person=>person.id!==channel.owner)
+  const memberIds=details?.members||[]
+  const candidates=people.filter(person=>!memberIds.includes(person.id))
+  const peopleOptions=(available:Profile[])=><><option value="">Choose a workspace member</option>{available.map(person=>
+    <option key={person.id} value={person.id}>{person.name} (@{person.handle})</option>)}</>
+  const change=async(action:string,values:Record<string,unknown>={})=>{
+    await rpc('st_v6_manage_channel',{p_channel:channel.id,p_action:action,...values})
+    await Promise.all([load(),refresh()])
+    if(action==='archive'||action==='restore')onArchiveChange(action==='archive')
+  }
+  return <section aria-label={'#'+channel.name}>
+    <h2>#{channel.name}</h2>
+    <p>{channel.visibility==='private'?'Private':'Workspace-wide'}{channel.archived?' · Archived':''}</p>
+    {error&&<p role="alert" className="error">{error}</p>}
+    {details?.can_manage&&<details className="release-create">
+      <summary>Channel settings</summary>
+      <p>Channel owner {name(channel.owner)}</p>
+      {!channel.archived&&<>
+        <QuickForm label="Change channel visibility" button={channel.visibility==='private'?'Make channel workspace-wide':'Make channel private'} send={async()=>{
+          const next=channel.visibility==='private'?'workspace':'private'
+          const prompt=next==='private'?'Make this channel private? Only the owner and listed members will be able to open it.'
+            :'Make channel history available to the workspace?'
+          if(window.confirm(prompt))await change('visibility',{p_visibility:next})
+        }}/>
+        <h3>Private channel access</h3>
+        <p>Listed members can open the channel when it is private.</p>
+        {memberIds.map(id=><div className="release-row" key={id}><span>{name(id)}</span>
+          <QuickForm label={'Remove '+name(id)+' from the channel'} button="Remove access" send={async()=>{
+            if(window.confirm('Remove this member’s private channel access?'))await change('remove_member',{p_target:id})
+          }}/>
+        </div>)}
+        {candidates.length>0&&<QuickForm label="Add private channel member" button="Add channel member" send={fields=>
+          change('add_member',{p_target:fields.get('member')})}>
+          <label>Workspace member<select name="member" required>{peopleOptions(candidates)}</select></label>
+        </QuickForm>}
+        {people.length>0&&<QuickForm label="Transfer channel ownership" button="Transfer ownership" send={async fields=>{
+          if(window.confirm('Transfer channel ownership? The previous owner loses owner access.'))
+            await change('transfer_owner',{p_target:fields.get('owner')})
+        }}><label>New channel owner<select name="owner" required>{peopleOptions(people)}</select></label></QuickForm>}
+      </>}
+      <QuickForm label="Change channel archive status" button={channel.archived?'Restore channel':'Archive channel'} send={async()=>{
+        if(channel.archived||window.confirm('Archive this channel and stop new posts?'))
+          await change(channel.archived?'restore':'archive')
+      }}/>
+      <h3>Channel audit</h3>
+      {details.audit?.length?<ol className="audit">{details.audit.map(event=><li key={event.id}>
+        <strong>{event.action.replaceAll('_',' ')}</strong><span>{name(event.actor)} · {new Date(event.occurred_at).toLocaleString()}</span>
+        {event.target&&<span>Member {name(event.target)}</span>}
+        {event.detail&&<span>{event.action==='transfer_owner'?'Previous owner '+name(event.detail):event.detail}</span>}
+      </li>)}</ol>:<p>No channel audit entries.</p>}
+    </details>}
+    {details?.can_read&&<ChannelFeed channelId={channel.id} archived={channel.archived} profiles={profiles} user={user}/>}
+  </section>
+}
+
+function ChannelFeed({ channelId, archived, profiles, user }: { channelId: string; archived:boolean; profiles: Record<string, Profile>; user: string }) {
   const [posts, setPosts] = useState<Post[]>([])
   const [error, setError] = useState('')
   const [older, setOlder] = useState(false)
@@ -221,19 +310,22 @@ function ChannelFeed({ channelId, profiles, user }: { channelId: string; profile
   }, [channelId, fetchPosts])
   return <>
     {error && <p className="error" role="alert">{error}</p>}
+    <details className="release-create"><summary>Channel quiet hours</summary>
+      <QuietHoursSettings channel={channelId}/>
+    </details>
     <div className="release-channel-feed" role="log" aria-label="Channel messages">
       {older && <button className="secondary" onClick={() => void fetchPosts(posts[0])}>Earlier messages</button>}
       {!posts.length && <p><MessageCircle size={16}/> Start the conversation.</p>}
       {posts.map(post => <article className={'release-post' + (post.sender === user ? ' release-own' : '')} key={post.id}><header><strong>{profiles[post.sender]?.name || 'Workspace member'}</strong> <time dateTime={post.created_at}>{formatTime(post.created_at)}</time></header><p>{post.body}</p></article>)}
     </div>
-    <QuickForm label="Post to channel" button="Send message" send={async fields => {
+    {!archived&&<QuickForm label="Post to channel" button="Send message" send={async fields => {
       const body = String(fields.get('body')).trim()
       if (!body) return
       if (draftId.current?.body !== body) draftId.current = { id: crypto.randomUUID(), body }
       await rpc('st_v2_post', { p_channel: channelId, p_id: draftId.current.id, p_body: body })
       draftId.current = null
       await fetchPosts()
-    }}><label><span><Send size={14}/> Channel message</span><textarea name="body" required maxLength={4000} rows={2} /></label></QuickForm>
+    }}><label><span><Send size={14}/> Channel message</span><textarea name="body" required maxLength={4000} rows={2} /></label></QuickForm>}
   </>
 }
 

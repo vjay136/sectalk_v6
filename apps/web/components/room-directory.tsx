@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { ScopedTasks } from './scoped-tasks'
+import { QuietHoursSettings } from './quiet-hours'
 import { RoomPostReactions, RoomReactionSettings, useRoomReactionCounts, useWorkspaceReactionPolicy, type RoomReactionPolicy } from './room-reactions'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
@@ -12,7 +13,7 @@ type Room={id:string;name:string;kind:Kind;template:Template;archived:boolean;lo
 type Post={id:string;sender:string;body:string;kind:'message'|'announcement';created_at:string;edited_at:string|null;removed_at:string|null}
 type Roster={user_id:string;role:Role}
 type Entry={user_id:string;kind:'invite'|'request';invited_role:Role;expires_at:string}
-type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:string}
+type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:string;details:{from?:Kind;to?:Kind;previous_owners?:string[]}}
 type ThreadState={post_id:string;replies:number;following:boolean;excerpt:string}
 type DirectoryProps={space:string;user:string;manager:boolean;profiles:Record<string,Profile>;workspaceAdminIds:string[];allowedRoomKinds?:string[]}
 const kinds:Record<Kind,string>={public:'Workspace-wide',private:'Private',admin:'Admins only',announcement:'Announcements',broadcast:'Broadcast'}
@@ -127,13 +128,15 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
     {visible?.map(room=><button className={selected===room.id?'primary':'secondary'} type="button" key={room.id}
       aria-pressed={selected===room.id} onClick={()=>setSelected(room.id)}>{room.name} <small>{kinds[room.kind]}</small></button>)}
     {current&&<RoomPanel key={current.id} room={current} user={user} profiles={profiles}
-      workspaceAdminIds={workspaceAdminIds} refreshDirectory={refresh} reactionPolicy={reactionPolicy.policy}/>}
+      workspaceAdminIds={workspaceAdminIds} manager={manager} allowedRoomKinds={allowedRoomKinds}
+      onArchiveChange={archived=>setFilter(archived?'archived':'active')}
+      refreshDirectory={refresh} reactionPolicy={reactionPolicy.policy}/>}
   </section>
 }
 
-function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reactionPolicy}: {
+function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reactionPolicy,manager,allowedRoomKinds,onArchiveChange}: {
   room:Room;user:string;profiles:Record<string,Profile>;refreshDirectory:()=>Promise<void>;workspaceAdminIds:string[]
-  reactionPolicy:RoomReactionPolicy|null
+  reactionPolicy:RoomReactionPolicy|null;manager:boolean;allowedRoomKinds?:string[];onArchiveChange:(archived:boolean)=>void
 }) {
   const [role,setRole]=useState<Role|null|undefined>(undefined)
   const [entries,setEntries]=useState<Entry[]>([])
@@ -151,6 +154,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const [view,setView]=useState<'messages'|'threads'|'pins'|'people'|'settings'|'audit'|'tasks'>('messages')
   const [taskSource,setTaskSource]=useState<string|null>(null)
   const [editingPost,setEditingPost]=useState<string|null>(null)
+  const [quietHours,setQuietHours]=useState(false)
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
   const [working,setWorking]=useState(false)
@@ -167,7 +171,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         .is('parent_id',null).order('created_at',{ascending:false}).order('id',{ascending:false}).limit(80),
       db!.from('st_v6_room_pins').select(`post_id,message:st_v6_room_posts!st_v6_room_pins_room_id_post_id_fkey(${postFields})`).eq('room_id',room.id).limit(80)
         .returns<{post_id:string;message:Post|null}[]>(),
-      db!.from('st_v6_room_audit').select('*').eq('room_id',room.id).order('id',{ascending:false}).limit(50),
+      manager?db!.rpc('st_v6_room_management_audit',{p_room:room.id})
+        :db!.from('st_v6_room_audit').select('*').eq('room_id',room.id).order('id',{ascending:false}).limit(50),
       db!.from('st_v6_room_bans').select('user_id').eq('room_id',room.id).limit(100),
     ])
     if(version!==refreshVersion.current)return
@@ -184,7 +189,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     if(version!==refreshVersion.current)return
     if(summaries.error)setError('Could not load thread summaries.')
     else setThreadStates(summaries.data as ThreadState[])
-  },[room.id])
+  },[room.id,manager])
   const [replies,setReplies]=useState<Post[]>([])
   const refreshReplies=useCallback(async()=>{
     if(!thread)return
@@ -223,6 +228,18 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   function settings(action:string,values:Record<string,unknown>={}){
     return perform(async()=>{await call('st_v6_room_settings',{p_room:room.id,p_action:action,...values})})
   }
+  function manage(action:string,values:Record<string,unknown>={}){
+    return perform(async()=>{await call('st_v6_manage_room',{p_room:room.id,p_action:action,...values})})
+  }
+  async function toggleArchive(){
+    const archive=!room.archived
+    if(archive&&!window.confirm('Archive this room and stop new posts?'))return
+    const action=archive?'archive':'restore'
+    await perform(async()=>{
+      await call(manager?'st_v6_manage_room':'st_v6_room_settings',{p_room:room.id,p_action:action})
+      onArchiveChange(archive)
+    })
+  }
   function send(event:FormEvent<HTMLFormElement>){
     event.preventDefault()
     const form=event.currentTarget
@@ -238,7 +255,13 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   }
   const invite=entries.some(entry=>entry.kind==='invite'&&entry.user_id===user)
   const name=(id:string|null)=>id?profiles[id]?.name||'Workspace member':''
-  const actualView=(!staff&&(view==='settings'||view==='audit'))||(role==='guest'&&view==='people')?'messages':view
+  const canManage=manager||staff
+  const actualView=manager&&!role&&!['people','settings','audit'].includes(view)?'settings'
+    :(!canManage&&(view==='settings'||view==='audit'))||(!manager&&role==='guest'&&view==='people')?'messages':view
+  const nextVisibility=room.kind==='public'?'private':'public'
+  const canChangeVisibility=manager&&!room.archived&&(room.kind==='public'||room.kind==='private')
+    &&(room.template==='blank'||room.template==='project')&&(!allowedRoomKinds||allowedRoomKinds.includes(nextVisibility))
+  const ownerCandidates=roster.filter(person=>person.role!=='owner'&&profiles[person.user_id])
   const parent=threadRoot||posts.find(post=>post.id===thread)
   const visiblePosts=actualView==='messages'?posts:actualView==='threads'?(parent?[parent,...replies]:replies):actualView==='pins'?pins:[]
   const reactions=useRoomReactionCounts(role?room.id:null,visiblePosts.filter(post=>!post.removed_at).map(post=>post.id))
@@ -309,18 +332,23 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
 
   return <section className="panel release-panel" aria-label={room.name}>
     <h2>{room.name}</h2><p>{kinds[room.kind]}{room.template!=='blank'?' · '+templates[room.template].name+' template':''}{room.archived?' · Archived':room.locked?' · Locked':''}{role?' · '+roleLabel(role):''}</p>
+    {role&&<div>
+      <button type="button" className="secondary" aria-expanded={quietHours}
+        onClick={()=>setQuietHours(!quietHours)}>Room quiet hours</button>
+      {quietHours&&<QuietHoursSettings room={room.id}/>}
+    </div>}
     {error&&<p role="alert" className="error">{error}</p>}
     {notice&&<p role="status">{notice}</p>}
     {role===undefined&&!error&&<p role="status">Loading room…</p>}
     {role===null&&(invite?<div className="action-row">
       <button className="primary" type="button" disabled={working} onClick={()=>void member('accept')}>Accept room invitation</button>
       <button className="secondary" type="button" disabled={working} onClick={()=>void member('decline')}>Decline invitation</button>
-    </div>:room.kind!=='private'&&<button className="primary" type="button" disabled={working} onClick={()=>void member('join')}>Join room</button>)}
-    {role&&<>
+    </div>:!room.archived&&['public','announcement','broadcast'].includes(room.kind)&&<button className="primary" type="button" disabled={working} onClick={()=>void member('join')}>Join room</button>)}
+    {(role||manager)&&<>
       <SectionTabs label="Room tabs" value={actualView} onChange={setView} options={[
-        ['messages','Messages'],['threads','Threads'],['pins','Pins'],['tasks','Tasks'],
-        ...(role!=='guest'?[['people','Members'] as const]:[]),
-        ...(staff?[['settings','Settings'] as const,['audit','Audit'] as const]:[]),
+        ...(role?[['messages','Messages'] as const,['threads','Threads'] as const,['pins','Pins'] as const,['tasks','Tasks'] as const]:[]),
+        ...(manager||role!=='guest'?[['people','Members'] as const]:[]),
+        ...(canManage?[['settings','Settings'] as const,['audit','Audit'] as const]:[]),
       ]}/>
       {reactions.error&&<p role="alert" className="error">{reactions.error}</p>}
       {actualView==='messages'&&(posts.length?posts.map(post=>renderPost(post,true)):<p>No messages yet.</p>)}
@@ -389,24 +417,50 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         </>}
       </>}
       {actualView==='settings'&&<>
+        {canChangeVisibility&&<div className="release-section">
+          <h3>Room visibility</h3>
+          <p>{room.kind==='public'?'Private rooms require admission for new members.':'Workspace members will be able to find and join this room.'} Current members keep access.</p>
+          <button className="secondary" type="button" disabled={working} onClick={()=>{
+            if(window.confirm(`Change room visibility to ${kinds[nextVisibility].toLowerCase()}?`))
+              void manage('visibility',{p_kind:nextVisibility})
+          }}>Make room {kinds[nextVisibility].toLowerCase()}</button>
+        </div>}
+        {manager&&!room.archived&&room.kind!=='admin'&&<div className="release-section">
+          <h3>Room ownership</h3>
+          <p>Current owner{roster.filter(person=>person.role==='owner').length===1?'':'s'} {roster.filter(person=>person.role==='owner')
+            .map(person=>name(person.user_id)).join(', ')||'—'}</p>
+          {ownerCandidates.length>0&&<form className="release-flex" onSubmit={event=>{
+            event.preventDefault()
+            const target=String(new FormData(event.currentTarget).get('owner'))
+            if(window.confirm('Transfer ownership? The previous owner becomes a moderator.'))
+              void manage('transfer_owner',{p_target:target})
+          }}>
+            <label>New room owner<select name="owner" required><option value="">Choose a room member</option>
+              {ownerCandidates.map(person=><option key={person.user_id} value={person.user_id}>{name(person.user_id)} (@{profiles[person.user_id].handle})</option>)}
+            </select></label>
+            <button className="secondary" disabled={working}>Transfer ownership</button>
+          </form>}
+        </div>}
         <div className="action-row">
-          {room.kind==='private'&&<button className="secondary" type="button" onClick={async()=>{
+          {staff&&room.kind==='private'&&<button className="secondary" type="button" onClick={async()=>{
             try{await navigator.clipboard.writeText(room.id);setNotice('Room request code copied.')}
             catch{setNotice(room.id)}
           }}>Copy room request code</button>}
-          {!room.archived&&<button className="secondary" type="button" disabled={working} onClick={()=>void settings(room.locked?'unlock':'lock')}>
+          {staff&&!room.archived&&<button className="secondary" type="button" disabled={working} onClick={()=>void settings(room.locked?'unlock':'lock')}>
             {room.locked?'Unlock room':'Lock room'}</button>}
-          {role==='owner'&&<button className="secondary" type="button" disabled={working} onClick={()=>{
-            if(room.archived||window.confirm('Archive this room and stop new posts?'))void settings(room.archived?'restore':'archive')
-          }}>{room.archived?'Restore room':'Archive room'}</button>}
+          {(manager||role==='owner')&&<button className="secondary" type="button" disabled={working} onClick={()=>void toggleArchive()}>
+            {room.archived?'Restore room':'Archive room'}</button>}
         </div>
-        {!room.archived&&<form className="release-flex" onSubmit={event=>{
+        {staff&&!room.archived&&<form className="release-flex" onSubmit={event=>{
           event.preventDefault();void settings('slow',{p_seconds:Number(new FormData(event.currentTarget).get('seconds'))})
         }}><label>Slow mode in seconds<input key={room.slow_seconds} name="seconds" type="number" min={0} max={300} required defaultValue={room.slow_seconds}/></label>
           <button className="secondary" disabled={working}>Save slow mode</button></form>}
       </>}
       {actualView==='audit'&&(notes.length?<ol className="audit">{notes.map(note=><li key={note.id}>
         <strong>{note.action.replaceAll('.',' ')}</strong><span>{name(note.actor)} · {new Date(note.occurred_at).toLocaleString()}</span>
+        {note.action.startsWith('membership.')&&note.target&&<span>Member {name(note.target)}</span>}
+        {note.details.from&&note.details.to&&<span>{kinds[note.details.from]} → {kinds[note.details.to]}</span>}
+        {note.details.previous_owners?.length?<span>Previous owner {note.details.previous_owners.map(name).join(', ')}</span>:null}
       </li>)}</ol>:<p>No room audit entries.</p>)}
     </>}
   </section>

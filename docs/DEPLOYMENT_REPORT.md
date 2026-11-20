@@ -14,6 +14,7 @@ Run `npm run verify:registry -- --release` to check feature completion. V6 requi
 | V6 chat attachments | Configure a v6-only Supabase server key as `SECTALK_FILE_STORAGE_KEY` and a separate random signing secret as `SECTALK_FILE_TICKET_SECRET`. Keep both server-side. Verify uploads and signed retrieval against the migrated v6 Storage bucket. |
 | Push and safety AI | Provision the push keys and a policy-approved test model or gateway account after the delivery and classification paths are implemented. |
 | Vulnerability disclosure | Set the stable v6 HTTPS origin, a verified and monitored private contact, and the contact expiry documented in [SECURITY.md](../SECURITY.md). Verify both public disclosure routes on the target deployment. |
+| Audit chain | Retain PostgreSQL audit checkpoint receipts in a log destination with independent access and retention. Verify a retained receipt against the private audit verifier after initializing the target. |
 | Disaster recovery | Rehearse managed database recovery, recovery of matching private Storage objects, Auth, provider configuration and isolated cutover using the [disaster recovery runbook](DISASTER_RECOVERY.md). |
 
 The matrix uses BLOCKED_EXTERNAL only when the implementation and its test-mode proof are present. Missing configuration and missing code are tracked separately.
