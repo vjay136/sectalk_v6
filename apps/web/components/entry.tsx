@@ -6,7 +6,7 @@ import {
   ArrowLeft, ArrowRight, AudioLines, Check, Fingerprint, Flag, KeyRound,
   LockKeyhole, Mail, Phone, Send, Shield, ShieldCheck, Video,
 } from 'lucide-react'
-import { db, transientAuthClient } from '../lib/data'
+import { db, passkeysEnabled, transientAuthClient } from '../lib/data'
 import { signInWithAppPassword } from '../lib/account-credential'
 import type { PlainMessageKey } from '../lib/locale'
 import { LanguageSelect, useLocale } from './locale-provider'
@@ -51,6 +51,9 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
   const [busy, setBusy] = useState(false)
   const [alert, setAlert] = useState<PlainMessageKey | ''>('')
   const [info, setInfo] = useState<PlainMessageKey | ''>('')
+  const [passkeyError,setPasskeyError]=useState(false)
+  const [supportsPasskeys,setSupportsPasskeys]=useState(false)
+  useEffect(()=>setSupportsPasskeys(passkeysEnabled&&Boolean(window.PublicKeyCredential)),[])
   const recovery = useRef<ReturnType<typeof transientAuthClient>>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const current = recovering ? 'new-password' : step
@@ -61,6 +64,18 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
   const checkEmail = current === 'confirm' || codeRequired
   const showEmail = current === 'sign-in' || current === 'sign-up' || current === 'forgot'
 
+  async function signInWithPasskey() {
+    if (busy || !db) return
+    setBusy(true)
+    setAlert('')
+    setPasskeyError(false)
+    try {
+      const result=await db.auth.signInWithPasskey()
+      if (result.error) setPasskeyError(true)
+    } catch {setPasskeyError(true)}
+    finally {setBusy(false)}
+  }
+
   function go(next: Step, message: PlainMessageKey | '' = '') {
     setStep(next)
     setPassword('')
@@ -68,6 +83,7 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
     setCode('')
     if (next !== 'new-password') {setRecoveryFactor('');setFactorCode('')}
     setAlert('')
+    setPasskeyError(false)
     setInfo(message)
   }
 
@@ -226,9 +242,12 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
           {codeRequired && <label>{t('verificationCode')}<input dir="ltr" className="code-input" type="text" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6,10}" maxLength={10} required placeholder={t('enterEmailCode')} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} /></label>}
           {current === 'sign-in' && <button className="text-button forgot" type="button" disabled={busy} onClick={() => go('forgot')}>{t('forgotPassword')}</button>}
           {alert && <p className="form-message error" role="alert">{t(alert)}</p>}
+          {passkeyError && <p className="form-message error" role="alert">Could not sign in with a passkey.</p>}
           {info && <p className="form-message success" role="status">{t(info)}</p>}
           {authenticatorReset && current === 'sign-in' && <p className="form-message success" role="status">{t('authenticatorResetComplete')}</p>}
           <button className="primary submit-auth" disabled={busy}>{busy ? t('pleaseWait') : t(action)} <ArrowRight size={18} /></button>
+          {current==='sign-in'&&supportsPasskeys&&<button type="button" className="secondary" disabled={busy}
+            onClick={()=>void signInWithPasskey()}>Sign in with a passkey</button>}
           {current !== 'sign-in' && current !== 'sign-up' && <div className="form-links">
             {current !== 'confirm' && <button type="button" disabled={busy} onClick={() => void backToSignIn()}><ArrowLeft size={14} /> {t('backToSignIn')}</button>}
             {checkEmail && <button type="button" onClick={resend} disabled={busy}>{current === 'confirm' ? t('resendLink') : t('resendCode')}</button>}

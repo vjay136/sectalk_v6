@@ -38,6 +38,7 @@ export async function POST(request:Request) {
     const raw=await command(action==='generate'?'source':action)
     if (!raw) return fail(403)
     const state = {
+      workspaceEnabled: raw.workspaceEnabled !== false,
       owner: raw.owner === true,
       policy: raw.policy === true,
       eligible: raw.eligible === true,

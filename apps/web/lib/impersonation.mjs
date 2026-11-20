@@ -3,6 +3,8 @@ import mappings from './unicode-confusables.mjs'
 /** @typedef {{id: string, name: string, handle: string}} Account */
 /** @typedef {'same_name'|'lookalike_name'|'lookalike_handle'} MatchReason */
 
+export const impersonationRuleVersions = ['profile-rules-v1', 'profile-rules-v2']
+
 const ignored = /\p{Default_Ignorable_Code_Point}/gu
 const separators = /[\p{Z}\p{P}]/gu
 
@@ -42,8 +44,9 @@ function comparison(account) {
   return { account, name, handle, nameKey: nameSkeleton(name), handleKey: nameSkeleton(handle) }
 }
 
-/** @param {Account[]} accounts @param {string[]} watchedIds */
-export function findImpersonationSignals(accounts, watchedIds) {
+/** @param {Account[]} accounts @param {string[]} watchedIds @param {number} [minimum] @param {string} [version] */
+export function findImpersonationSignals(accounts, watchedIds, minimum = 1, version = impersonationRuleVersions[0]) {
+  if (!impersonationRuleVersions.includes(version)) throw new Error('Unknown impersonation rule version')
   const watched = new Set(watchedIds)
   const indexed = accounts.map(comparison)
   return indexed.filter(person => watched.has(person.account.id)).flatMap(person => indexed.flatMap(candidate => {
@@ -51,9 +54,10 @@ export function findImpersonationSignals(accounts, watchedIds) {
     /** @type {MatchReason[]} */
     const reasons = []
     if (person.name && person.name === candidate.name) reasons.push('same_name')
-    else if (person.nameKey && person.nameKey === candidate.nameKey) reasons.push('lookalike_name')
-    if (person.handle && candidate.handle && person.handle !== candidate.handle &&
-      (person.handleKey === candidate.handleKey || oneHandleEdit(person.handle, candidate.handle))) {
+    else if (minimum <= 2 && person.nameKey && person.nameKey === candidate.nameKey) reasons.push('lookalike_name')
+    if (minimum <= 2 && person.handle && candidate.handle && person.handle !== candidate.handle &&
+      (person.handleKey === candidate.handleKey || (minimum <= 1 &&
+        (version === impersonationRuleVersions[0] || reasons.length > 0) && oneHandleEdit(person.handle, candidate.handle)))) {
       reasons.push('lookalike_handle')
     }
     return reasons.length ? [{ protectedAccount: person.account, candidate: candidate.account, reasons }] : []

@@ -6,7 +6,7 @@ import { openDeviceStore, deviceReceiptStore, keyStore, type LocalDevice } from 
 type Receipt={device:string;command:string;receipt:string}
 type Command={id:string;kind:'revoke'|'lock'|'wipe';receipt:string}
 type Poll={locked:boolean;wiped:boolean;blocked:boolean;command:Command|null}
-export type DeviceProtection={device:string;locked:boolean;unavailable:boolean;wiped?:boolean}|null
+export type DeviceProtection={device:string;locked:boolean;unavailable:boolean;wiped?:boolean;blocked?:boolean}|null
 
 function requestResult<T>(request:IDBRequest<T>) {
   return new Promise<T>((resolve,reject)=>{
@@ -69,7 +69,7 @@ async function receive(database:IDBDatabase,identity:LocalDevice):Promise<Device
       if (!result.command) await wipeIdentity(database,identity)
       return {device:identity.id,locked:false,unavailable:false,wiped:true}
     }
-    return {device:identity.id,locked:result.locked,unavailable:false}
+    return {device:identity.id,locked:result.locked,unavailable:false,blocked:result.blocked}
   } catch {return {device:identity.id,locked:false,unavailable:true}}
 }
 

@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { db } from '../lib/data'
 
 const endpoint='/api/meetings/summaries'
-type View={owner:boolean;policy:boolean;eligible:boolean;consented:boolean;revision:string|null}
+type View={workspaceEnabled?:boolean;owner:boolean;policy:boolean;eligible:boolean;consented:boolean;revision:string|null}
 type Draft={revision:string; summary:string; actions:string[]}
 type Result=View & {draft?:{summary:string[];actions:string[]}}
 
@@ -91,9 +91,10 @@ export function MeetingSummary({meeting}:{meeting:string}) {
   return <section className="release-section" aria-label="Meeting summary">
     <h3>Meeting summary draft</h3>
     <p>Drafts extract text from opted-in captions. Suggested actions stay in the editor.</p>
-    {view.owner && <button type="button" className="secondary" disabled={busy}
+    {view.owner && view.workspaceEnabled !== false && <button type="button" className="secondary" disabled={busy}
       onClick={()=>void act('policy',!view.policy)}>{view.policy?'Disable workspace summaries':'Allow workspace summaries'}</button>}
-    {!view.policy && <p>Meeting summaries are disabled for this workspace.</p>}
+    {!view.policy && <p>{view.workspaceEnabled === false ?
+      'Meeting summaries are unavailable under workspace AI settings.' : 'Meeting summaries are disabled for this workspace.'}</p>}
     {view.eligible && view.policy && !view.consented && <>
       <p>Allow your transcript lines to be used in summary drafts for opted-in participants. You can withdraw consent at any time.</p>
       <button type="button" className="primary" disabled={busy} onClick={()=>void act('opt-in')}>Opt in to meeting summaries</button>

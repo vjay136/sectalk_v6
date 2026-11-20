@@ -6,7 +6,7 @@ const maximumExportBytes = 1024 * 1024
 export const exportBucket = 'sectalk-exports'
 export const exportIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 type ExportSource =
-  | { kind: 'audit' | 'operations'; scope_id: string; period?: null }
+  | { kind: 'audit' | 'operations' | 'compliance'; scope_id: string; period?: null }
   | { kind: 'security'; scope_id?: null; period: 'daily' | 'weekly' }
 type ExportFormat = { filename: string; media_type: 'application/json' | 'text/csv' | 'application/pdf' }
 export type StoredExport = ExportSource & ExportFormat & { bytes: number; sha256: string }
@@ -32,7 +32,7 @@ export function exportResponse(bytes: Buffer, format: ExportFormat, artifact?: s
   return new Response(Uint8Array.from(bytes), { headers })
 }
 
-async function storeExport(actor: string, source: ExportSource, format: ExportFormat, bytes: Buffer) {
+export async function storeExport(actor: string, source: ExportSource, format: ExportFormat, bytes: Buffer) {
   const storage = exportStorage()
   if (!storage || bytes.length < 1 || bytes.length > maximumExportBytes) return undefined
   const reservation = await storage.rpc('st_v6_begin_export_object', {

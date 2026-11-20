@@ -12,7 +12,7 @@ type Session = {
   current_device: boolean
 }
 
-const signalLabels: Record<string, string> = {
+export const signalLabels: Record<string, string> = {
   unfamiliar_device: 'Unfamiliar browser',
   impossible_travel: 'Unusually fast location change',
   asn_reputation: 'Network reputation warning',

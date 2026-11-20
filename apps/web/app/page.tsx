@@ -73,10 +73,16 @@ export default function Home() {
     let active = true
     const check = () => {
       if (document.visibilityState !== 'visible') return
-      void client.rpc('st_v7_current_session_valid').then(({data,error})=>{
-        if (active && !error && data === false) void client.auth.signOut({scope:'local'})
+      void client.rpc('st_v7_login_risk_status').then(({data,error})=>{
+        if (!active) return
+        if (error?.code === 'PT401' || (!error && data === 'inactive')) void client.auth.signOut({scope:'local'})
+        if (error) return
+        if (['authenticator','email','refresh'].includes(data)) setAttempt(value => value + 1)
       })
     }
+    const hints = client.channel('st:assurance:' + user, { config: { private: true } })
+      .on('broadcast', { event: 'assurance_changed' }, () => { if (active) setAttempt(value => value + 1) })
+      .subscribe(status => { if (status === 'SUBSCRIBED') check() })
     const timer = window.setInterval(check,60000)
     document.addEventListener('visibilitychange',check)
     window.addEventListener('online',check)
@@ -85,6 +91,7 @@ export default function Home() {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange',check)
       window.removeEventListener('online',check)
+      void client.removeChannel(hints)
     }
   }, [user,recovering])
 
@@ -107,6 +114,8 @@ export default function Home() {
     setStartRecovery(true)
     void db!.auth.signOut({scope:'local'})
   }}/>
+  if (protection.value?.blocked)
+    return <DeviceLockScreen device={protection.value.device} blocked unavailable={false} refresh={protection.refresh}/>
   if (access?.risk) return <LoginStepUp key={user} email={session?.user.email??null} refreshNeeded={access.risk==='refresh'}
     hasLocalDevice={Boolean(protection.value&&!protection.value.locked&&!protection.value.unavailable)} complete={retry}/>
   if (protection.value && (protection.value.locked || protection.value.unavailable))

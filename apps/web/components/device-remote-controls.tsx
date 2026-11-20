@@ -7,7 +7,7 @@ import { enrollCurrentDevice } from '../lib/device-identity'
 
 type Action='revoke'|'lock'|'wipe'|'cancel'|'unlock'
 export type DeviceCommand = {device:string;locked:boolean;wiped:boolean;command:string|null;kind:'revoke'|'lock'|'wipe'|null;
-  state:'pending'|'delivered'|'acknowledged'|'cancelled'|null}
+  state:'pending'|'delivered'|'acknowledged'|'cancelled'|null;operator_wipe_pending?:boolean}
 const labels={revoke:'Revoke device sessions',lock:'Lock device',wipe:'Wipe local device keys',cancel:'Cancel pending command',unlock:'Unlock device'}
 const descriptions={
   revoke:'Active sessions linked to this device will end immediately.',
@@ -32,7 +32,7 @@ export function DeviceRemoteControls({status,hasFactor,hasRegisteredDevice,onCha
   const [feedback,setFeedback]=useState('')
   const active=status.state==='pending'||status.state==='delivered'
   const actions:Action[]=status.wiped?[]:active
-    ? status.state==='pending'?['cancel']:[]
+    ? status.state==='pending'&&!status.operator_wipe_pending?['cancel']:[]
     : status.locked?['unlock','wipe']:['revoke','lock','wipe']
 
   async function apply(event:FormEvent<HTMLFormElement>) {
@@ -61,6 +61,7 @@ export function DeviceRemoteControls({status,hasFactor,hasRegisteredDevice,onCha
     {status.locked&&<p>Device locked</p>}
     {status.wiped&&<p>Previous device identity retired</p>}
     {status.state&&status.kind&&<p><strong>{labels[status.kind]}</strong>{' · '}{commandStatus[status.state]}</p>}
+    {status.operator_wipe_pending&&<p>An account operator requested this wipe. Contact support to cancel it before delivery.</p>}
     <div className="actions">{actions.map(action=><button className="secondary" type="button" disabled={busy}
       key={action} onClick={()=>{setChoice(action);setError('');setFeedback('')}}>{labels[action]}</button>)}</div>
     {choice&&<form className="release-form" onSubmit={apply}>

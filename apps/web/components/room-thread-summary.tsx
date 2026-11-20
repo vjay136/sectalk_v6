@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { db } from '../lib/data'
 
-type Status = { owner: boolean; policy: boolean; consented: boolean; revision: string | null }
+type Status = { workspaceEnabled?: boolean; owner: boolean; policy: boolean; consented: boolean; revision: string | null }
 type Summary = { revision: string; summary: string[]; actions: string[] }
 type Action = 'view' | 'generate' | 'policy' | 'opt-in' | 'withdraw'
 type Result = Status & { draft?: { summary: string[]; actions: string[] } }
@@ -86,11 +86,13 @@ export function RoomThreadSummary({ room, root }: { room: string; root: string }
   return <section className="release-section" aria-label="Thread summary">
     <h3>Thread summary</h3>
     {!status && !error && <p role="status">Checking thread summary access…</p>}
-    {status?.owner && <button className="secondary" type="button" disabled={busy}
+    {status?.owner && status.workspaceEnabled !== false && <button className="secondary" type="button" disabled={busy}
       onClick={() => void run('policy', !status.policy)}>
       {status.policy ? 'Disable workspace thread summaries' : 'Enable workspace thread summaries'}
     </button>}
     {status && !status.policy && <p>Thread summaries are off for this workspace.</p>}
+    {status?.workspaceEnabled === false && status.consented && <button type="button" className="secondary"
+      disabled={busy} onClick={() => void run('withdraw')}>Withdraw my posts</button>}
     {status?.policy && <>
       <p>Opt in to include your posts in this thread while your consent is active.</p>
       <button className="secondary" type="button" disabled={busy}

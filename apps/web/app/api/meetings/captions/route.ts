@@ -105,9 +105,11 @@ export async function PUT(request: Request) {
     const allowed = await context.command(meeting,'reserve',{p_sid:sid,p_lease:lease})
     if (!allowed) return fail(403)
     const body = await audioBody(request,size)
+    const current = await context.command(meeting,'process',{p_sid:sid,p_lease:lease})
+    if (!current) return fail(403)
     const provider = await fetch(context.services.endpoint,{ method:'POST',redirect:'error',body,
       signal:AbortSignal.any([request.signal,AbortSignal.timeout(12000)]),
-      headers:{Authorization:'Bearer '+context.services.secret,'X-Source-Language':allowed.language} })
+      headers:{Authorization:'Bearer '+context.services.secret,'X-Source-Language':current.language} })
     if (!provider.ok) return fail(503)
     const result = await provider.json()
     if (typeof result?.text!=='string' || result.text.length>500) return fail(503)

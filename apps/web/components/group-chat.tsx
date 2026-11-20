@@ -6,6 +6,8 @@ import type { ManifestEntry } from '../lib/contact-key-verification'
 import { db } from '../lib/data'
 import { encryptedMessageWarning } from '../lib/encrypted-message-warning'
 import { GroupMessageReport } from './group-message-report'
+import { EncryptedGroupSearch } from './encrypted-group-search'
+import { clearGroupIndex, pruneGroupIndex, rememberGroupMessages } from '../lib/encrypted-group-search'
 import { decryptGroupMessage, encryptGroupMessage, groupLocalDevice, openGroupKey, rotateGroupKey,
   type GroupCiphertext, type GroupEnvelope } from '../lib/group-chat-crypto'
 
@@ -16,7 +18,7 @@ type Preview = { epoch: number; devices: ManifestEntry[]; plan_cap: number }
 
 async function groupAction<T>(action: string, group?: string, values?: object) {
   const result = await db!.rpc('st_group_chat', { p_action: action, p_group: group, p_data: values })
-  if (result.error) throw new Error(result.error.message)
+  if (result.error) throw Object.assign(new Error(result.error.message), { code: result.error.code })
   return result.data as T
 }
 
@@ -37,11 +39,20 @@ export function GroupChat({ user, contacts, openDeviceSettings }: { user: string
   useEffect(() => {
     let current = true
     let pending = false
+    async function viewingAccount() {
+      if (!current) return false
+      const { data } = await db!.auth.getSession()
+      return current && data.session?.user.id === user
+    }
     async function update() {
       if (pending) return
       pending = true
+      let listAuthorized = false
       try {
         const listed = await groupAction<Group[]>('list')
+        listAuthorized = true
+        if (!await viewingAccount()) return
+        await pruneGroupIndex(user, new Set(listed.map(group => group.id))).catch(() => {})
         if (!current) return
         setGroups(listed)
         if (selected && !listed.some(group => group.id === selected)) {
@@ -64,11 +75,20 @@ export function GroupChat({ user, contacts, openDeviceSettings }: { user: string
           }
           return { ...message, text }
         }))
+        if (!await viewingAccount()) return
+        await rememberGroupMessages(device, selected, opened.flatMap(message => message.text === null ? [] : [{
+          id: message.id, sent: message.sent, epoch: message.epoch, text: message.text,
+        }])).catch(() => {})
         if (!current) return
         setView(snapshot)
         setMessages(opened)
         setReady(keys.has(snapshot.group.epoch))
       } catch (cause) {
+        if (!await viewingAccount()) return
+        if (cause instanceof Error && 'code' in cause && cause.code === '42501') {
+          const purge = listAuthorized && selected ? clearGroupIndex(user, selected) : pruneGroupIndex(user, new Set())
+          await purge.catch(() => {})
+        }
         if (!current) return
         setView(undefined)
         setMessages([])
@@ -161,7 +181,8 @@ export function GroupChat({ user, contacts, openDeviceSettings }: { user: string
         <button className="primary" disabled={busy}>{selected ? 'Save members and rotate keys' : 'Create encrypted group'}</button>
         <button className="text-button" disabled={busy} type="button" onClick={() => setEditor(undefined)}>Cancel</button>
       </form>}
-      {view && <><ol aria-label="Group messages">{messages.map(message => {
+      {view && <><EncryptedGroupSearch key={view.group.id + ':' + view.group.epoch + ':' + view.device}
+        owner={user} group={view.group.id} device={view.device} /><ol aria-label="Group messages">{messages.map(message => {
         const received = message.actor !== user && message.text !== null
         const warning = received && message.text ? encryptedMessageWarning(message.text) : null
         return <li key={message.id}><strong>{nameFor(message.actor)}</strong>

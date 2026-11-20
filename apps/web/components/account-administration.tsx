@@ -3,23 +3,29 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
 import { StaffMfa } from './staff-mfa'
+import { OperatorAccountDevices } from './operator-account-devices'
+import { OperatorAccountSessions } from './operator-account-sessions'
+import { SessionRiskOperations } from './session-risk-operations'
+import { SectionTabs } from './section-tabs'
 
 export type AccountOperatorAccess = 'none' | 'mfa' | 'operator' | 'reviewer'
 type Account = { id: string; handle: string; name: string; status: 'active' | 'restricted' }
 type Action = 'force_logout' | 'reset_requested' | 'reset_completed'
+type HistoryAction = Action | 'session_revoked' | 'session_step_up'
 type Profile = {
   id: string; handle: string; name: string; created_at: string
   eligible: boolean; has_authenticator: boolean; restricted: boolean
   reset: { ready_at: string; expires_at: string } | null
-  history: { action: Action; occurred_at: string; actor: string; reason: string }[]
+  history: { action: HistoryAction; occurred_at: string; actor: string; reason: string }[]
 }
 const actions: Record<Action,string> = {
   force_logout: 'End all sessions',
   reset_requested: 'Request authenticator reset',
   reset_completed: 'Approve authenticator reset',
 }
-const historyLabels: Record<Action,string> = {
+const historyLabels: Record<HistoryAction,string> = {
   force_logout: 'All sessions ended', reset_requested: 'Authenticator reset requested', reset_completed: 'Authenticator reset approved',
+  session_revoked: 'Individual session ended', session_step_up: 'Fresh authenticator verification requested',
 }
 
 export function useAccountOperator() {
@@ -39,10 +45,16 @@ export function useAccountOperator() {
 export function AccountAdministration({ access, refresh }: {
   access: AccountOperatorAccess; refresh: () => Promise<void>
 }) {
+  const [section, setSection] = useState<'directory' | 'risks'>('directory')
   if (access === 'none') return null
   if (access === 'mfa') return <StaffMfa refresh={refresh}
     explanation="Enter a current authenticator code to manage native account sessions and authenticator recovery."/>
-  return <AccountDirectory access={access} onAccessChanged={refresh}/>
+  return <>
+    <SectionTabs label="Account administration sections" value={section} onChange={setSection}
+      options={ [['directory', 'Account directory'], ['risks', 'High-risk sessions']] }/>
+    {section === 'directory' ? <AccountDirectory access={access} onAccessChanged={refresh}/>
+      : <SessionRiskOperations canManage={access === 'operator'} refreshAccess={refresh}/>}
+  </>
 }
 
 function AccountDirectory({ access, onAccessChanged }: {
@@ -59,6 +71,7 @@ function AccountDirectory({ access, onAccessChanged }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState('')
+  const refreshProfile = useCallback(() => setRevision(value => value + 1), [])
 
   useEffect(() => {
     let current = true
@@ -76,8 +89,8 @@ function AccountDirectory({ access, onAccessChanged }: {
   }, [query, cursor, onAccessChanged])
 
   useEffect(() => {
-    setProfile(null)
-    if (!selected) return
+    if (!selected) { setProfile(null); return }
+    setProfile(current => current?.id === selected ? current : null)
     let current = true
     void db!.rpc('st_v7_account_admin_profile', { p_user: selected }).then(async ({ data, error }) => {
       if (!current) return
@@ -153,6 +166,10 @@ function AccountDirectory({ access, onAccessChanged }: {
           <button className="secondary" type="button" disabled={busy} onClick={() => setAction('reset_completed')}>{actions.reset_completed}</button>}
       </div>}
       {!profile.eligible && <p>Account-wide actions are unavailable for this profile.</p>}
+      {profile.eligible && <OperatorAccountSessions key={profile.id + '-sessions'} user={profile.id} canEnd={access === 'operator'}
+        changed={refreshProfile} accessChanged={onAccessChanged}/>}
+      {access === 'operator' && profile.eligible && <OperatorAccountDevices key={profile.id + '-devices'} accountId={profile.id}
+        onAccessChanged={onAccessChanged}/>}
       {action && <form className="release-form" key={action} onSubmit={submit}>
         <h4>{actions[action]}</h4>
         <p>{action === 'force_logout' ? 'This ends all current sessions. The user can sign in again.'

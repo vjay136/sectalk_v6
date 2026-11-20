@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { db } from '../lib/data'
 import { QueueHealthPanel } from './queue-health'
 import { SectionTabs } from './section-tabs'
+import { SearchIndexOperations } from './search-index-operations'
 
 type Entry = {id: string; channel: 'web_push' | 'email'; reason: string; failed_at: string; replayable: boolean}
 const reasons: Record<string, string> = {
@@ -14,7 +15,7 @@ const reasons: Record<string, string> = {
 }
 
 export function QueueOperations({onAccessChanged}: {onAccessChanged: () => Promise<void>}) {
-  const [tab, setTab] = useState<'failures' | 'health'>('failures')
+  const [tab, setTab] = useState<'failures' | 'health' | 'search'>('failures')
   const [entries, setEntries] = useState<Entry[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
@@ -58,8 +59,9 @@ export function QueueOperations({onAccessChanged}: {onAccessChanged: () => Promi
   return <section className="panel release-panel" aria-label="Queue operations">
     <h2>Queue operations</h2>
     <SectionTabs label="Queue operations sections" value={tab} onChange={setTab}
-      options={ [['failures','Dead letters'], ['health','Service health and SLOs']] }/>
-    {tab === 'health' ? <QueueHealthPanel onAccessChanged={onAccessChanged}/> : <>
+      options={ [['failures','Dead letters'], ['health','Service health and SLOs'], ['search','Managed search index']] }/>
+    {tab === 'search' ? <SearchIndexOperations onAccessChanged={onAccessChanged}/> :
+      tab === 'health' ? <QueueHealthPanel onAccessChanged={onAccessChanged}/> : <>
     <div className="panel-header"><h3>Dead letters</h3>
       <button type="button" className="secondary" disabled={busy} onClick={() => void load()}>Refresh queue</button>
     </div>

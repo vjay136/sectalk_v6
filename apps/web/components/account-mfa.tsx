@@ -3,11 +3,12 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import type { Factor } from '@supabase/supabase-js'
 import { ShieldCheck } from 'lucide-react'
-import { db } from '../lib/data'
+import { db, passkeysEnabled } from '../lib/data'
 import { Brand } from './entry'
 import { useLocale } from './locale-provider'
 import { AccountSecurityChanges } from './account-security-changes'
 import { LoginAnomalies } from './login-anomalies'
+import { AccountPasskeys } from './account-passkeys'
 import { verifyAccountCredential } from '../lib/account-credential'
 
 type RecoveryStatus = 'staff' | 'ready' | 'missing'
@@ -196,7 +197,7 @@ export function AccountMfa({hints}: {hints: EventTarget}) {
       <button className="secondary" type="button" onClick={() => setCodes([])}>{t('recoveryCodesSaved')}</button>
     </div>}
     {error && <p role="alert">{error}</p>}
-  </div>{factors && status && <>
+  </div>{passkeysEnabled && <AccountPasskeys/>}{factors && status && <>
     {totp && verified.length===1 && status!=='staff' && <AccountRecoveryKey/>}
     <AccountSecurityChanges hints={hints} hasAuthenticator={Boolean(totp)} staff={status === 'staff'}/>
     <LoginAnomalies hints={hints} hasFactor={Boolean(totp)}/>
@@ -245,11 +246,7 @@ export function SignInMfa({ retry, recovered }: { retry: () => void; recovered: 
             setRecoveryPending('Open Account security changes on your previously trusted device and approve the request. After 24 hours, sign in and continue with this method.')
             return
           }
-          const pending = await db!.rpc('st_v7_account_security_status')
-          const ready = pending.data?.pending?.ready_at
-          setRecoveryPending(ready
-            ? 'Recovery can continue after ' + new Date(ready).toLocaleString() + '. Sign in and enter the same code then.'
-            : 'Recovery is pending during the 24-hour cooling-off period.')
+          setRecoveryPending('Recovery can continue after the 24-hour cooling-off period. Sign in again and use the same recovery key or code.')
           return
         }
         if (data !== 'completed') return

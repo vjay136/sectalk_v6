@@ -14,6 +14,7 @@ const signalNames = {
 }
 
 export function ImpersonationWatch({ workspace, accounts }: { workspace: string; accounts: Profile[] }) {
+  const [policy, setPolicy] = useState<{ enabled: boolean; threshold: number; version: string }>()
   const [watch, setWatch] = useState<Watch[] | null>(null)
   const [member, setMember] = useState('')
   const [tier, setTier] = useState<Tier>('executive')
@@ -23,10 +24,20 @@ export function ImpersonationWatch({ workspace, accounts }: { workspace: string;
 
   const load = useCallback(async () => {
     const request = ++version.current
-    const result = await db!.rpc('st_v6_impersonation_watch_list', { p_workspace: workspace })
+    const [result, settings, active] = await Promise.all([
+      db!.rpc('st_v6_impersonation_watch_list', { p_workspace: workspace }),
+      db!.rpc('st_v7_workspace_ai_settings', { p_workspace: workspace }),
+      db!.rpc('st_v7_workspace_active_profile_rules', { p_workspace: workspace }),
+    ])
     if (request !== version.current) return
-    if (result.error) { setWatch(null); setError('Could not load the impersonation watch list.'); return }
+    if (result.error || settings.error || active.error || !settings.data || typeof active.data !== 'string') {
+      setWatch(null)
+      setPolicy(undefined)
+      setError('Could not load impersonation watch settings.')
+      return
+    }
     setWatch(result.data as Watch[])
+    setPolicy({ enabled: settings.data.enabled === true, threshold: settings.data.threshold, version: active.data })
     setError('')
   }, [workspace])
   useEffect(() => {
@@ -39,7 +50,7 @@ export function ImpersonationWatch({ workspace, accounts }: { workspace: string;
   }, [load])
 
   const byId = useMemo(() => new Map(accounts.map(account => [account.id, account])), [accounts])
-  const matches = useMemo(() => watch ? findImpersonationSignals(accounts, watch.map(entry => entry.member_id)) : [], [accounts, watch])
+  const matches = useMemo(() => watch && policy?.enabled ? findImpersonationSignals(accounts, watch.map(entry => entry.member_id), policy.threshold, policy.version) : [], [accounts, policy, watch])
   async function change(memberId: string, value: Tier | null) {
     setBusy(true)
     setError('')
@@ -91,7 +102,8 @@ export function ImpersonationWatch({ workspace, accounts }: { workspace: string;
           onClick={() => void change(row.member_id, null)}>Remove from watch list</button>
       </div>)}
       <h3>Possible matches</h3>
-      {!matches.length && <p>No similar profiles found in the active workspace roster.</p>}
+      {policy?.enabled === false ? <p>Impersonation advisories are disabled in workspace AI settings.</p> :
+        !matches.length && <p>No similar profiles found in the active workspace roster.</p>}
       {matches.map(match => <article className="release-board-item" key={match.protectedAccount.id + ':' + match.candidate.id}>
         <h4><bdi>{match.candidate.name}</bdi> <small>@{match.candidate.handle}</small></h4>
         <p>Compared with <bdi>{match.protectedAccount.name}</bdi> (@{match.protectedAccount.handle})</p>

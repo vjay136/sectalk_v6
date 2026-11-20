@@ -7,6 +7,7 @@ import { createClient } from '@supabase/supabase-js'
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP).origin
 const origin = new URL(process.env.SECTALK_STORAGE_TEST_URL).origin
 const checkReports = process.env.SECTALK_GROUP_REPORTS === '1'
+const checkSearch = process.env.SECTALK_GROUP_SEARCH === '1'
 assert.equal(new URL(app).hostname, '127.0.0.1')
 assert.equal(origin, 'http://127.0.0.1:55321')
 const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
@@ -116,6 +117,63 @@ try {
   assert.ok(!JSON.stringify(before).includes(first) && before.messages[0].signature.length === 86)
   assert.equal((await group(cc, 'read')).error?.code, '42501')
   assert.equal((await group(peer.client, 'read')).error?.code, '42501')
+  async function search(page, query, count) {
+    const area = page.getByRole('region', { name: 'Encrypted group search' })
+    await area.getByLabel('Search encrypted messages', { exact: true }).fill(query)
+    await area.getByRole('button', { name: 'Search this device', exact: true }).click()
+    await area.getByRole('status').filter({ hasText: count ? count + ' matching messages' : 'No matching messages' }).waitFor()
+    return area.getByLabel('Encrypted search results', { exact: true })
+  }
+  const inspectIndex = (page, entry) => page.evaluate(id => new Promise((resolve, reject) => {
+    const open = indexedDB.open('sectalk-encrypted-group-search')
+    open.onerror = () => reject(open.error)
+    open.onsuccess = () => {
+      const database = open.result
+      const query = database.transaction('records').objectStore('records').getAll()
+      query.onerror = () => reject(query.error)
+      query.onsuccess = () => {
+        database.close()
+        resolve(query.result.filter(row => row.id === id).map(row => ({
+          keys: Object.keys(row).sort(),
+          id: row.id, group: row.group, device: row.device, owner: row.owner,
+          ciphertext: Array.from(new Uint8Array(row.sealed)),
+        })))
+      }
+    }
+  }), entry)
+  if (checkSearch) {
+    const request = b.waitForRequest(req => req.url().endsWith('/rpc/st_group_search_metadata'))
+    const results = await search(b, 'private group message', 1)
+    await results.getByText(first, { exact: true }).waitFor()
+    assert.deepEqual((await request).postDataJSON(), { p_group: id })
+    const metadata = data(await bc.rpc('st_group_search_metadata', { p_group: id }))
+    assert.deepEqual(Object.keys(metadata).sort(), ['device', 'messages'])
+    assert.deepEqual(Object.keys(metadata.messages[0]).sort(), ['epoch', 'id', 'sent'])
+    assert.equal(metadata.messages[0].id, before.messages[0].id)
+    const [local] = await inspectIndex(b, before.messages[0].id)
+    const [secondLocal] = await inspectIndex(b2, before.messages[0].id)
+    assert.deepEqual(local.keys, ['device', 'epoch', 'group', 'id', 'iv', 'owner', 'sealed', 'sent'])
+    assert.equal(local.owner, peer.id)
+    assert.equal(local.device, before.device)
+    assert.equal(local.group, id)
+    assert.equal(local.ciphertext.length, Buffer.byteLength(first) + 16)
+    assert.ok(!Buffer.from(local.ciphertext).includes(first))
+    assert.notEqual(local.device, secondLocal.device)
+    assert.notDeepEqual(local.ciphertext, secondLocal.ciphertext)
+    await b.reload()
+    await nav(b).waitFor()
+    assert.deepEqual(await inspectIndex(b, before.messages[0].id), [local])
+    await nav(b).getByRole('button', { name: 'Group chats', exact: true }).click()
+    await b.getByLabel('Open group').selectOption({ label: title })
+    await (await search(b, first.slice(0, 25), 1)).getByText(first, { exact: true }).waitFor()
+    const metadataRoute = '**/rpc/st_group_search_metadata'
+    await b.route(metadataRoute, route => route.abort())
+    const area = b.getByRole('region', { name: 'Encrypted group search' })
+    await area.getByRole('button', { name: 'Search this device', exact: true }).click()
+    await area.getByRole('alert').filter({ hasText: 'Could not search recent messages on this device.' }).waitFor()
+    assert.equal(await area.getByLabel('Encrypted search results').count(), 0)
+    await b.unroute(metadataRoute)
+  }
   const oldPeerMessage = 'Second device can sign messages'
   await send(b2, oldPeerMessage)
   await a.getByText(oldPeerMessage, { exact: true }).waitFor()
@@ -128,6 +186,12 @@ try {
   assert.equal(afterJoin.group.epoch, 2)
   assert.deepEqual(afterJoin.messages, [])
   assert.deepEqual(afterJoin.envelopes.map(envelope => envelope.epoch), [2])
+  if (checkSearch) {
+    await search(c, 'private group message', 0)
+    assert.deepEqual(await inspectIndex(c, before.messages[0].id), [])
+    const metadata = data(await cc.rpc('st_group_search_metadata', { p_group: id }))
+    assert.ok(metadata.messages.every(message => message.epoch >= 2))
+  }
   const newlyJoined = 'Fresh ciphertext after Charlie joined'
   await send(a, newlyJoined)
   await c.getByText(newlyJoined, { exact: true }).waitFor()
@@ -187,6 +251,26 @@ try {
     assert.equal((await group(client, 'send', { ...before.messages[0], id: randomUUID(), epoch: 3 })).error?.code, '42501')
     await page.getByLabel('Open group').getByRole('option', { name: title, exact: true }).waitFor({ state: 'detached' })
     assert.equal(await page.getByText(after, { exact: true }).count(), 0)
+  }
+  if (checkSearch) {
+    for (const [page, client] of [[b, bc], [b2, b2c]]) {
+      assert.equal((await client.rpc('st_group_search_metadata', { p_group: id })).error?.code, '42501')
+      assert.deepEqual(await inspectIndex(page, before.messages[0].id), [])
+      assert.equal(await page.getByRole('region', { name: 'Encrypted group search' }).count(), 0)
+    }
+    const ownStored = await inspectIndex(a, before.messages[0].id)
+    assert.equal(ownStored.length, 1)
+    assert.equal(ownStored[0].owner, owner.id)
+    await nav(a).getByRole('button', { name: 'Sign out', exact: true }).click()
+    await a.getByLabel('Email address', { exact: true }).fill(newcomer.email)
+    await a.getByLabel('Password', { exact: true }).fill(password)
+    await a.locator('button.submit-auth').click()
+    await nav(a).getByRole('button', { name: 'Group chats', exact: true }).click()
+    await a.getByRole('alert').filter({ hasText: 'An approved browser device is required' }).waitFor()
+    assert.equal(await a.getByText(first, { exact: true }).count(), 0)
+    assert.equal(await a.getByRole('region', { name: 'Encrypted group search' }).count(), 0)
+    assert.deepEqual(await inspectIndex(a, before.messages[0].id), ownStored)
+    console.log('PASS: IndexedDB persistence with device-specific ciphertext, metadata-only revalidation, offline denial, same-profile account isolation, newcomer isolation, and removal-triggered physical purge')
   }
   if (checkReports) {
     const requests = []

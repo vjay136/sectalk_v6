@@ -135,7 +135,7 @@ try {
   assert.equal(generated.status,200)
   assert.match(generated.headers.get('cache-control'),/no-store/)
   const result=await generated.json()
-  assert.deepEqual(Object.keys(result).sort(), ['consented','draft','eligible','owner','policy','revision'])
+  assert.deepEqual(Object.keys(result).sort(), ['consented','draft','eligible','owner','policy','revision','workspaceEnabled'])
   assert.deepEqual(Object.keys(result.draft).sort(), ['actions','summary'])
   assert.ok(result.draft.summary.length <= 6 && result.draft.actions.length <= 6)
   assert.deepEqual(result.draft.actions.sort(),['I will prepare the revised timeline.','We should update the feedback form.'])

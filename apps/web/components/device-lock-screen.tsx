@@ -42,11 +42,14 @@ export function useDeviceProtection(user?:string) {
     refresh:()=>setVersion(value=>value+1)}
 }
 
-export function DeviceLockScreen({device,unavailable,refresh}: {device:string;unavailable:boolean;refresh:()=>void}) {
+export function DeviceLockScreen({device,unavailable,blocked,refresh}: {
+  device:string;unavailable:boolean;blocked?:boolean;refresh:()=>void
+}) {
   const [hasFactor,setHasFactor]=useState<boolean|null>(null)
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
   useEffect(()=>{
+    if (blocked||unavailable) return
     let active=true
     void db!.auth.mfa.listFactors().then(({data,error})=>{
       if (!active) return
@@ -54,7 +57,7 @@ export function DeviceLockScreen({device,unavailable,refresh}: {device:string;un
       else setHasFactor(data.totp.some(factor=>factor.status==='verified'))
     })
     return ()=>{active=false}
-  },[])
+  },[blocked,unavailable])
   async function unlock(event:FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (busy||hasFactor===null) return
@@ -72,9 +75,9 @@ export function DeviceLockScreen({device,unavailable,refresh}: {device:string;un
     finally {setBusy(false);form.reset()}
   }
   return <main className="center-page"><Brand/><section className="panel mfa-panel">
-    <h1>{unavailable?'Check device access':'This registered device is locked'}</h1>
-    <p>{unavailable?'Reconnect to verify the status of this browser’s registered keys.':'Verify your account credentials to unlock this device.'}</p>
-    {!unavailable&&hasFactor!==null&&<form className="release-form" onSubmit={unlock}>
+    <h1>{blocked?'This registered device is blocked':unavailable?'Check device access':'This registered device is locked'}</h1>
+    <p>{blocked?'Continue on another device.':unavailable?'Reconnect to verify the status of this browser’s registered keys.':'Verify your account credentials to unlock this device.'}</p>
+    {!blocked&&!unavailable&&hasFactor!==null&&<form className="release-form" onSubmit={unlock}>
       <label>{hasFactor?'Current authenticator code':'Current password'}<input name="credential" type={hasFactor?'text':'password'}
         autoComplete={hasFactor?'one-time-code':'current-password'} inputMode={hasFactor?'numeric':undefined}
         pattern={hasFactor?'[0-9]{6}':undefined} required/></label>

@@ -34,11 +34,14 @@ const browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BRO
 const registry=page=>page.getByRole('region',{name:'Device trust',exact:true})
 const entries=page=>registry(page).getByRole('article')
 const own=page=>entries(page).filter({hasText:'This registered device'})
-async function openRegistry(page,person) {
+async function signIn(page,person) {
   await page.goto(app+'/#account')
   await page.getByLabel('Email address',{exact:true}).fill(person.email)
   await page.getByLabel('Password',{exact:true}).fill(password)
   await page.locator('button.submit-auth').click()
+}
+async function openRegistry(page,person) {
+  await signIn(page,person)
   await page.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Profile',exact:true}).click()
   await page.getByRole('button',{name:'Devices and sessions',exact:true}).click()
   await registry(page).waitFor()
@@ -196,9 +199,10 @@ try {
   await peerKeys.getByText('A previously verified key set changed. Compare the new keys before trusting it.',{exact:true}).waitFor()
   assert.notEqual(await safetyNumber(peerKeys),compared)
   await peerKeys.getByText('The current contact keys are verified on this browser.',{exact:true}).waitFor({state:'hidden'})
-  await openRegistry(second,owner)
-  await registry(second).getByRole('button',{name:'Register this device',exact:true}).click()
-  await registry(second).getByRole('alert').filter({hasText:'This device is unavailable for registration'}).waitFor()
+  await signIn(second,owner)
+  await second.getByRole('heading',{name:'This registered device is blocked',exact:true}).waitFor()
+  assert.equal(await second.getByRole('navigation',{name:'SecTalk features'}).count(),0)
+  assert.equal((await keyInfo(second,owner.user.id)).id,secondId)
   console.log('Passed native device enrollment, trust, rotation, symmetric safety numbers, QR display, live key-change warning and linked session revocation.')
 } finally {
   await browser.close()

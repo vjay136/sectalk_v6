@@ -9,6 +9,8 @@ insert into auth.mfa_factors(id,user_id,factor_type,status,created_at,updated_at
   ('0788259d-1521-49f2-ad86-6d41d1eca011','0788259d-1521-49f2-ad86-6d41d1eca001','totp','verified',now(),now());
 insert into auth.sessions(id,user_id,aal,factor_id) values
   ('0788259d-1521-49f2-ad86-6d41d1eca021','0788259d-1521-49f2-ad86-6d41d1eca001','aal2','0788259d-1521-49f2-ad86-6d41d1eca011');
+insert into auth.mfa_amr_claims(id,session_id,authentication_method,created_at,updated_at) values
+  (gen_random_uuid(),'0788259d-1521-49f2-ad86-6d41d1eca021','totp',now(),now());
 
 set local role authenticated;
 do $$

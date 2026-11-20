@@ -6,7 +6,7 @@ import { db } from '../lib/data'
 const endpoint = '/api/meetings/captions'
 const languages = [['en','English'],['es','Spanish'],['fr','French'],['de','German'],['hi','Hindi']] as const
 type Line = { sequence: number; speaker: string; line: string }
-type CaptionView = { admitted: boolean; active: boolean; host: boolean; language: string|null;
+type CaptionView = { workspaceEnabled?: boolean; admitted: boolean; active: boolean; host: boolean; language: string|null;
   consented: boolean; sending: boolean; lines: Line[] }
 type Microphone = { track: MediaStreamTrack; sid:string }
 
@@ -111,6 +111,13 @@ export function MeetingCaptions({ meeting, microphone, ended=false }: {
     finally { setBusy(false) }
   }
 
+  if (view?.workspaceEnabled === false) return <section className="release-section" aria-label="Meeting captions">
+    <h3>Meeting captions</h3>
+    <p>Captions and saved transcripts are unavailable under workspace AI settings.</p>
+    {view.consented && <button type="button" className="secondary" disabled={busy}
+      onClick={() => void act('withdraw')}>Withdraw caption consent</button>}
+    {error && <p role="alert">{error}</p>}
+  </section>
   if (!view || (!view.language && (ended || !view.host || !view.admitted))) return null
   const title=!view.language?'Meeting captions':view.active?'Live captions':'Meeting transcript'
   return <section className="release-section" aria-label={title}>

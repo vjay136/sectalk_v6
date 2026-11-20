@@ -151,11 +151,21 @@
 | P10 | Run scoped isolation acceptance as one repeatable QA command | Seven rollback suites and nine Edge workflows verified role, tenant, storage, API, private Realtime and cache boundaries |
 | P10 | Add global domain, file digest and network rules | Real Edge, file bytes and rollback SQL verified fresh operator proof, three rule types, enforceable existing surfaces, release and retained audit |
 | P4 | Add account recovery keys and trusted-device approval | Chromium and SQL verified key issuance, revocation, signed device approval, private alerts, delay and native session and factor reset |
+| P5 | Search previously opened encrypted group messages locally | Four Edge contexts and SQL verified encrypted indexing, metadata authorization, reload, account switching and removal on group revocation |
+| P10 | Review and revoke an individual native session from a verified operator account | Edge and SQL verified scoped risk, reason audit, revoked-device sign-out and retained access on the second device |
+| P5 | Queue, backfill and rebuild managed search indexes | Three Edge sessions, PostgreSQL cron and SQL verified authenticated queue controls, bounded processing, immediate source permission checks and live search |
+| P4 | Enforce native authenticator assurance across data, Storage and Realtime | GoTrue, PostgREST, Storage, Realtime and Edge verified stale assurance denial and genuine TOTP, with existing recovery key and code compatibility |
+| P10 | Manage registered account devices with separate revoke, block and wipe actions | Edge and SQL verified managed status, stale-media denial, signed offline wipe, retained audit and no re-registration using a blocked key |
+| P10 | Add enforceable workspace AI policy, consent controls and transcript retention | Two Edge contexts, LiveKit, the local speech worker and SQL verified role scope, valid lease epochs, managed summary controls, immediate retention and scheduled purge |
+| P4 | Add native WebAuthn passkeys and a passwordless-only setting | Chromium virtual authenticator, GoTrue and SQL verified scoped credentials, native sign-in, challenge replay denial, password-mode enforcement and restoration |
+| P10 | Build separately approved, integrity-checked workspace compliance exports | Edge, SQL and Storage verified exact selected evidence, distinct owner approval, per-record and bundle hashes, live scope rechecks and access audit |
+| P10 | Add an operator risk console with live fresh authenticator requests | Edge, GoTrue and SQL verified risky location filtering, targeted step-up, stale AAL2 denial, verified re-entry and audited termination |
+| P10 | Add a versioned impersonation rule registry with shadow evaluation | Native Edge, SQL and an offline benchmark verified generation rules, aggregate synthetic disagreement, live promotion and rollback |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 167 verified features and 72 pending. The next checkpoint is due at 177 verified features.
+Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 177 verified features and 62 pending. The next checkpoint is due at 187 verified features.
 
 ## Remaining work by dependency
 
