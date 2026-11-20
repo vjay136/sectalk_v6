@@ -1,6 +1,6 @@
 {
   "name": "@sectalk/web",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -9,7 +9,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@livekit/components-react": "2.9.25",
+    "@livekit/components-styles": "1.2.0",
     "@supabase/supabase-js": "2.119.2",
+    "livekit-client": "2.24.1",
+    "livekit-server-sdk": "2.20.1",
     "lucide-react": "1.76.0",
     "next": "16.4.6",
     "react": "^19.2.0",

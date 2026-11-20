@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
-  ArrowLeft, Ban, Bell, BellOff, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Inbox as InboxIcon, LogOut, ShieldAlert,
+  ArrowLeft, Ban, Bell, BellOff, CalendarDays, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Inbox as InboxIcon, LockKeyhole, LogOut, ShieldAlert,
   MessageCircle, Phone, Pin, Plus, Search, Send, Shield, ShieldCheck, UserRound, Users, Video, X,
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
@@ -13,6 +13,10 @@ import { Brand } from './entry'
 import { ReportDialog, Safety } from './safety'
 import { Workspaces } from './workspaces'
 import { Billing } from './billing'
+import { Meetings } from './meetings'
+import { Vault } from './vault'
+import { GlobalSearch, Notifications } from './discover'
+import { SectionTabs } from './section-tabs'
 
 export function Avatar({ name, tint = 'green' }: { name: string; tint?: string }) {
   const initials = name.trim().split(/\s+/).slice(0, 2).map(word => [...word][0]).join('').toUpperCase()
@@ -20,6 +24,7 @@ export function Avatar({ name, tint = 'green' }: { name: string; tint?: string }
 }
 
 type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id: string | null; latest_at: string | null }
+type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'; expires_at:string }
 
 export function Inbox({ user }: { user: string }) {
   const [profile, setProfile] = useState<Profile | null | undefined>()
@@ -28,9 +33,10 @@ export function Inbox({ user }: { user: string }) {
   const [blocks, setBlocks] = useState<string[]>([])
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing'>(() =>
+  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications'>(() =>
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests'>('chats')
+  const [profileTab, setProfileTab] = useState<'account' | 'availability'>('account')
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
   const [newContact, setNewContact] = useState(false)
@@ -39,6 +45,8 @@ export function Inbox({ user }: { user: string }) {
   const [online, setOnline] = useState(false)
   const [broadcastOnline, setBroadcastOnline] = useState(false)
   const [working, setWorking] = useState(false)
+  const [requestedMeeting,setRequestedMeeting] = useState<string|null>(null)
+  const [presence,setPresence] = useState<Record<string,Presence>>({})
   const [inboxStatus, setInboxStatus] = useState<Record<string, InboxStatus>>({})
   const activeChat = useRef<string | null>(null)
   const announced = useRef(new Map<string, string>())
@@ -79,9 +87,13 @@ export function Inbox({ user }: { user: string }) {
     setBlocks(muted.data.map(row => row.target))
     setStaff(role.data)
     const ids = [...new Set(list.map(row => peerId(row, user)))]
-    if (!ids.length) return
-    const { data } = await db!.from('st_profiles').select('*').in('id', ids)
-    if (version === readVersion.current && data) setProfiles(Object.fromEntries(data.map(person => [person.id, person])))
+    const [people,state] = await Promise.all([
+      ids.length ? db!.from('st_profiles').select('*').in('id', ids) : Promise.resolve({data:[]}),
+      db!.from('st_v3_presence').select('user_id,state,expires_at').in('user_id',[user,...ids]),
+    ])
+    if (version !== readVersion.current) return
+    if (people.data) setProfiles(Object.fromEntries(people.data.map(person => [person.id, person])))
+    if (state.data) setPresence(Object.fromEntries((state.data as Presence[]).map(row=>[row.user_id,row])))
   }, [user])
 
   useEffect(() => {
@@ -135,8 +147,29 @@ export function Inbox({ user }: { user: string }) {
     }
   }, [user, refresh, hints, refreshInboxStatus])
 
+  useEffect(() => {
+    function shortcut(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='k' && !document.querySelector('dialog[open]')) {
+        event.preventDefault()
+        setTab('search')
+      }
+    }
+    window.addEventListener('keydown',shortcut)
+    return () => window.removeEventListener('keydown',shortcut)
+  },[])
+  useEffect(() => {
+    if (!profile) return
+    const ping=()=>{if(document.visibilityState==='visible') void db!.rpc('st_v3_ping')}
+    ping()
+    const timer=window.setInterval(ping,45000)
+    const disconnect=onReconnect(ping)
+    return ()=>{disconnect();window.clearInterval(timer)}
+  },[profile?.id])
+
   const chat = chats.find(item => item.id === selected)
   const peer = chat ? profiles[peerId(chat, user)] : undefined
+  const peerPresence = peer ? presence[peer.id] : undefined
+  const peerState = peerPresence && Date.parse(peerPresence.expires_at)>Date.now() && peerPresence.state!=='offline' ? peerPresence.state : null
   const blocked = chat ? blocks.includes(peerId(chat, user)) : false
   const requests = chats.filter(item => item.status === 'pending' && item.requester !== user && !blocks.includes(peerId(item, user)))
   const visible = chats.filter(item => (mode === 'requests' ? item.status === 'pending' : item.status === 'accepted') &&
@@ -148,6 +181,10 @@ export function Inbox({ user }: { user: string }) {
     setSelected(id)
     setBlockCheck(false)
     setTab('inbox')
+  }
+  function openMeeting(id:string) {
+    setRequestedMeeting(id)
+    setTab('meetings')
   }
 
   async function run(name: string, input: Record<string, unknown>, success: () => void = () => {}) {
@@ -171,11 +208,15 @@ export function Inbox({ user }: { user: string }) {
   if (!profile) return <main className="center-page"><Brand /><ProfileForm profile={null} onSave={refresh} /><button className="text-button" onClick={() => void db!.auth.signOut({ scope: 'local' })}>Sign out</button></main>
 
   return <main className={'workspace ' + (selected && tab === 'inbox' ? 'thread-open' : '') + (tab !== 'inbox' ? ' full-panel' : '')}>
-    <nav className="rail" aria-label="Workspace">
+    <nav className="rail" aria-label="SecTalk features">
       <Brand compact />
       <button className={tab === 'inbox' ? 'active' : ''} aria-current={tab === 'inbox' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>Inbox</span></button>
       <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>Calls</span></button>
-      <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>Spaces</span></button>
+      <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>Workspaces</span></button>
+      <button className={tab==='meetings'?'active':''} aria-current={tab==='meetings'?'page':undefined} onClick={()=>{setRequestedMeeting(null);setTab('meetings')}}><CalendarDays size={19}/><span>Meetings</span></button>
+      <button className={tab==='vault'?'active':''} aria-current={tab==='vault'?'page':undefined} onClick={()=>setTab('vault')}><LockKeyhole size={19}/><span>Vault</span></button>
+      <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} title="Search (Ctrl or Command + K)" onClick={()=>setTab('search')}><Search size={19}/><span>Search</span></button>
+      <button className={tab==='notifications'?'active':''} aria-current={tab==='notifications'?'page':undefined} onClick={()=>setTab('notifications')}><Bell size={19}/><span>Notifications</span></button>
       <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>Safety</span></button>
       <div className="rail-end"><button className={tab === 'billing' ? 'active' : ''} aria-current={tab === 'billing' ? 'page' : undefined} onClick={() => setTab('billing')}><CreditCard size={19} /><span>Billing</span></button><button className={tab === 'profile' ? 'active' : ''} aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}><UserRound size={20} /><span>Profile</span></button>
         <button onClick={async () => { await call.end(); void db!.auth.signOut({ scope: 'local' }) }}><LogOut size={19} /><span>Sign out</span></button></div>
@@ -185,8 +226,8 @@ export function Inbox({ user }: { user: string }) {
         <div className="input-icon search"><Search size={17} /><input aria-label="Search contacts" placeholder="Search contacts" value={search} onChange={e => setSearch(e.target.value)} /></div>
       </header>
       <div className="tabs" aria-label="Conversation filters">
-        <button className={mode === 'chats' ? 'active' : ''} onClick={() => setMode('chats')}>Chats</button>
-        <button className={mode === 'requests' ? 'active' : ''} onClick={() => setMode('requests')}>Requests {requests.length > 0 && <span>{requests.length}</span>}</button>
+        <button aria-pressed={mode === 'chats'} className={mode === 'chats' ? 'active' : ''} onClick={() => setMode('chats')}>Chats</button>
+        <button aria-pressed={mode === 'requests'} className={mode === 'requests' ? 'active' : ''} onClick={() => setMode('requests')}>Requests {requests.length > 0 && <span>{requests.length}</span>}</button>
       </div>
       <div className="chat-list">
         {visible.length === 0 && <div className="list-empty"><InboxIcon size={22} /><strong>{search ? 'No matching contacts' : mode === 'requests' ? 'No pending requests' : 'No conversations yet'}</strong><p>{!search && mode === 'chats' ? 'Send a request to someone you know.' : ''}</p></div>}
@@ -203,17 +244,28 @@ export function Inbox({ user }: { user: string }) {
       <div className="list-footer"><Avatar name={profile.name} /><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
     </aside>
     {tab === 'profile' ? <section className="content-page"><h1>Profile</h1>
-      <div className="profile-handle"><code>@{profile.handle}</code><button className="secondary" onClick={async () => {
+      <SectionTabs label="Profile sections" value={profileTab} onChange={setProfileTab} options={ [['account', 'Account'], ['availability', 'Availability']] }/>
+      {profileTab === 'account' ? <><div className="profile-handle"><code>@{profile.handle}</code><button className="secondary" onClick={async () => {
         try { await navigator.clipboard.writeText(profile.handle); setNotice('Handle copied.') }
         catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
-      }}><Copy size={15} /> Copy handle</button></div><ProfileForm profile={profile} onSave={refresh} /></section> :
+      }}><Copy size={15} /> Copy handle</button></div>
+      <ProfileForm profile={profile} onSave={refresh} /></> :
+      <div className="panel release-panel"><label>Availability for approved contacts
+        <select value={presence[user]?.state||'offline'} disabled={working} onChange={event=>void run('st_v3_set_presence',{p_state:event.target.value})}>
+          <option value="offline">Hidden</option><option value="online">Online</option><option value="away">Away</option><option value="busy">Busy</option>
+        </select></label><p>Availability expires while you are away from SecTalk.</p></div>}
+      </section> :
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} /> :
       tab === 'workspaces' ? <Workspaces user={user} /> :
       tab === 'billing' ? <Billing user={user} /> :
+      tab === 'meetings' ? <Meetings key={requestedMeeting||'all'} requested={requestedMeeting} user={user}/> :
+      tab === 'vault' ? <Vault user={user}/> :
+      tab === 'search' ? <GlobalSearch openChat={select} openMeeting={openMeeting}/> :
+      tab === 'notifications' ? <Notifications user={user} openMeeting={openMeeting}/> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
         <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} />
-          <div><h2>{peer?.name || 'Contact'}</h2><p>{blocked ? 'Blocked' : chat.status === 'accepted' ? 'Accepted contact' : 'Contact request'}</p></div>
+          <div><h2>{peer?.name || 'Contact'}</h2><p>{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : chat.status === 'accepted' ? 'Accepted contact' : 'Contact request'}</p></div>
           <div className="thread-actions">
             {chat.status === 'accepted' && !blocked && <>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start audio call" title="Start audio call" onClick={() => void call.start(chat.id, false)}><Phone size={18} /></button>
@@ -252,6 +304,7 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
   state: ReturnType<typeof useCalling>; openChat: (id: string) => void; openInbox: () => void
 }) {
   const [rows, setRows] = useState<Call[] | null>(null)
+  const [filter, setFilter] = useState<'all' | 'audio' | 'video'>('all')
   const [error, setError] = useState(false)
   const reload = useCallback(async () => {
     const { data, error } = await db!.from('st_calls').select('*')
@@ -260,15 +313,17 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
     if (data) setRows(data as Call[])
   }, [user])
   useEffect(() => { void reload() }, [reload, state.historyVersion])
+  const visibleCalls = rows?.filter(row => filter === 'all' || row.video === (filter === 'video'))
 
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Phone size={22} /></div><div><h1>Calls</h1><p>Start a call from an approved conversation or return a recent call.</p></div></header>
+    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['audio', 'Audio'], ['video', 'Video']] }/>
     <div className="panel">
       <div className="panel-header"><h2>Recent calls</h2><button className="secondary" onClick={openInbox}>Open inbox <ChevronRight size={16} /></button></div>
       {error && <div className="list-empty"><p role="alert">Could not load call history.</p><button className="secondary" onClick={reload}>Try again</button></div>}
       {!error && rows === null && <div className="list-empty" role="status">Loading calls…</div>}
-      {!error && rows?.length === 0 && <div className="list-empty"><Phone size={22} /><strong>No calls yet</strong><p>Open a chat and choose Audio or Video.</p></div>}
-      {rows?.map(row => {
+      {!error && visibleCalls?.length === 0 && <div className="list-empty"><Phone size={22} /><strong>{filter === 'all' ? 'No calls yet' : 'No ' + filter + ' calls yet'}</strong><p>Open a chat and choose Audio or Video.</p></div>}
+      {visibleCalls?.map(row => {
         const incoming = row.callee === user
         const peer = incoming ? row.caller : row.callee
         const name = profiles[peer]?.name || 'Contact'

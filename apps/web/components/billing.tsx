@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { ArrowRight, CreditCard } from 'lucide-react'
 import { type Cadence, type PaidPlan, type Plan, isPaidPlan, plans } from '../lib/billing'
 import { db } from '../lib/data'
+import { SectionTabs } from './section-tabs'
 
 type Option = { plan: PaidPlan; monthly: boolean; annual: boolean }
 type Subscription = { plan: Plan; status: string; period_end: string | null; cancel_at_period_end: boolean; customer_id: string | null }
@@ -16,6 +17,7 @@ export function Billing({ user }: { user: string }) {
   const [catalog, setCatalog] = useState<Option[] | null>(null)
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [cadence, setCadence] = useState<Cadence>('monthly')
+  const [view, setView] = useState<'subscription'|'plans'>('subscription')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -68,15 +70,16 @@ export function Billing({ user }: { user: string }) {
   ) ? subscription.plan : 'free'
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><CreditCard size={22}/></div><div><h1>Billing</h1><p>Manage your SecTalk subscription and workspace limits.</p></div></header>
-    <div className="panel release-panel billing-summary">
+    <SectionTabs label="Billing sections" value={view} onChange={setView} options={ [['subscription','My subscription'], ['plans','Compare plans']] }/>
+    {view==='subscription'&&<div className="panel release-panel billing-summary">
       <div><span className="pill">Current plan</span><h2>{plans.find(plan => plan.id === currentPlan)?.name || 'Free'}</h2>
         {status && <p>{status}{subscription?.cancel_at_period_end ? ' · Ends at the end of this billing period' : ''}</p>}
         {subscription?.period_end && <p>Period ends <time dateTime={subscription.period_end}>{new Date(subscription.period_end).toLocaleDateString()}</time></p>}</div>
       {subscription?.customer_id && <button className="secondary" disabled={busy} onClick={() => void start('portal')}>Manage billing <ArrowRight size={15}/></button>}
-    </div>
+    </div>}
     {notice && <p role="status" className="release-info">{notice}</p>}
     {error && <p role="alert" className="error">{error}</p>}
-    {catalog && !catalog.some(option => option.monthly || option.annual) && <p className="release-info">Paid checkout is awaiting payment-provider configuration.</p>}
+    {view==='plans'&&<>{catalog && !catalog.some(option => option.monthly || option.annual) && <p className="release-info">Paid checkout is awaiting payment-provider configuration.</p>}
     <div className="tabs release-tabs billing-interval" aria-label="Billing interval">
       <button aria-pressed={cadence === 'monthly'} className={cadence === 'monthly' ? 'active' : ''} onClick={() => setCadence('monthly')}>Monthly</button>
       <button aria-pressed={cadence === 'annual'} className={cadence === 'annual' ? 'active' : ''} onClick={() => setCadence('annual')}>Annual</button>
@@ -92,6 +95,6 @@ export function Billing({ user }: { user: string }) {
           {plan.id === 'enterprise' && <span className="pill">Contract billing</span>}
         </article>
       })}
-    </div>
+    </div></>}
   </section>
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Flag, Shield, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { categories, db, formatError, type Message } from '../lib/data'
 import { Dialog } from './inbox'
+import { SectionTabs } from './section-tabs'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
@@ -58,11 +59,12 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
     else { setError(''); setReports(data as Report[]) }
   }, [])
   useEffect(() => { void load() }, [load, view])
+  const staffAccess=staff==='mfa'||staff==='verified'
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
-    {staff !== 'none' && <div className="tabs content-tabs"><button className={view === 'mine' ? 'active' : ''} onClick={() => setView('mine')}>My reports</button><button className={view === 'queue' ? 'active' : ''} onClick={() => setView('queue')}>Staff console</button></div>}
-    {view === 'queue' && staff !== 'none' ? (staff === 'verified' ? <QueuePanel /> : <StaffMfa refresh={refresh}/>) :
+    {staffAccess&&<SectionTabs label="Safety center sections" value={view} onChange={setView} options={ [['mine','My reports'],['queue','Staff console']] }/>}
+    {view==='queue'&&staffAccess ? (staff === 'verified' ? <QueuePanel /> : <StaffMfa refresh={refresh}/>) :
       <div className="panel"><div className="panel-header"><h2>My reports</h2><button className="secondary" onClick={load}>Refresh</button></div>
         {error && <p role="alert" className="error">{error}</p>}
         {!error && !reports.length && <div className="list-empty"><ShieldCheck size={24}/><strong>No reports yet</strong><p>Use the flag in a conversation to submit a report.</p></div>}

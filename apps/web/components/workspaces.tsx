@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { CalendarDays, Hash, ListChecks, MessageCircle, Plus, Send, Users } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, type Profile } from '../lib/data'
+import { SectionTabs } from './section-tabs'
 
 type Space = { id: string; name: string; owner: string }
 type Invite = { id: string; workspace_name: string }
@@ -111,7 +112,7 @@ export function Workspaces({ user }: { user: string }) {
 }
 
 function WorkspaceArea({ space, user }: { space: Space; user: string }) {
-  const [tab, setTab] = useState<'channels' | 'board' | 'people'>('channels')
+  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'activity'>('channels')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
   const [members, setMembers] = useState<Member[]>([])
@@ -149,13 +150,12 @@ function WorkspaceArea({ space, user }: { space: Space; user: string }) {
   }, [load])
 
   return <div className="panel release-panel">
-    <div className="tabs release-tabs" aria-label="Workspace sections">
-      <button className={tab === 'channels' ? 'active' : ''} onClick={() => setTab('channels')}><Hash size={15}/> Channels</button>
-      <button className={tab === 'board' ? 'active' : ''} onClick={() => setTab('board')}><ListChecks size={15}/> Board</button>
-      <button className={tab === 'people' ? 'active' : ''} onClick={() => setTab('people')}><Users size={15}/> People</button>
-    </div>
+    <SectionTabs label="Workspace sections" value={tab==='activity'&&!manager?'channels':tab} onChange={setTab} options={[
+      ['channels', <><Hash size={15}/> Channels</>], ['board', <><ListChecks size={15}/> Board</>],
+      ['people', <><Users size={15}/> People</>], ...(manager ? [['activity','Activity'] as const] : []),
+    ]}/>
     {error && <p role="alert" className="error">{error}</p>}
-    {tab === 'channels' && <div className="release-section">
+    {(tab === 'channels'||(tab==='activity'&&!manager)) && <div className="release-section">
       <div className="release-flex">
         <label>Channel<select value={channelId} onChange={event => setChannelId(event.target.value)}>{channels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</select></label>
         {manager && <details className="release-create"><summary>New channel</summary><QuickForm label="New channel" button="Create channel" send={async fields => {
@@ -180,8 +180,9 @@ function WorkspaceArea({ space, user }: { space: Space; user: string }) {
           await load()
         }}><label>Change access<select name="role" defaultValue={member.role}><option value="member">Member</option><option value="admin">Admin</option><option value="remove">Remove access</option></select></label></QuickForm>}
       </div>)}
-      {manager && <><h2>Recent workspace activity</h2>{audit.length === 0 && <p>No activity yet.</p>}
-        {audit.map(event => <div className="release-row" key={event.id}><strong>{event.event.replace('.', ' ')}</strong><span>{profiles[event.actor]?.name || 'Workspace member'}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></div>)}</>}
+    </div>}
+    {tab==='activity'&&manager&&<div className="release-section"><h2>Recent workspace activity</h2>{audit.length===0&&<p>No activity yet.</p>}
+      {audit.map(event => <div className="release-row" key={event.id}><strong>{event.event.replace('.', ' ')}</strong><span>{profiles[event.actor]?.name || 'Workspace member'}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></div>)}
     </div>}
   </div>
 }

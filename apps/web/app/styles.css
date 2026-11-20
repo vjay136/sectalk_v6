@@ -332,6 +332,10 @@ body { background: var(--bg); }
 .thread-pin > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-typing { padding-inline: 22px; font-size: .78rem; }
 .reply-preview { margin: 0 0 3px; padding: 5px 8px; border-left: 2px solid var(--accent); font-size: .76rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meeting-agenda { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 9px; }
+.meeting-media { height: min(58vh,540px); min-height: 270px; margin-top: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; }
+.rail { overflow-y: auto; scrollbar-width: thin; }
+.rail > button, .rail-end > button { flex-shrink: 0; min-height: 46px; }
 .reaction-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .reaction-row button[aria-pressed=true] { background: #284e71; }
 .message-menu { display: inline-block; }
@@ -339,6 +343,8 @@ body { background: var(--bg); }
 .message-menu-panel { display: grid; justify-items: start; border: 1px solid var(--line); background: #101d30; padding: 5px 8px; border-radius: 8px; }
 .full-panel .inbox-list { display: none; }
 .full-panel .content-page { grid-column: 2 / -1; }
+.section-tabs { padding-inline: 0; margin-bottom: 15px; }
+.section-tabs button:focus-visible, .rail button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (max-width: 700px) {
   .full-panel .content-page { grid-column: 1; }
   .workspace .rail { justify-content: flex-start; gap: 0; overflow-x: auto; }
@@ -358,11 +364,12 @@ body { background: var(--bg); }
   .benefits > div + div { border-left: 0; border-top: 1px solid var(--line); }
 }
 @media (max-width: 700px) {
-  .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) 62px; }
+  .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) auto; }
   .rail .compact-brand { display: none; }
-  .rail button { width: clamp(49px, 17vw, 68px); height: 51px; }
-  .rail .rail-end { gap: 8px; }
-  .toast { bottom: 69px; }
-  .call-panel { bottom: 69px; }
+  .workspace .rail { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); padding-bottom: max(4px, env(safe-area-inset-bottom)); }
+  .rail .rail-end { display: contents; }
+  .workspace .rail button { width: 100%; min-width: 0; height: 46px; padding: 0 1px; }
+  .rail button span { font-size: clamp(8px, 2.15vw, 11px); }
+  .toast, .call-panel { bottom: calc(101px + env(safe-area-inset-bottom)); }
   .thread-actions { gap: 2px; }
 }

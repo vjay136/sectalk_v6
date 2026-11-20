@@ -8,7 +8,7 @@ Requires Node.js 22 or 24 and npm.
 
 1. Run `npm ci`.
 2. Copy [the environment template](apps/web/.env.example) to `apps/web/.env.local`. Set the project URL and publishable key.
-3. Apply [the base schema](supabase/migrations/202611200001_sectalk.sql) and [private Realtime notifications](supabase/migrations/202611200002_sectalk_private_live_notifications.sql) in that order using the Supabase SQL Editor or your migration workflow.
+3. Apply the SQL files in [supabase/migrations](supabase/migrations/) in filename order using the Supabase SQL Editor or your migration workflow.
 4. In Supabase Auth, enable email signup and **Confirm email**, configure custom SMTP, and set Site URL to the deployment origin without a trailing slash. Under **Email Templates**, paste [confirmation.html](supabase/templates/confirmation.html) into **Confirm signup** and [recovery.html](supabase/templates/recovery.html) into **Reset password**. The signup link opens `/auth/confirm` for email verification and displays the sign-in URL. The reset email provides a numeric code.
 5. Run `npm run dev` and visit `http://localhost:3000`.
 
@@ -41,4 +41,4 @@ Calls use Supabase for signaling and WebRTC for media. With no TURN configured, 
 - `/api/health` checks environment presence. Use the SQL verification script in a database SQL Editor to test consent, permissions and moderation. It rolls back its fixtures.
 - Use two different accounts in isolated browser profiles to verify signup links, password login, recovery codes, request acceptance, live messages, incoming call notifications, mute and hang-up, two-way video, reconnection, block enforcement and report submission. Test on separate networks with relay enabled. Open the staff console with an independent staff account to verify role and MFA gates.
 
-See [features.md](features.md) for the architecture and delivery scope.
+See [MASTER-PROMPT.md](MASTER-PROMPT.md) for the consolidated product specification and [RELEASE-v3.md](RELEASE-v3.md) for the v3 release scope.
