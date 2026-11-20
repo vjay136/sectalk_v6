@@ -31,6 +31,7 @@ import { downloadChatFile, extensions, sendChatFile, supportedFile, type ChatFil
 import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
 import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
+import { AccountMfa } from './account-mfa'
 import { QuietHoursSettings, useEffectiveAvailability, useQuietIncoming } from './quiet-hours'
 
 const ChatEmoji=dynamic(()=>import('./chat-emoji'))
@@ -65,7 +66,7 @@ export function Inbox({ user }: { user: string }) {
   const [paletteSearch,setPaletteSearch]=useState({query:'',sequence:0})
   const [chatTasks,setChatTasks]=useState(false)
   const [sourceTask,setSourceTask]=useState<string|null>(null)
-  const [profileTab, setProfileTab] = useState<'account' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help'>('account')
+  const [profileTab, setProfileTab] = useState<'account' | 'security' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help'>('account')
   const [managedBlock,setManagedBlock]=useState<Chat|null>(null)
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
@@ -402,12 +403,13 @@ export function Inbox({ user }: { user: string }) {
       <div className="list-footer"><Avatar name={profile.name} photo={myExtras.photo}/><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
     </aside>
     {tab === 'profile' ? <section className="content-page"><h1>{t('profile')}</h1>
-      <SectionTabs label={t('profileSections')} value={profileTab} onChange={setProfileTab} options={ [['account',t('account')],['availability',t('availability')],['discovery',t('discovery')],['activity',t('activityReports')],['blocked',t('blockedContacts')],['help',t('help')]] }/>
+      <SectionTabs label={t('profileSections')} value={profileTab} onChange={setProfileTab} options={ [['account',t('account')],['security',t('accountSecurity')],['availability',t('availability')],['discovery',t('discovery')],['activity',t('activityReports')],['blocked',t('blockedContacts')],['help',t('help')]] }/>
       {profileTab === 'account' ? <><div className="profile-handle"><code>@{profile.handle}</code><button className="secondary" onClick={async () => {
         try { await navigator.clipboard.writeText(profile.handle); setNotice('Handle copied.') }
         catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
       }}><Copy size={15} /> Copy handle</button></div>
       <ProfileForm profile={profile} onSave={refresh} /><ProfileAppearance user={user} profile={myExtras}/></> :
+      profileTab==='security'?<AccountMfa/>:
       profileTab==='discovery'?<DiscoverySettings user={user}/>:
       profileTab==='activity'?<ProfileActivity openReports={()=>setTab('safety')}/>:
       profileTab==='help'?<InProductHelp openFriends={()=>setTab('friends')} openSafety={()=>setTab('safety')}/>:
@@ -607,8 +609,9 @@ function ProfileForm({ profile, onSave }: { profile: Profile | null; onSave: () 
 
 type Reaction = { message_id: string; user_id: string; reaction: string }
 type ChatActivity = {
-  muted:boolean;read_sequence:number|null;typing_until:string|null
+  muted:boolean;read_sequence:number|null;read_since_sequence:number|null;typing_until:string|null
   share_own_typing:boolean
+  share_own_read_receipts:boolean
   share_own_edit_history:boolean;share_peer_edit_history:boolean
 }
 type EditHistory={message:string;own:boolean;revisions:{id:number;body:string;created_at:string}[]}
@@ -660,6 +663,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const [clock, setClock] = useState(0)
   const typingPulse = useRef({ sentAt: 0, stopped: true })
   const [typingPolicyBusy, setTypingPolicyBusy] = useState(false)
+  const [receiptPolicyBusy, setReceiptPolicyBusy] = useState(false)
   const readLast = useRef('')
   const [older, setOlder] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -938,7 +942,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     setOutbox(previous=>previous.some(entry=>entry.id===item.id)
       ?previous.map(entry=>entry.id===item.id?queued:entry):[...previous,queued])
     try{
-      await sendChatFile(chat.id,item.id,item.file,item.body)
+      const {duplicate}=await sendChatFile(chat.id,item.id,item.file,item.body)
+      if(duplicate)inform('Attachment sent. You previously shared the same file contents in this chat.')
       setOutbox(previous=>previous.map(entry=>entry.id===item.id?{...entry,state:'sent'}:entry))
       void load()
     }catch{
@@ -1027,6 +1032,16 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         aria-pressed={Boolean(activity?.share_own_typing)} onClick={()=>void changeTypingPolicy()}>
         Share my typing
       </button>
+      <button type="button" className="secondary" disabled={!activity||receiptPolicyBusy}
+        aria-pressed={Boolean(activity?.share_own_read_receipts)}
+        title="Applies to your direct chats and eligible rooms"
+        onClick={async()=>{
+          setReceiptPolicyBusy(true)
+          try { await update('st_v6_set_read_receipt_policy',{p_enabled:!activity?.share_own_read_receipts}) }
+          finally { setReceiptPolicyBusy(false) }
+        }}>
+        Share my read receipts
+      </button>
     </div>
     {quietSettings && !blocked && <Dialog title="Chat quiet hours" close={()=>{setQuietSettings(false);void loadActivity()}}>
       <QuietHoursSettings chat={chat.id} hints={hints}/>
@@ -1067,6 +1082,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         const quote=message.reply_to&&!hidden.includes(message.reply_to)&&!revoked.current.has(message.reply_to)
           ? quotes[message.reply_to]:null
         const read=own&&typeof activity?.read_sequence==='number'&&message.sequence<=activity.read_sequence
+          &&message.sequence>=(activity.read_since_sequence??0)
         const selectedReactions = reactions.filter(reaction => reaction.message_id === message.id)
         return <div className={'message ' + (own ? 'own' : '')} key={message.id} data-sequence={message.sequence}>
           <div className="message-reaction-header"><strong className="message-sender">{own?selfName+' (you)':peerName}</strong>

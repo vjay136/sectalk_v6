@@ -7,6 +7,7 @@ Run `npm run verify:registry -- --release` to check feature completion. V6 requi
 | External setup | What the target environment requires |
 | --- | --- |
 | Auth email | Grant access to the target Supabase Auth settings, add the exact callback, and configure a verified transactional sender. Apply the templates and test delivery to a real inbox. |
+| Authenticator recovery | Verify atomic reset and session revocation against the target Supabase Auth schema in a separate project. Add assurance enforcement for direct Data API, Realtime and Storage access before closing AUTH-03. |
 | Calls | Configure TURN over UDP and TLS and provide a dedicated test LiveKit project. Verify direct, relay-only, reconnect, and group-call paths across real networks. |
 | Billing | Configure Stripe test prices, signing secrets and webhook delivery. For Razorpay, provide a test merchant account and webhook signing secret after the adapter is built. |
 | Realtime and jobs | Provide isolated Ably, Redis and queue credentials for the adapters and failure-path verification. |

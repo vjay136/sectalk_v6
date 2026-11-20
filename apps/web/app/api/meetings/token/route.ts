@@ -1,5 +1,6 @@
 import { AccessToken } from 'livekit-server-sdk'
 import { createClient } from '@supabase/supabase-js'
+import { logProviderFailure } from '../../../../lib/provider-log.mjs'
 
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control': 'no-store' }
@@ -28,11 +29,19 @@ export async function POST(request: Request) {
   const { data, error } = await client.auth.getUser(jwt)
   if (error || !data.user) return Response.json({ error: 'Sign in before joining.' }, { status: 401, headers })
   const access = await client.rpc('st_v3_media_access', { p_meeting: meeting })
-  if (access.error) return Response.json({ error: 'Meeting access could not be verified.' }, { status: 503, headers })
+  if (access.error) {
+    logProviderFailure('meeting_access','unavailable')
+    return Response.json({ error: 'Meeting access could not be verified.' }, { status: 503, headers })
+  }
   if (access.data !== true) return Response.json({ error: 'The host must admit you while the meeting is live.' }, { status: 403, headers })
 
   const { data: profile } = await client.from('st_profiles').select('name').eq('id', data.user.id).maybeSingle()
-  const token = new AccessToken(apiKey, secret, { identity: data.user.id, name: profile?.name || 'SecTalk member', ttl: 120 })
-  token.addGrant({ roomJoin: true, room: 'sectalk-v3-' + meeting, canPublish: true, canSubscribe: true, canPublishData: false })
-  return Response.json({ url, token: await token.toJwt() }, { headers })
+  try {
+    const token = new AccessToken(apiKey, secret, { identity: data.user.id, name: profile?.name || 'SecTalk member', ttl: 120 })
+    token.addGrant({ roomJoin: true, room: 'sectalk-v3-' + meeting, canPublish: true, canSubscribe: true, canPublishData: false })
+    return Response.json({ url, token: await token.toJwt() }, { headers })
+  } catch {
+    logProviderFailure('meeting_signing','signing_failed')
+    return Response.json({ error: 'Meeting media is temporarily unavailable.' }, { status: 503, headers })
+  }
 }

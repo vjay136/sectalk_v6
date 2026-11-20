@@ -7,6 +7,7 @@ import { ForwardMessageDialog } from './forward-message'
 import { ScopedTasks } from './scoped-tasks'
 import { QuietHoursSettings } from './quiet-hours'
 import { RoomPostReactions, RoomReactionSettings, useRoomReactionCounts, useWorkspaceReactionPolicy, type RoomReactionPolicy } from './room-reactions'
+import { useReadReceiptSettings, useRoomReadReceipts } from './read-receipts'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
@@ -37,6 +38,7 @@ async function call(name:string,input:Record<string,unknown>) {
 
 export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,allowedRoomKinds,initialRoom}:DirectoryProps) {
   const reactionPolicy=useWorkspaceReactionPolicy(space)
+  const workspaceReceipts=useReadReceiptSettings('workspace',manager?space:null)
   const [rooms,setRooms]=useState<Room[]|null>(null)
   const [selected,setSelected]=useState(initialRoom||'')
   const [selectedFilter,setFilter]=useState<'active'|'archived'|null>(null)
@@ -85,6 +87,15 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
     {!rooms&&!error&&<p role="status">Loading rooms…</p>}
     {reactionPolicy.error&&<p role="alert" className="error">{reactionPolicy.error}</p>}
     {manager&&reactionPolicy.policy&&<RoomReactionSettings key={space} workspace={space} policy={reactionPolicy.policy} onSaved={reactionPolicy.refresh}/>}
+    {manager&&workspaceReceipts.settings&&<details>
+      <summary>Workspace read receipts</summary>
+      <button className="secondary" type="button" disabled={workspaceReceipts.saving}
+        aria-pressed={workspaceReceipts.settings.workspace_enabled}
+        onClick={()=>void workspaceReceipts.save('workspace',!workspaceReceipts.settings?.workspace_enabled)}>
+        Allow read receipts in workspace rooms
+      </button>
+      {workspaceReceipts.error&&<p role="alert" className="error">{workspaceReceipts.error}</p>}
+    </details>}
     {manager&&<details open={creating} onToggle={event=>setCreating(event.currentTarget.open)}><summary>Create a room</summary>
       <form className="release-form" onSubmit={event=>{
         event.preventDefault()
@@ -264,6 +275,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const invite=entries.some(entry=>entry.kind==='invite'&&entry.user_id===user)
   const name=(id:string|null)=>id?profiles[id]?.name||'Workspace member':''
   const canManage=manager||staff
+  const receiptPolicy=useReadReceiptSettings('room',role||manager?room.id:null)
+  const receiptFeed=useRef<HTMLElement>(null)
   const actualView=manager&&!role&&!['people','settings','audit'].includes(view)?'settings'
     :(!canManage&&(view==='settings'||view==='audit'))||(!manager&&role==='guest'&&view==='people')?'messages':view
   const showTyping=Boolean(role&&!room.archived&&(actualView==='messages'||(actualView==='threads'&&thread)))
@@ -327,6 +340,12 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const parent=threadRoot||posts.find(post=>post.id===thread)
   const visiblePosts=actualView==='messages'?posts:actualView==='threads'?(parent?[parent,...replies]:replies):actualView==='pins'?pins:[]
   const reactions=useRoomReactionCounts(role?room.id:null,visiblePosts.filter(post=>!post.removed_at).map(post=>post.id))
+  const receiptPosts=visiblePosts.filter(post=>!post.removed_at)
+  const roomReceiptsEnabled=Boolean(receiptPolicy.settings?.workspace_enabled&&receiptPolicy.settings.room_enabled)
+  const readCounts=useRoomReadReceipts(role?room.id:null,receiptFeed,
+    receiptPolicy.settings?roomReceiptsEnabled&&receiptPolicy.settings.personal_enabled:null,
+    receiptPosts.filter(post=>post.sender!==user).map(post=>post.id),
+    receiptPosts.filter(post=>post.sender===user).map(post=>post.id),roomReceiptsEnabled)
 
   function openThread(id:string){
     activeThread.current=id;setReplies([]);setThreadRoot(null);setThread(id);setView('threads')
@@ -358,12 +377,14 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     const senderIsStaff=room.kind==='admin'?workspaceAdminIds.includes(post.sender):senderRole==='owner'||senderRole==='moderator'
     const canRedact=canModify&&staff&&post.sender!==user&&(role==='owner'||!senderIsStaff)
     const canForward=forwardingAvailable&&!post.removed_at&&post.kind==='message'
-    return <article className="release-board-item" key={post.id}>
+    const readCount=readCounts?.[post.id]||0
+    return <article className="release-board-item" key={post.id} data-room-post={post.id}>
       <div className="release-row"><strong>{name(post.sender)}</strong><time dateTime={post.created_at}>{new Date(post.created_at).toLocaleString()}</time>
         {post.kind==='announcement'&&<span className="pill">Announcement</span>}
         {post.forwarded&&!post.removed_at&&<span className="pill">Forwarded</span>}
         {post.edited_at&&!post.removed_at&&<span className="pill">Edited</span>}</div>
       <p className={post.removed_at?'meeting-agenda revoked-message':'meeting-agenda'}>{post.body}</p>
+      {!post.removed_at&&post.sender===user&&readCount>0&&<span className="pill">Read by {readCount}</span>}
       {!post.removed_at&&<RoomPostReactions room={room.id} post={post.id} policy={reactionPolicy}
         reactions={reactions.items[post.id]} canAdd={Boolean(canPost)} canRemove={canModify} onChange={reactions.refresh}/>}
       {editingPost===post.id&&canEdit?<form className="release-form" onSubmit={event=>{
@@ -395,7 +416,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     </article>
   }
 
-  return <section className="panel release-panel" aria-label={room.name}>
+  return <section className="panel release-panel" aria-label={room.name} ref={receiptFeed}>
     {forwarding&&<ForwardMessageDialog key={forwarding} source={{kind:'room',conversation:room.id,message:forwarding}}
       close={()=>setForwarding(null)} onSent={()=>setNotice('Message forwarded.')}/>}
     <h2>{room.name}</h2><p>{kinds[room.kind]}{room.template!=='blank'?' · '+templates[room.template].name+' template':''}{room.archived?' · Archived':room.locked?' · Locked':''}{role?' · '+roleLabel(role):''}</p>
@@ -403,7 +424,11 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
       <button type="button" className="secondary" aria-expanded={quietHours}
         onClick={()=>setQuietHours(!quietHours)}>Room quiet hours</button>
       {quietHours&&<QuietHoursSettings room={room.id}/>}
+      {receiptPolicy.settings&&<button type="button" className="secondary" disabled={receiptPolicy.saving}
+        aria-pressed={receiptPolicy.settings.personal_enabled} title="Applies to your direct chats and eligible rooms"
+        onClick={()=>void receiptPolicy.save('personal',!receiptPolicy.settings?.personal_enabled)}>Share my read receipts</button>}
     </div>}
+    {receiptPolicy.error&&<p role="alert" className="error">{receiptPolicy.error}</p>}
     {error&&<p role="alert" className="error">{error}</p>}
     {notice&&<p role="status">{notice}</p>}
     {role===undefined&&!error&&<p role="status">Loading room…</p>}
@@ -491,6 +516,13 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         </>}
       </>}
       {actualView==='settings'&&<>
+        {receiptPolicy.settings&&<div className="release-section">
+          <h3>Room read receipts</h3>
+          {!receiptPolicy.settings.workspace_enabled&&<p>Workspace policy disables read receipts.</p>}
+          <button className="secondary" type="button" disabled={receiptPolicy.saving}
+            aria-pressed={receiptPolicy.settings.room_enabled}
+            onClick={()=>void receiptPolicy.save('room',!receiptPolicy.settings?.room_enabled)}>Allow read receipts in this room</button>
+        </div>}
         {staff&&room.kind==='public'&&!room.archived&&<div className="release-section">
           <h3>Message forwarding</h3>
           <p>Allow members to forward text messages between this room and eligible rooms in this workspace.</p>

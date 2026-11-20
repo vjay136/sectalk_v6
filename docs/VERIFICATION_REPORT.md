@@ -6,8 +6,8 @@
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
-| Unit tests | 23 passed, including Unicode name comparison, ICU plural forms, scam classification and the existing warning score, file, calendar, readiness and vault checks |
-| Supabase database integration | All 44 rollback suites passed, including typing, presence privacy, impersonation watch and forwarding |
+| Unit tests | 26 passed, including credential detection, provider log redaction and the existing safety, locale, file and readiness checks |
+| Supabase database integration | All 47 rollback suites passed, including read receipts, personal attachments, authenticator recovery and warning proposals |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -56,7 +56,11 @@
 | Room mention priority | SQL and browser verified eligible recipients, quiet-hour filtering, direct mention priority, live delivery, read state and room links. |
 | Missed-call and mention digest | SQL verified recipient scope, room access removal and period boundaries. Browser verified the 24-hour and seven-day views and navigation to room and chat. |
 | Meeting network adaptation | Two browsers exchanged media over a real loopback LiveKit server while the test injected poor and recovered quality signals. The test verified lower video quality, continuous audio, and pause and resume of incoming and outgoing video. Impaired WAN and physical devices remain unverified. |
-| Warning score and feedback | Unit tests verified score, confidence and severity limits. Browser checked the warning evidence and feedback payload. SQL validated access, deduplication, and aggregate review. Staff reached Warning feedback after a real TOTP challenge. |
+| Warning score and feedback | Unit and browser tests verified score, confidence, severity and the feedback payload. SQL verified cohort scope, proposal limits and review permissions. Two separate staff accounts completed TOTP before submitting and approving a proposal. |
+| Read receipt controls | SQL and browser verified user, workspace and room settings. Direct-chat delivery remains visible, and room authors see eligible aggregate counts. |
+| Duplicate attachment checks | SQL and browser verified identical bytes, concurrent publication, isolated sender and conversation authorization, and independent Storage objects. Coverage is for new personal direct uploads. |
+| Account authenticators | Local SQL and browser verified TOTP enrollment and sign-in, hashed one-time codes, rotation, and recovery with session revocation. Hosted Auth schema compatibility and direct API assurance are still open. |
+| Secret hygiene | Unit tests verified rule-only findings and redacted provider diagnostics. The local production artifact scan checked browser environment keys, recognized credentials and configured server-only values. |
 | Presence privacy | Browser and SQL verified account visibility, Invisible, workspace-required disclosure, legacy preference preservation, and no hidden-presence disclosure through contact feeds or room mentions. |
 | Typing indicators | Browser verified direct and room-thread indicators and opt-out. Database tests verified separate conversations and threads, limits, expiry, blocks, timeouts and outsider denial. |
 | Message forwarding | SQL and browser verified live forwarded text and labels, same-workspace room policy, denied restricted destinations and sources, and no copied author identity or mention notification. |
@@ -65,7 +69,7 @@
 | Locale scaffold | Browser verified English and Arabic switching and persistence across reload, preserved form input, mobile signed-in navigation and the Help shortcut count. Unit tests exercised all six Arabic ICU plural forms. |
 | Local database security advisor | No warning or error reported for the isolated candidate at test time. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
-| Updated candidate | `npm run build` passed with typing and presence policy, locale support, impersonation watch, forwarding and scam classification. |
+| Updated candidate | `npm run build` passed with scoped receipts, account authenticators, attachment fingerprints, warning proposals and redacted provider diagnostics. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |
 | Production npm dependency advisory check | 0 reported advisories at test time |

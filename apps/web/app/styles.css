@@ -150,6 +150,8 @@ blockquote { margin: 0; width: 100%; border-left: 3px solid #6285ab; color: var(
 .audit li { border-top: 1px solid var(--line); padding: 9px 0; }
 .audit small { margin-left: 10px; }
 .mfa-setup img { display: block; background: white; border-radius: 8px; }
+.account-mfa-challenge { width: min(100%, 420px); }
+.mfa-codes ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 8px 18px; list-style: none; padding: 0; }
 .pagination { padding: 10px; justify-content: flex-end; }
 .dialog { background: var(--surface); color: var(--ink); border: 1px solid #3c587b; border-radius: 15px; width: min(95vw, 470px); max-height: 90dvh; padding: 17px; }
 .dialog::backdrop { background: #040604bc; }

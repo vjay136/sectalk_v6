@@ -38,7 +38,7 @@ function authMessage(error: { code?: string; status?: number }, step: Step): Pla
   return 'verificationSendFailed'
 }
 
-export function Entry({ recovering }: { recovering: boolean }) {
+export function Entry({ recovering, authenticatorReset }: { recovering: boolean; authenticatorReset?: boolean }) {
   const { t } = useLocale()
   const [step, setStep] = useState<Step>('sign-in')
   const [email, setEmail] = useState('')
@@ -202,6 +202,7 @@ export function Entry({ recovering }: { recovering: boolean }) {
           {current === 'sign-in' && <button className="text-button forgot" type="button" disabled={busy} onClick={() => go('forgot')}>{t('forgotPassword')}</button>}
           {alert && <p className="form-message error" role="alert">{t(alert)}</p>}
           {info && <p className="form-message success" role="status">{t(info)}</p>}
+          {authenticatorReset && current === 'sign-in' && <p className="form-message success" role="status">{t('authenticatorResetComplete')}</p>}
           <button className="primary submit-auth" disabled={busy}>{busy ? t('pleaseWait') : t(action)} <ArrowRight size={18} /></button>
           {current !== 'sign-in' && current !== 'sign-up' && <div className="form-links">
             {current !== 'confirm' && <button type="button" disabled={busy} onClick={() => void backToSignIn()}><ArrowLeft size={14} /> {t('backToSignIn')}</button>}

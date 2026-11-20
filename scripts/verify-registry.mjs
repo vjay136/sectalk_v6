@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
+import { verifySecrets } from './verify-secrets.mjs'
 
 const totals = {
   AUTH:17, ORG:14, MSG:22, THR:5, ROOM:11, PRES:3, NOTIF:10, FILE:15,
@@ -32,4 +33,15 @@ console.log(JSON.stringify({ registry:expected.length, ...counts }))
 if (process.argv.includes('--release') && counts.DONE!==expected.length) {
   console.error('Release blocked. All 239 entries must have status DONE.')
   process.exitCode=1
+} else if (process.argv.includes('--release')) {
+  try {
+    const findings=verifySecrets({build:true})
+    if(findings.length){
+      for(const {file,rule} of findings)console.error(file+' — '+rule)
+      process.exitCode=1
+    }
+  } catch {
+    console.error('Release blocked. The browser asset secret checks could not complete.')
+    process.exitCode=1
+  }
 }

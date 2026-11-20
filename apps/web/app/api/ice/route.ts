@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { isIP } from 'node:net'
 import { createClient } from '@supabase/supabase-js'
+import { logProviderFailure } from '../../../lib/provider-log.mjs'
 
 export const runtime = 'nodejs'
 
@@ -37,7 +38,10 @@ export async function GET(request: Request) {
   if (access.error?.code === 'PT429') {
     return Response.json({ error: 'Try again in a minute' }, { status: 429, headers: { ...headers, 'Retry-After': '60' } })
   }
-  if (access.error) return Response.json({ error: 'Call networking unavailable' }, { status: 503, headers })
+  if (access.error) {
+    logProviderFailure('call_networking','unavailable')
+    return Response.json({ error: 'Call networking unavailable' }, { status: 503, headers })
+  }
   const now = Math.floor(Date.now() / 1000)
   const callEnd = typeof access.data === 'string' ? Math.floor(Date.parse(access.data) / 1000) : NaN
   if (!Number.isFinite(callEnd) || callEnd <= now) return Response.json({ error: 'Call unavailable' }, { status: 403, headers })

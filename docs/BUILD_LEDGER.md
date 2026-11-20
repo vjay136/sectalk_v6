@@ -53,12 +53,16 @@
 | P5 | Route prioritized mentions for room posts and replies | Mention SQL and two-browser delivery, navigation and read state |
 | P5 | Summarize missed incoming calls and room mentions in a private digest | Digest SQL and browser cases for both periods, links and permission changes |
 | P5 | Adapt meeting video quality and recover from audio-only mode | Two-browser LiveKit test with simulated quality ratings and actual audio and video tracks |
-| P9 | Score message warnings on-device and collect privacy-preserving feedback | Safety unit and browser tests, aggregate review SQL and TOTP browser access. Rule and threshold proposal workflows remain open. |
+| P9 | Score warnings locally and let verified staff propose rule or threshold evaluation | Feedback SQL and browser checks verified aggregate access, independent TOTP review and preserved warning feedback |
 | P5 | Add member and workspace controls for presence privacy and Invisible mode | Presence privacy SQL and two-browser settings, policy and contact views |
 | P5 | Add private typing controls to direct chats, rooms and threads | Typing SQL and two-browser checks for signal delivery, suppression and conversation isolation |
 | P5 | Forward text between eligible direct chats and public rooms | SQL and browser checks for labels, restricted destinations, moderator policy and protection of source identity |
 | P9 | Let workspace managers review possible executive and VIP impersonation | Unicode name comparison tests, SQL access and audit fixtures, and two-browser watch-list verification |
 | P9 | Classify scam and phishing patterns locally in message warnings | Nine category fixtures, benign cases, and a browser-verified scam warning |
+| P5 | Add workspace, room and account read receipt controls | Two browsers and permission SQL verified suppressed signals and preserved delivery |
+| P5 | Detect repeat attachment content within the uploading account and direct chat | SQL and Edge verified same-byte detection, isolation, retry and independent authorization. Workspace, vault and earlier files remain open. |
+| P3 | Add authenticator setup and one-time recovery codes | Browser and SQL verified enrollment, sign-in step-up, regeneration, reset and replay denial. Direct API assurance enforcement remains open. |
+| P3 | Enforce source and browser asset secret checks and redact provider diagnostics | Unit checks and production asset scan, wired into the release validator |
 | P10 | Add an English and Arabic locale scaffold with ICU messages | Locale unit tests and production browser checks on public and signed-in screens |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 

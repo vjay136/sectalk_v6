@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { authenticateFileRequest, fileFailure, fileHeaders } from '../../../../lib/authenticated-file-request'
 import { validFileId } from '../../../../lib/file-download-ticket'
 import { allowedFileType } from '../../../../lib/file-type-policy'
@@ -14,12 +15,16 @@ export async function POST(request:Request){
   if(pending.error?.code==='PT429')return fileFailure(429,'Too many attachments. Try again in a minute.')
   if(pending.error)return fileFailure(503,'Attachment permissions could not be verified.')
   if(!pending.data)return fileFailure(404,'Attachment unavailable.')
-  if(pending.data.published)return Response.json({id:pending.data.published},{headers:fileHeaders})
+  if(pending.data.published)
+    return Response.json({id:pending.data.published,duplicate:pending.data.duplicate===true},{headers:fileHeaders})
   const {data,error}=await auth.storage.storage.from('sectalk-chat-files').download(input.file)
   if(error||!data||data.size!==pending.data.size)return fileFailure(409,'Attachment upload is incomplete.')
-  if(!allowedFileType(pending.data.filename,input.mime,Buffer.from(await data.arrayBuffer())))
+  const bytes=Buffer.from(await data.arrayBuffer())
+  if(!allowedFileType(pending.data.filename,input.mime,bytes))
     return fileFailure(415,'The file contents do not match an allowed attachment type.')
-  const publication=await auth.storage.rpc('st_v6_publish_validated_file',{p_file:input.file,p_actor:auth.actor,p_caption:input.caption})
+  const publication=await auth.storage.rpc('st_v7_publish_hashed_file',{
+    p_file:input.file,p_actor:auth.actor,p_caption:input.caption,p_hash:createHash('sha256').update(bytes).digest('hex'),
+  })
   if(publication.error)return fileFailure(409,'The attachment could not be published.')
-  return Response.json({id:publication.data},{headers:fileHeaders})
+  return Response.json(publication.data,{headers:fileHeaders})
 }

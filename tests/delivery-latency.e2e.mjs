@@ -14,6 +14,7 @@ const client=createClient(supabase.origin,process.env.SECTALK_STORAGE_TEST_PUBLI
 const {chromium}=await import(process.env.SECTALK_PLAYWRIGHT_MODULE||'playwright')
 const handle='metrics_'+randomUUID().slice(0,8)
 const email=handle+'@example.org'
+const reviewerEmail='review_'+handle+'@example.org'
 const password=randomUUID()+'1!Q'
 
 function data(result){
@@ -36,11 +37,37 @@ function totp(secret){
 }
 
 const {user}=data(await admin.auth.admin.createUser({email,password,email_confirm:true}))
+const {user:reviewer}=data(await admin.auth.admin.createUser({email:reviewerEmail,password,email_confirm:true}))
 data(await client.auth.signInWithPassword({email,password}))
 data(await client.rpc('st_save_profile',{p_handle:handle,p_name:'Delivery Metrics Tester'}))
+const reviewerClient=createClient(supabase.origin,process.env.SECTALK_STORAGE_TEST_PUBLIC_KEY,options)
+data(await reviewerClient.auth.signInWithPassword({email:reviewerEmail,password}))
+data(await reviewerClient.rpc('st_save_profile',{p_handle:'review_'+handle,p_name:'Warning Proposal Reviewer'}))
 assert.match(user.id,/^[0-9a-f-]{36}$/)
-const sql="insert into sectalk_private.staff(user_id) values('"+user.id+"');\n"+
-  "insert into sectalk_private.st_v6_flag_operators(account_id) values('"+user.id+"');"
+assert.match(reviewer.id,/^[0-9a-f-]{36}$/)
+const sql=`
+insert into sectalk_private.staff(user_id) values('${user.id}'),('${reviewer.id}');
+insert into sectalk_private.st_v6_flag_operators(account_id) values('${user.id}');
+with people as (
+  insert into auth.users(id,email)
+    select gen_random_uuid(),gen_random_uuid()||'@example.invalid' from generate_series(1,5)
+    returning id
+), profiles as (
+  insert into public.st_profiles(id,handle,name)
+    select id,'qaf_'||left(replace(id::text,'-',''),16),'Synthetic reviewer cohort' from people returning id
+), chats as (
+  insert into public.st_chats(member_a,member_b,requester,status)
+    select least(id,'${user.id}'::uuid),greatest(id,'${user.id}'::uuid),'${user.id}','accepted' from profiles
+    returning id,member_a,member_b
+), messages as (
+  insert into public.st_messages(id,chat_id,sender,body)
+    select gen_random_uuid(),id,'${user.id}','Synthetic warning feedback browser fixture' from chats
+    returning id,chat_id,created_at
+)
+insert into sectalk_private.st_v6_risk_feedback(recipient,message_id,revision,rule_version,category)
+  select case when c.member_a='${user.id}' then c.member_b else c.member_a end,
+    m.id,m.created_at,'message-rules-1','harassment' from messages m join chats c on c.id=m.chat_id;
+`
 const seed=spawnSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],
   {input:sql,encoding:'utf8',windowsHide:true})
 assert.equal(seed.status,0,seed.stderr)
@@ -49,24 +76,30 @@ assert.equal((await client.rpc('st_v6_usage_metrics',{p_window:'7d'})).error?.co
 assert.equal(data(await client.rpc('st_v6_can_manage_flags')),false)
 const browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER})
 let releaseRuleChanged=false
-try{
-  const page=await browser.newPage()
+async function signInAsStaff(page,address){
   await page.goto(app.href)
-  await page.getByLabel('Email address',{exact:true}).fill(email)
+  await page.getByLabel('Email address',{exact:true}).fill(address)
   await page.getByLabel('Password',{exact:true}).fill(password)
   await page.locator('button.submit-auth').click()
   await page.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Safety',exact:true}).click()
+}
+async function verifyStaff(page){
+  await page.getByRole('button',{name:'Staff console',exact:true}).click()
+  await page.getByRole('button',{name:'Set up authenticator',exact:true}).click()
+  const secret=(await page.locator('.mfa-setup code').textContent()).trim()
+  await page.getByLabel('Authenticator code',{exact:true}).fill(totp(secret))
+  await page.getByRole('button',{name:'Verify access',exact:true}).click()
+}
+try{
+  const page=await browser.newPage()
+  await signInAsStaff(page,email)
   const metrics=page.getByRole('button',{name:'Delivery metrics',exact:true})
   const release=page.getByRole('button',{name:'Release controls',exact:true})
   const feedback=page.getByRole('button',{name:'Warning feedback',exact:true})
   assert.equal(await metrics.count(),0)
   assert.equal(await release.count(),0)
   assert.equal(await feedback.count(),0)
-  await page.getByRole('button',{name:'Staff console',exact:true}).click()
-  await page.getByRole('button',{name:'Set up authenticator',exact:true}).click()
-  const secret=(await page.locator('.mfa-setup code').textContent()).trim()
-  await page.getByLabel('Authenticator code',{exact:true}).fill(totp(secret))
-  await page.getByRole('button',{name:'Verify access',exact:true}).click()
+  await verifyStaff(page)
   const request=page.waitForResponse(response=>response.url().includes('/rpc/st_v6_delivery_latency'))
   await metrics.click()
   const response=await request
@@ -95,6 +128,26 @@ try{
     assert.ok(row.accounts>=5&&row.accounts%5===0)
   }
   await page.getByRole('region',{name:'Warning feedback',exact:true}).waitFor()
+  await page.getByRole('button',{name:'Rule proposals',exact:true}).click()
+  const proposals=page.getByRole('region',{name:'Rule and threshold proposals',exact:true})
+  await proposals.getByLabel('Feedback cohort',{exact:true}).selectOption('harassment:message-rules-1')
+  await proposals.getByLabel('Proposed change',{exact:true}).selectOption('threshold_review')
+  await proposals.getByLabel('Minimum rule confidence (%)',{exact:true}).fill('75')
+  await proposals.getByRole('button',{name:'Submit proposal',exact:true}).click()
+  await proposals.getByText('Awaiting independent review',{exact:true}).waitFor()
+  assert.equal(await proposals.getByRole('button',{name:'Approve for evaluation',exact:true}).count(),0)
+
+  const reviewerPage=await browser.newPage()
+  await signInAsStaff(reviewerPage,reviewerEmail)
+  await verifyStaff(reviewerPage)
+  await reviewerPage.getByRole('button',{name:'Warning feedback',exact:true}).click()
+  await reviewerPage.getByRole('button',{name:'Rule proposals',exact:true}).click()
+  const pending=reviewerPage.locator('article').filter({hasText:'75% minimum confidence'})
+  await pending.getByRole('button',{name:'Approve for evaluation',exact:true}).click()
+  await pending.getByText('Approved for evaluation',{exact:true}).waitFor()
+  await proposals.getByRole('button',{name:'Refresh proposals',exact:true}).click()
+  await proposals.getByText('Approved for evaluation',{exact:true}).waitFor()
+
   await release.click()
   const controls=page.getByRole('region',{name:'Release controls',exact:true})
   const rollout=controls.getByLabel('Rollout percentage',{exact:true})
@@ -120,6 +173,12 @@ try{
   console.log('Passed authenticator step-up, warning feedback, staff analytics, staged feature rollout and the emergency stop.')
 }finally{
   await browser.close()
+  const cleanup=spawnSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],{
+    input:`delete from sectalk_private.st_v6_warning_proposals where submitted_by='${user.id}';
+      delete from sectalk_private.st_v6_risk_feedback f using public.st_messages m
+      where f.message_id=m.id and m.sender='${user.id}';`,encoding:'utf8',windowsHide:true,
+  })
+  assert.equal(cleanup.status,0,cleanup.stderr)
   if(releaseRuleChanged){
     const restored=spawnSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],{
       input:"update sectalk_private.st_v6_flag_rules set enabled=true, rollout=100, killed=false where feature='task_creation' and scope='global';",

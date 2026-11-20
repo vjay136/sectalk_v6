@@ -30,6 +30,8 @@ export async function sendChatFile(chat: string, id: string, file: File, caption
     const value=await result.json().catch(()=>null)
     throw new Error(value?.error||'The attachment could not be published.')
   }
+  const value=await result.json()
+  return {duplicate:value.duplicate===true}
 }
 
 export async function fetchChatFile(id: string) {
