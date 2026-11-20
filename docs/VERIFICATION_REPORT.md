@@ -5,6 +5,7 @@
 | Check | Result |
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
+| Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
 | Unit tests | 9 passed, including readiness failure handling, safety heuristics, vault authentication and emoji data |
 | Supabase database integration | All 6 rollback suites passed, covering existing access controls, auth level, consent, calls, tasks, billing replay and new private saves |
 | Readiness | Local HTTP 200 against the migrated database, anonymous boolean SQL probe passed |
