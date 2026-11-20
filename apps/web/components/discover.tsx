@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Bell, Check, Search } from 'lucide-react'
 import { db, liveChannel, onReconnect } from '../lib/data'
 import { SectionTabs } from './section-tabs'
+import { TaskNotices } from './scoped-tasks'
 
 type Result = { kind:'direct'|'channel'|'board'|'meeting'; id:string; scope_id:string; title:string; snippet:string; at:string }
 type SearchKind=Result['kind']|'all'
@@ -103,6 +104,7 @@ export function GlobalSearch({ openChat,openMeeting }: { openChat:(id:string)=>v
 
 export function Notifications({user,openMeeting}: {user:string;openMeeting:(id:string)=>void}) {
   const [items,setItems]=useState<Notification[]|null>(null)
+  const [category,setCategory]=useState<'meetings'|'tasks'>('meetings')
   const [filter,setFilter]=useState<'all'|'unread'>('all')
   const [headings,setHeadings]=useState<Record<string,string>>({})
   const [error,setError]=useState('')
@@ -131,7 +133,9 @@ export function Notifications({user,openMeeting}: {user:string;openMeeting:(id:s
   }
   const visible=items?.filter(item=>filter==='all'||!item.read_at)
   return <section className="content-page">
-    <header className="content-title"><div className="card-icon"><Bell size={22}/></div><div><h1>Notifications</h1><p>Meeting updates from your workspaces.</p></div></header>
+    <header className="content-title"><div className="card-icon"><Bell size={22}/></div><div><h1>Notifications</h1></div></header>
+    <SectionTabs label="Notification categories" value={category} onChange={setCategory} options={ [['meetings','Meetings'],['tasks','Task updates']] }/>
+    {category==='tasks'?<TaskNotices user={user}/>:<>
     {error&&<p role="alert" className="error">{error}</p>}
     <SectionTabs label="Notification filters" value={filter} onChange={setFilter} options={ [['all','All updates'], ['unread','Unread']] }/>
     <button className="secondary" disabled={!items?.some(item=>!item.read_at)} onClick={()=>void mark(null)}><Check size={15}/> Mark all read</button>
@@ -146,5 +150,6 @@ export function Notifications({user,openMeeting}: {user:string;openMeeting:(id:s
         {!item.read_at&&<button className="text-button" onClick={()=>void mark(item.id)}>Mark read</button>}
       </div></article>)}
     </div>
+    </>}
   </section>
 }

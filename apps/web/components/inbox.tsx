@@ -17,6 +17,7 @@ import { Billing } from './billing'
 import { Meetings } from './meetings'
 import { FilesLibrary } from './files-library'
 import { GlobalSearch, Notifications } from './discover'
+import { ScopedTasks } from './scoped-tasks'
 import { SectionTabs } from './section-tabs'
 import { downloadChatFile, extensions, sendChatFile, supportedFile, type ChatFile } from '../lib/chat-files'
 import { EmojiText } from './emoji-text'
@@ -45,6 +46,9 @@ export function Inbox({ user }: { user: string }) {
   const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
+  const [taskSection,setTaskSection]=useState<'scoped'|'workspace'>('scoped')
+  const [chatTasks,setChatTasks]=useState(false)
+  const [sourceTask,setSourceTask]=useState<string|null>(null)
   const [profileTab, setProfileTab] = useState<'account' | 'availability' | 'discovery' | 'activity' | 'blocked'>('account')
   const [managedBlock,setManagedBlock]=useState<Chat|null>(null)
   const [search, setSearch] = useState('')
@@ -208,6 +212,8 @@ export function Inbox({ user }: { user: string }) {
   function select(id: string | null) {
     setSelected(id)
     setBlockCheck(false)
+    setChatTasks(false)
+    setSourceTask(null)
     setTab('inbox')
   }
   function openMeeting(id:string) {
@@ -331,7 +337,14 @@ export function Inbox({ user }: { user: string }) {
       tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}/>:
       tab==='saved'?<SavedMessages openChat={select}/>:
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} /> :
-      tab==='workspaces'||tab==='rooms'||tab==='tasks'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} /> :
+      tab==='workspaces'||tab==='rooms'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} /> :
+      tab==='tasks' ? <div className="task-center">
+        <SectionTabs label="Task sections" value={taskSection} onChange={setTaskSection} options={[
+          ['scoped','Room and chat tasks'],['workspace','Workspace tasks'],
+        ]}/>
+        {taskSection==='scoped'?<div className="content-page"><ScopedTasks user={user} people={{...profiles,[user]:profile}}/></div>:
+          <Workspaces user={user} view="tasks"/>}
+      </div> :
       tab === 'billing' ? <Billing user={user} /> :
       tab === 'meetings' ? <Meetings key={requestedMeeting||'all'} requested={requestedMeeting} user={user}/> :
       tab === 'vault' ? <FilesLibrary user={user} openChat={select}/> :
@@ -344,6 +357,9 @@ export function Inbox({ user }: { user: string }) {
             {peerExtras.details?.status_message&&<p className="thread-profile-status" title={peerExtras.details.status_message}>{peerExtras.details.status_message}</p>}</div>
           <div className="thread-actions">
             {chat.status === 'accepted' && !blocked && <>
+              <button className="icon" aria-pressed={chatTasks} aria-label="Chat tasks" title="Chat tasks" onClick={()=>{
+                setChatTasks(!chatTasks);setSourceTask(null)
+              }}><ListChecks size={18}/></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start audio call" title="Start audio call" onClick={() => void call.start(chat.id, false)}><Phone size={18} /></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start video call" title="Start video call" onClick={() => void call.start(chat.id, true)}><Video size={20} /></button>
             </>}
@@ -353,7 +369,11 @@ export function Inbox({ user }: { user: string }) {
         </header>
         {blockCheck && <div className="inline-warning"><span>{blocked ? 'Allow this contact to reach you again?' : 'Block new messages and calls from this contact?'}</span><button className="danger" disabled={working} onClick={() => void run('st_set_block', { p_chat: chat.id, p_block: !blocked }, () => { setBlockCheck(false); setNotice(blocked ? 'Contact unblocked.' : 'Contact blocked.') })}>{blocked ? 'Unblock' : 'Block'}</button><button className="secondary" onClick={() => setBlockCheck(false)}>Cancel</button></div>}
         {chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} selfName={profile.name} peerName={peer?.name||'Contact'} hints={hints}
-          blocked={blocked} inform={setNotice} onReport={(message,file) => setReport({ chat:chat.id,message,file })} /> :
+          blocked={blocked} inform={setNotice} onReport={(message,file) => setReport({ chat:chat.id,message,file })}
+          onTask={id=>{setSourceTask(id);setChatTasks(true)}} taskPanel={chatTasks&&!blocked?<div className="feed">
+            <ScopedTasks user={user} scope={{kind:'chat',id:chat.id}} source={sourceTask}
+              people={peer?{[profile.id]:profile,[peer.id]:peer}:{[profile.id]:profile}} canCreate onSourceUsed={()=>setSourceTask(null)}/>
+          </div>:null}/> :
           <div className="empty-thread"><div className="card-icon"><ShieldCheck size={26} /></div>
             <h2>{chat.status === 'declined' ? 'Request declined' : chat.requester === user ? 'Request sent' : 'New contact request'}</h2>
             <p>{chat.status === 'declined' ? 'This conversation is closed.' : chat.requester === user ? 'You can chat and call once this contact accepts.' : 'Accept to allow this person to message or call you.'}</p>
@@ -464,9 +484,10 @@ const reactionOptions = [
   { emoji: '✅', label: 'Check mark' }, { emoji: '👀', label: 'Eyes' },
 ]
 
-function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, inform }: {
+function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, inform, onTask, taskPanel }: {
   chat: Chat; self: string; selfName:string; peerName:string; hints: EventTarget; blocked: boolean
   onReport: (message: Message,file?:ChatFile) => void; inform: (notice: string) => void
+  onTask:(id:string)=>void;taskPanel:React.ReactNode
 }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
@@ -576,15 +597,16 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     return () => window.clearTimeout(timer)
   }, [activity?.typing_until])
   const latestInbound = messages.findLast(message => message.sender !== self)?.id
+  const viewingTasks=Boolean(taskPanel)
   const markRead = useCallback(() => {
-    if (blocked || !latestInbound || document.visibilityState !== 'visible' || !nearBottom.current ||
+    if (blocked || viewingTasks || !latestInbound || document.visibilityState !== 'visible' || !nearBottom.current ||
       readLast.current === latestInbound || results !== null) return
     readLast.current = latestInbound
     void db!.rpc('st_v2_read', { p_chat: chat.id, p_message: latestInbound }).then(({ error }) => {
       if (error && readLast.current === latestInbound) readLast.current = ''
       if (!error) hints.dispatchEvent(new Event('read_local'))
     })
-  }, [blocked, chat.id, hints, latestInbound, results])
+  }, [blocked, chat.id, hints, latestInbound, results, viewingTasks])
   useEffect(() => {
     markRead()
     return onReconnect(markRead)
@@ -664,6 +686,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     if(await update('st_v2_react',{p_message:messageId,p_reaction:value,p_enabled:enabled})) setReacting(null)
   }
 
+  if(taskPanel)return taskPanel
   return <>
     <div className="thread-toolbar">
       <button type="button" className="secondary" aria-expanded={showSearch} onClick={() => { setShowSearch(!showSearch); setResults(null) }}><Search size={15}/> Search messages</button>
@@ -754,6 +777,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
                   const result=await setSavedMessage(message.id,true)
                   inform(result.error?'Could not save this message.':'Message saved. Find it in Inbox → Saved messages.')
                 }}>Save message</button>}
+                {!blocked&&!message.revoked_at&&<button type="button" className="text-button" onClick={()=>onTask(message.id)}>Create task from message</button>}
                 {!own&&!message.revoked_at&&<button type="button" className="text-button" onClick={()=>onReport(message,file)}>Report message</button>}
                 <button type="button" className="text-button" onClick={()=>setRemoving({message,action:'hide'})}>Delete for me</button>
                 {own&&!message.revoked_at&&<button type="button" className="text-button remove-text" onClick={()=>setRemoving({message,action:'revoke'})}>Revoke for everyone</button>}

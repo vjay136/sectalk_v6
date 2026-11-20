@@ -26,6 +26,14 @@ Room threads attach to a top-level message in the same room. Clients send stable
 
 The browser flow verifies creation, joining, synchronized posts and the role-gated Audit tab. The SQL fixture covers tenant and membership isolation, invitations, approval, announcement and broadcast write restrictions, pins, threads, and moderation. Approval and moderation apply at the database boundary, including requests sent outside the UI.
 
+## TASK-01 through TASK-10 · Scoped tasks
+
+Open Tasks in a room or Chat tasks in an accepted direct conversation. Create a standalone task or use Create task from message to attach a source. The Source tab shows the original text alongside the current message. Removing access to the message hides both copies while preserving the task and its audit history.
+
+Use List, Board, or Calendar to review work. Calendar offers an agenda and a month grid. Users can filter by assignment or tasks they watch, and can choose a priority, labels, and a due date. The assignment menu limits recipients to eligible participants. Only the watcher can see their own watch setting. The server validates status transitions, including who can reopen a completed or cancelled task.
+
+The Audit tab shows task changes to authorized participants. The Task updates tab in Notifications collects completion and deadline notices for eligible recipients and lets them mark each notice read. A scheduled job processes active deadlines and deduplicates each recipient’s reminder. Authorization is checked again when users read tasks, sources, audit events, and notices.
+
 ## THR-01 · Reply counts and thread follows
 
 A room participant opens a thread from a room message and reads its replies or posts a reply when their role allows it. The room feed shows the number of replies that the caller can read. Following a root message adds it to the participant's Followed threads list. Unfollowing removes that preference. Row-level security keeps follows private and rejects references to an inaccessible room or a reply. Two browser sessions verify that reply counts and content synchronize while following remains private.

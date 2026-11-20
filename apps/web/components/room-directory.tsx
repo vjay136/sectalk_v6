@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
+import { ScopedTasks } from './scoped-tasks'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
@@ -12,7 +13,7 @@ type Roster={user_id:string;role:Role}
 type Entry={user_id:string;kind:'invite'|'request';invited_role:Role;expires_at:string}
 type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:string}
 type ThreadState={post_id:string;replies:number;following:boolean;excerpt:string}
-type DirectoryProps={space:string;user:string;manager:boolean;profiles:Record<string,Profile>}
+type DirectoryProps={space:string;user:string;manager:boolean;profiles:Record<string,Profile>;workspaceAdminIds:string[]}
 const kinds:Record<Kind,string>={public:'Workspace-wide',private:'Private',admin:'Admins only',announcement:'Announcements',broadcast:'Broadcast'}
 const templates={blank:'public',class:'private',incident:'admin',family:'private',project:'public'} as const
 const roleLabel=(value:string)=>value.replaceAll('_',' ')
@@ -23,7 +24,7 @@ async function call(name:string,input:Record<string,unknown>) {
   return result.data
 }
 
-export function RoomDirectory({space,user,manager,profiles}:DirectoryProps) {
+export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds}:DirectoryProps) {
   const [rooms,setRooms]=useState<Room[]|null>(null)
   const [selected,setSelected]=useState('')
   const [filter,setFilter]=useState<'active'|'archived'>('active')
@@ -101,12 +102,13 @@ export function RoomDirectory({space,user,manager,profiles}:DirectoryProps) {
     {visible?.length===0&&<p>No rooms in this view.</p>}
     {visible?.map(room=><button className={selected===room.id?'primary':'secondary'} type="button" key={room.id}
       aria-pressed={selected===room.id} onClick={()=>setSelected(room.id)}>{room.name} <small>{kinds[room.kind]}</small></button>)}
-    {current&&<RoomPanel key={current.id} room={current} user={user} profiles={profiles} refreshDirectory={refresh}/>}
+    {current&&<RoomPanel key={current.id} room={current} user={user} profiles={profiles}
+      workspaceAdminIds={workspaceAdminIds} refreshDirectory={refresh}/>}
   </section>
 }
 
-function RoomPanel({room,user,profiles,refreshDirectory}: {
-  room:Room;user:string;profiles:Record<string,Profile>;refreshDirectory:()=>Promise<void>
+function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
+  room:Room;user:string;profiles:Record<string,Profile>;refreshDirectory:()=>Promise<void>;workspaceAdminIds:string[]
 }) {
   const [role,setRole]=useState<Role|null|undefined>(undefined)
   const [entries,setEntries]=useState<Entry[]>([])
@@ -119,7 +121,8 @@ function RoomPanel({room,user,profiles,refreshDirectory}: {
   const activeThread=useRef<string|null>(null)
   const [threadStates,setThreadStates]=useState<ThreadState[]>([])
   const [threadRoot,setThreadRoot]=useState<Post|null>(null)
-  const [view,setView]=useState<'messages'|'threads'|'pins'|'people'|'settings'|'audit'>('messages')
+  const [view,setView]=useState<'messages'|'threads'|'pins'|'people'|'settings'|'audit'|'tasks'>('messages')
+  const [taskSource,setTaskSource]=useState<string|null>(null)
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
   const [working,setWorking]=useState(false)
@@ -228,6 +231,7 @@ function RoomPanel({room,user,profiles,refreshDirectory}: {
       <p className="meeting-agenda">{post.body}</p>
       {actions&&<div className="action-row">
         <button className="secondary" type="button" onClick={()=>openThread(post.id)}>Open thread{summary?' ('+summary.replies+')':''}</button>
+        {canPost&&<button className="secondary" type="button" onClick={()=>{setTaskSource(post.id);setView('tasks')}}>Create task from message</button>}
         {staff&&!room.archived&&<button className="secondary" type="button" disabled={working} onClick={()=>void settings(pinned?'unpin':'pin',{p_post:post.id})}>
           {pinned?'Unpin':'Pin'}
         </button>}
@@ -246,7 +250,7 @@ function RoomPanel({room,user,profiles,refreshDirectory}: {
     </div>:room.kind!=='private'&&<button className="primary" type="button" disabled={working} onClick={()=>void member('join')}>Join room</button>)}
     {role&&<>
       <SectionTabs label="Room tabs" value={actualView} onChange={setView} options={[
-        ['messages','Messages'],['threads','Threads'],['pins','Pins'],
+        ['messages','Messages'],['threads','Threads'],['pins','Pins'],['tasks','Tasks'],
         ...(role!=='guest'?[['people','Members'] as const]:[]),
         ...(staff?[['settings','Settings'] as const,['audit','Audit'] as const]:[]),
       ]}/>
@@ -265,6 +269,10 @@ function RoomPanel({room,user,profiles,refreshDirectory}: {
         {thread&&replies.length===0&&<p>No replies yet.</p>}
       </>}
       {actualView==='pins'&&(pins.length?pins.map(post=>renderPost(post,true)):<p>No pinned messages.</p>)}
+      {actualView==='tasks'&&<ScopedTasks user={user} scope={{kind:'room',id:room.id}} source={taskSource}
+        moderator={staff} canCreate={Boolean(canPost)} onSourceUsed={()=>setTaskSource(null)}
+        people={Object.fromEntries((room.kind==='admin'?workspaceAdminIds:roster.map(row=>row.user_id))
+          .filter(id=>profiles[id]).map(id=>[id,profiles[id]]))}/>}
       {canPost&&(actualView==='messages'||(actualView==='threads'&&thread&&room.kind!=='announcement'))&&
         <form className="release-form" onSubmit={send}>
           <label>{actualView==='threads'?'Write a reply':'Write a room message'}<textarea name="body" required maxLength={4000}/></label>

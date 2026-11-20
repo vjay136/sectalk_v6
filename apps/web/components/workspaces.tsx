@@ -168,7 +168,8 @@ function WorkspaceArea({ space, user, view }: { space:Space;user:string;view:Wor
     ]}/>}
     {error && <p role="alert" className="error">{error}</p>}
     {view==='rooms'&&<SectionTabs label="Room sections" value={roomView} onChange={setRoomView} options={ [['rooms','Room directory'],['channels','Workspace channels']] }/>}
-    {view==='rooms'&&roomView==='rooms'&&<RoomDirectory space={space.id} user={user} manager={manager} profiles={profiles}/>}
+    {view==='rooms'&&roomView==='rooms'&&<RoomDirectory space={space.id} user={user} manager={manager} profiles={profiles}
+      workspaceAdminIds={members.filter(member=>member.role!=='member').map(member=>member.user_id)}/>}
     {((view==='rooms'&&roomView==='channels')||(view==='workspaces'&&tab==='channels')) && <div className="release-section">
       <div className="release-flex">
         <label>Channel<select value={channelId} onChange={event => setChannelId(event.target.value)}>{channels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</select></label>
