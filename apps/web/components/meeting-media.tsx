@@ -2,7 +2,7 @@
 
 import {
   CarouselLayout, ConnectionStateToast, ControlBar, FocusLayout, FocusLayoutContainer,
-  GridLayout, LiveKitRoom, ParticipantTile, RoomAudioRenderer, useRoomContext, useTracks,
+  GridLayout, LiveKitRoom, ParticipantTile, RoomAudioRenderer, useConnectionState, useLocalParticipant, useRoomContext, useTracks,
 } from '@livekit/components-react'
 import { ConnectionError, ConnectionState, DisconnectReason, RoomEvent, Track } from 'livekit-client'
 import { MoreHorizontal, Signal, VideoOff } from 'lucide-react'
@@ -12,6 +12,7 @@ import { createCallQos } from '../lib/call-qos'
 import { useMeetingNetwork } from './meeting-network'
 import { deviceConstraint, type MeetingChoices } from './meeting-prejoin'
 import { MeetingScreenShare } from './meeting-screen-share'
+import { MeetingCaptions } from './meeting-captions'
 import styles from './meeting-media.module.css'
 
 function MeetingQosObserver({ qos }: { qos: ReturnType<typeof createCallQos> }) {
@@ -73,6 +74,15 @@ function MeetingQosObserver({ qos }: { qos: ReturnType<typeof createCallQos> }) 
 
 const networkDisconnects = new Set<DisconnectReason>([DisconnectReason.JOIN_FAILURE, DisconnectReason.SIGNAL_CLOSE,
   DisconnectReason.STATE_MISMATCH, DisconnectReason.CONNECTION_TIMEOUT, DisconnectReason.MEDIA_FAILURE])
+
+function LiveMeetingCaptions({ meeting }: { meeting: string }) {
+  const { isMicrophoneEnabled, microphoneTrack } = useLocalParticipant()
+  const connected = useConnectionState() === ConnectionState.Connected
+  const track = microphoneTrack?.track?.mediaStreamTrack
+  const microphone = connected && isMicrophoneEnabled && microphoneTrack && track
+    ? { track, sid: microphoneTrack.trackSid } : undefined
+  return <MeetingCaptions meeting={meeting} microphone={microphone}/>
+}
 
 function ConferenceStage({ focus, meeting, screenShareDisabled }: { focus: string | null; meeting: string; screenShareDisabled: boolean }) {
   const network = useMeetingNetwork()
@@ -145,6 +155,7 @@ export default function MeetingMedia({ url, token, focus, choices, meeting, scre
       }}>
       <MeetingQosObserver qos={qos}/>
       <ConferenceStage focus={focus} meeting={meeting} screenShareDisabled={screenShareDisabled}/>
+      <LiveMeetingCaptions meeting={meeting}/>
     </LiveKitRoom>
   </div>
 }

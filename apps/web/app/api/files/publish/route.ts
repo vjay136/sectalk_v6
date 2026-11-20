@@ -2,7 +2,8 @@ import { withOperationalMetrics } from '../../../../lib/operational-metrics-serv
 import { createHash } from 'node:crypto'
 import { authenticateFileRequest, fileFailure, fileHeaders } from '../../../../lib/authenticated-file-request'
 import { validFileId } from '../../../../lib/file-download-ticket'
-import { allowedFileType } from '../../../../lib/file-type-policy'
+import { allowedFileType, attachmentDocumentFormat, officeFormatPattern } from '../../../../lib/file-type-policy'
+import { attachmentInspectionLabel, inspectAttachment } from '../../../../lib/attachment-inspection'
 import { attachmentScannerConfigured, scanAttachment } from '../../../../lib/attachment-scan-server'
 
 export const runtime='nodejs'
@@ -28,14 +29,25 @@ async function handlePost(request:Request){
   const hash=createHash('sha256').update(bytes).digest('hex')
   const scanState=pending.data.scan_state
   if(scanState==='malware')return fileFailure(422,'The attachment was blocked by security scanning.')
-  if(scanState!=='released'&&(attachmentScannerConfigured()||scanState)){
+  const localReason=inspectAttachment(pending.data.filename,bytes)
+  if(scanState!=='released'&&(attachmentScannerConfigured()||scanState||localReason||officeFormatPattern.test(pending.data.filename))){
+    const result=await scanAttachment(bytes,hash,attachmentDocumentFormat(pending.data.filename))
+    if(result.unsupported)return fileFailure(415,'This document type or structure is outside the supported inspection limits.')
+    const inspectionReason=result.reason??localReason
     const scan=await auth.storage.rpc('st_v6_record_attachment_scan',{
-      p_file:input.file,p_actor:auth.actor,p_hash:hash,p_verdict:await scanAttachment(bytes,hash),
+      p_file:input.file,p_actor:auth.actor,p_hash:hash,p_verdict:result.verdict,
+      p_inspection_reason:inspectionReason,
+      p_validated_document_format:result.validatedFormat??null,
     })
     if(scan.error||!scan.data)return fileFailure(503,'The attachment scan could not be recorded.')
     if(scan.data==='malware')return fileFailure(422,'The attachment was blocked by security scanning.')
-    if(scan.data==='quarantined')return fileFailure(423,'The attachment is quarantined. Retry after scanning is available.')
-    if(scan.data==='awaiting_release')return fileFailure(423,'The attachment passed re-scanning and awaits security review.')
+    const reason=attachmentInspectionLabel(inspectionReason)
+    if(scan.data==='quarantined')return fileFailure(423,reason
+      ? `The attachment is quarantined. Static inspection flagged: ${reason}. Security scanning must also be available.`
+      : 'The attachment is quarantined. Retry after scanning is available.')
+    if(scan.data==='awaiting_release')return fileFailure(423,reason
+      ? `The attachment awaits security review. Static inspection flagged: ${reason}.`
+      : 'The attachment passed re-scanning and awaits security review.')
   }
   const publication=await auth.storage.rpc('st_v7_publish_hashed_file',{
     p_file:input.file,p_actor:auth.actor,p_caption:input.caption,p_hash:hash,

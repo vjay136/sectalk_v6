@@ -3,13 +3,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
 import { formatChatFileBytes } from '../lib/chat-files'
+import { attachmentInspectionLabel } from '../lib/attachment-inspection'
 
 const labels = {
   quarantined: 'Scan unavailable',
   awaiting_release: 'Clean re-scan received',
   malware: 'Blocked by scanner',
 }
-type QueueItem = { file_id: string; size_bytes: number; state: keyof typeof labels; scanned_at: string }
+type QueueItem = { file_id: string; size_bytes: number; state: keyof typeof labels; scanned_at: string; inspection_reason: string | null }
 
 export function AttachmentQuarantine() {
   const [rows, setRows] = useState<QueueItem[] | null>(null)
@@ -38,7 +39,7 @@ export function AttachmentQuarantine() {
     setNotice('')
     try {
       const { error } = await db!.rpc('st_v6_release_attachment_scan', { p_file: file, p_reason: reason })
-      if (error) setError('A current clean re-scan and reviewer assignment are required.')
+      if (error) setError('A clean scan of the same bytes and reviewer assignment are required.')
       else {
         form.reset()
         setNotice('Released. The sender can retry sending this attachment.')
@@ -57,13 +58,14 @@ export function AttachmentQuarantine() {
         setRevision(value => value + 1)
       }}>Refresh quarantine</button>
     </div>
-    <p>Release requires a clean re-scan of the same bytes. Scanner-blocked attachments cannot be released.</p>
+    <p>Release requires a clean scan of the same bytes. Static inspection markers may occur in benign files. Scanner-blocked attachments cannot be released.</p>
     {error && <p role="alert" className="error">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {!rows && !error && <p role="status">Loading attachment quarantine…</p>}
     {rows?.length === 0 && <p>No attachments in quarantine.</p>}
     {rows?.map(row => <article key={row.file_id} className="release-board-item">
-      <h3>{labels[row.state]}</h3>
+      <h3>{row.inspection_reason && row.state === 'awaiting_release' ? 'Static inspection requires review' : labels[row.state]}</h3>
+      {row.inspection_reason && <p>Static inspection flagged {attachmentInspectionLabel(row.inspection_reason)?.toLowerCase()}.</p>}
       <p><code>{row.file_id}</code> · {formatChatFileBytes(row.size_bytes)}</p>
       <time dateTime={row.scanned_at}>{new Date(row.scanned_at).toLocaleString()}</time>
       {row.state === 'awaiting_release' && <form onSubmit={event => void release(event, row.file_id)}>

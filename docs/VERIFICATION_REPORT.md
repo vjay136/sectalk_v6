@@ -5,9 +5,9 @@
 | Check | Result |
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
-| Clean source snapshot | The staged 117-feature snapshot passed locked dependency installation, its production build and targeted Edge tests before commit. The Windows npm launcher reported Node 26 while the project declares Node 22 and 24. |
-| Unit tests | 32 passed, including signed-report payload, SMTP, VAPID encryption, provider log redaction, safety, locale, file and readiness checks |
-| Supabase database integration | All 79 staged checkpoint rollback suites passed, including audit integrity scope, abuse timers, scanner review and view-only sharing |
+| Clean source snapshot | The staged 127-feature snapshot passed locked dependency installation, its production build and targeted Edge tests before commit. The Windows npm launcher reported Node 26 while the project declares Node 22 and 24. |
+| Unit tests | 34 passed, including document heuristics, attachment MIME handling, export payloads, SMTP, VAPID and readiness |
+| Supabase database integration | All 84 staged checkpoint rollback suites passed, including case collaboration, classified forwarding, workspace overview, incident scope and expanded scanner policy |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -86,6 +86,10 @@
 | Protected file rendering and review | ClamAV and real private Storage verified scanner outage quarantine, clean re-scan, staff review and sender retry. Clean Edge verified password-protected guest rendering with a pixel watermark and denial of original-byte retrieval from view-only links. |
 | Meeting recordings | Disposable LiveKit Egress encoded real synthetic audio and single-camera video. Both outputs decoded in Edge. Consent, exact tracks, withdrawal, camera loss, late joins and private download boundaries passed. |
 | Reports | A local Mailpit inbox received privacy-suppressed scheduled CSV, and the browser exported the identical file. Clean Edge and the protected export API passed daily and weekly PDF and CSV checks. |
+| Direct voice and video | Separate isolated Chromium networks used real forced TURN and exchanged two-way audio and video through Inbox and Calls. WAN carriers were outside the test. |
+| Live captions | Real offline Faster Whisper transcribed both synthetic English speakers with correct labels. Edge verified saved transcripts, rejoin consent, withdrawal and wrong-speaker denial. |
+| Case and workspace operations | Clean Edge verified real native MFA, scoped assignments, case mentions and evidence links, classification and room state, seats and readiness. |
+| Office and compressed PDF inspection | The updated isolated ClamAV pipeline and clean Edge candidate verified document structure, mismatch denial, bounded archives, macro and embedded-link quarantine, known hashes and authorized release. |
 | Updated candidate | `npm run build` passed with synchronized drafts, private notification controls, media checks and scoped analytics. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |

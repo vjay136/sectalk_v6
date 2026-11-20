@@ -6,6 +6,7 @@ import { db } from '../lib/data'
 import { Dialog } from './inbox'
 import { AttachmentShareLinks } from './attachment-share-links'
 import { AttachmentPreview } from './attachment-preview'
+import { officeFormatPattern } from '../lib/file-type-policy'
 
 type Details = { filename: string; size_bytes: number; shared_at: string; can_view_history: boolean }
 type Activity = {
@@ -76,9 +77,10 @@ export function AttachmentDetails({ file, close, onDeleted }: { file: string; cl
     {details && <>
       <h3>{details.filename}</h3>
       <p>{formatChatFileBytes(details.size_bytes)} · Shared <DateLabel at={details.shared_at}/></p>
-      <AttachmentPreview file={file} filename={details.filename}/>
+      {!officeFormatPattern.test(details.filename) && <AttachmentPreview file={file} filename={details.filename}/>}
     </>}
-    {showHistory && <AttachmentShareLinks file={file} onChanged={() => setAttempt(value => value + 1)}/>}
+    {showHistory && details && <AttachmentShareLinks file={file} allowPreview={!officeFormatPattern.test(details.filename)}
+      onChanged={() => setAttempt(value => value + 1)}/>}
     {showHistory && <div>
       <button className="secondary" type="button" disabled={deleting} onClick={() => void remove()}>Delete attachment</button>
       {deleteError && <p role="alert" className="error">{deleteError}</p>}

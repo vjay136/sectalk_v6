@@ -1,5 +1,16 @@
 const extensionMime:Record<string,string>={
   png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp',gif:'image/gif',pdf:'application/pdf',txt:'text/plain',
+  docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  docm:'application/vnd.ms-word.document.macroenabled.12',
+  xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xlsm:'application/vnd.ms-excel.sheet.macroenabled.12',
+  pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  pptm:'application/vnd.ms-powerpoint.presentation.macroenabled.12',
+}
+
+export const officeFormatPattern = /\.(docx|docm|xlsx|xlsm|pptx|pptm)$/i
+export function attachmentDocumentFormat(filename: string) {
+  return /\.(pdf|docx|docm|xlsx|xlsm|pptx|pptm)$/i.exec(filename)?.[1].toLowerCase()
 }
 
 export function sniffFileType(bytes:Buffer):string|null{
@@ -22,6 +33,11 @@ export function allowedFileType(filename:string,declared:string,bytes:Buffer){
   const expected=extension?extensionMime[extension]:undefined
   if(!expected)return false
   const supplied=declared.trim().toLowerCase().split(';',1)[0]
+  if(officeFormatPattern.test(filename)){
+    // The isolated scanner validates the complete package before publication.
+    return (!supplied||supplied===expected||supplied==='application/octet-stream'||supplied==='application/zip')
+      && bytes.length>=30 && bytes.readUInt32LE(0)===0x04034b50
+  }
   if(supplied&&supplied!=='application/octet-stream'&&supplied!==expected)return false
   return sniffFileType(bytes)===expected
 }

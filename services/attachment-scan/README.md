@@ -2,9 +2,13 @@
 
 This private Node worker streams up to 4 MiB of staged attachment bytes into ClamAV. It runs one scan at a time and admits at most eight requests. Each response includes the SHA-256 computed from the bytes ClamAV received. The application compares it with the digest of the immutable Storage object before recording a verdict.
 
+On clean PDF and Office scan requests, it also runs a bounded local parser. OOXML inspection accepts DOCX, DOCM, XLSX, XLSM, PPTX and PPTM packages within 256 entries, 12 MiB total expanded bytes, and 256 KiB per inspected XML part. It reads entries in memory, validates the main document and relationships, and reports macro, embedded-object and external-relationship markers. qpdf reads object metadata, including compressed PDF objects, without emitting content stream data. The inspector has process memory, CPU, output and wall-time limits. It neither renders files nor follows URLs. Files outside supported parser limits are rejected, and unavailable validation holds Office uploads. Use the updated worker to enable compressed PDF inspection.
+
+Inspection signals are separate from malware verdicts. They can occur in benign files. This worker uses deterministic local checks and sends no files to an AI provider.
+
 Build with `docker build -t sectalk-attachment-scan services/attachment-scan`. Mount a current, administrator-maintained official ClamAV signature directory read-only at `/definitions`. Keep the engine and definitions updated separately from the worker. The local regression uses a benign synthetic signature fixture, which is suitable only for testing.
 
-For the loopback regression, a test-only `.ndb` file can define `SecTalk.QA.Benign.Marker:0:*:<hex bytes>`, using the UTF-8 hexadecimal encoding of `SecTalk benign isolated scanner marker v6`. Run `node tests/attachment-scan-worker.e2e.mjs` with the local origin and secret.
+For the loopback regression, a test-only `.ndb` file can define `SecTalk.QA.Benign.Marker:0:*:<hex bytes>`, using the UTF-8 hexadecimal encoding of `SecTalk benign isolated scanner marker v6`. Run `node tests/attachment-scan-worker.e2e.mjs --documents` with the local origin and secret.
 
 Use a read-only, non-root container with dropped capabilities, no-new-privileges, CPU, memory and PID limits, and a bounded writable `/tmp` mount. Choose memory based on official definition size. Place the service behind private HTTPS ingress and block worker egress at the deployment network. For loopback-only QA use `http://127.0.0.1:3487`. Set `SECTALK_MALWARE_SCANNER_URL` on the app and configure the same independent 32-byte-minimum `SECTALK_MALWARE_SCANNER_SECRET` in both processes. Keep Storage credentials outside the scanner.
 

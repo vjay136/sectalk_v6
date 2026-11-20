@@ -1,7 +1,7 @@
 import { db } from './data'
 
 export const chatFileLimit = 4 * 1024 * 1024
-export const extensions = '.png,.jpg,.jpeg,.webp,.gif,.pdf,.txt'
+export const extensions = '.png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.docx,.docm,.xlsx,.xlsm,.pptx,.pptm'
 export type ChatFile = { id: string; message_id?: string; filename: string; size_bytes: number }
 export type ChatFileCapacity = {
   max_file_bytes: number
@@ -12,7 +12,7 @@ export type ChatFileCapacity = {
 
 export function supportedFile(file: File) {
   return file.size > 0 && file.size <= chatFileLimit &&
-    /\.(png|jpe?g|webp|gif|pdf|txt)$/i.test(file.name) && [...file.name].length <= 140
+    extensions.split(',').includes(file.name.slice(file.name.lastIndexOf('.')).toLowerCase()) && [...file.name].length <= 140
 }
 
 export async function getChatFileCapacity() {

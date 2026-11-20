@@ -101,11 +101,20 @@
 | P10 | Verify visible audit rows and sign filtered workspace exports | Genuine MFA, database integrity checks, Edge file export and independent Ed25519 verification |
 | P10 | Export anonymized daily and weekly security reports | Browser and API verified PDF and CSV, period boundaries and small-cohort suppression |
 | P5 | Add expiring view-only attachment sharing and optional watermark | Browser and SQL verify safe guest pixels, original-byte denial, view limits, expiry, revoke and audit |
+| P5 | Verify direct audio and video between isolated networks | Real Chromium endpoints with no direct transport and bidirectional RTP over disposable TURN |
+| P10 | Add the MFA-gated Security overview | SQL and browser verify queue arithmetic, incident scope, privacy-safe trend and audited response times |
+| P5 | Add bounded Office and compressed PDF inspection to the quarantine pipeline | Actual ClamAV worker and Edge verified clean files, scoped quarantine, benign macro/link/script markers and staff release |
+| P5 | Add consent-based live captions and saved transcripts | Offline Faster Whisper and Edge verified real speech, correct speakers, rejoin consent, transcript access and withdrawal |
+| P10 | Add scoped security incident workflow | Two verified staff browsers exercised linked report, responder assignment, status, timeline and postmortem |
+| P5 | Verify attachment inspection across all six detection categories | Type mismatch, macro, script and link markers, archive budgets and local hash reputation passed with benign fixtures |
+| P10 | Add private case notes, staff mentions and shared evidence links | Two TOTP browser sessions and SQL verify recipient-only alerts, audited evidence and reporter isolation |
+| P5 | Add room classification and prevent in-app forwarding downgrades | Browser labels and strong authorization, SQL visibility floors, forwarding rules and audited changes |
+| P10 | Add a role-scoped workspace overview | Browser and SQL verified health, plan seats, invitation alerts, adoption suppression and tenant boundaries |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 117 verified features. The next checkpoint is due at 127, and the matrix records evidence as each feature passes.
+Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 127 verified features. The next checkpoint is due at 137, and the matrix records evidence as each feature passes.
 
 ## Remaining work by dependency
 

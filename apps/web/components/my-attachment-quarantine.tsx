@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
+import { attachmentInspectionLabel } from '../lib/attachment-inspection'
 
 const labels = {
   quarantined: 'Scan unavailable',
@@ -9,7 +10,7 @@ const labels = {
   released: 'Released for sending',
   malware: 'Blocked by scanner',
 }
-type Item = { file_id: string; filename: string; state: keyof typeof labels; retain_until: string }
+type Item = { file_id: string; filename: string; state: keyof typeof labels; retain_until: string; inspection_reason: string | null }
 
 export function MyAttachmentQuarantine({ onPublished }: { onPublished: () => void }) {
   const [open, setOpen] = useState(false)
@@ -69,6 +70,7 @@ export function MyAttachmentQuarantine({ onPublished }: { onPublished: () => voi
     {rows?.length === 0 && <p>No pending attachments.</p>}
     {rows?.map(row => <article className="release-board-item" key={row.file_id}>
       <strong>{row.filename}</strong><p>{labels[row.state]}</p>
+      {row.inspection_reason && <p>Static inspection flagged {attachmentInspectionLabel(row.inspection_reason)?.toLowerCase()}.</p>}
       {(row.state === 'quarantined' || row.state === 'released') && <form onSubmit={event => void retry(event, row)}>
         <label>Caption<input name="caption" maxLength={4000}/></label>
         <button className="secondary" disabled={busy}>Retry sending</button>

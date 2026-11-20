@@ -14,6 +14,8 @@ import { RoomRetirement } from './room-retirement'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
+const classificationLabels={public:'Public',internal:'Internal',confidential:'Confidential',restricted:'Restricted'}
+type Classification=keyof typeof classificationLabels
 
 function RoomComposer({user,room,parent,staff,showAnnounce,working,canToggleTyping,shareTyping,onTyping,onStopTyping,onToggleTyping,onSend}:{
   user:string;room:string;parent:string|null;staff:boolean;showAnnounce:boolean;working:boolean
@@ -46,11 +48,14 @@ function RoomComposer({user,room,parent,staff,showAnnounce,working,canToggleTypi
       aria-pressed={shareTyping} onClick={onToggleTyping}>Share my typing</button>
   </form>
 }
-type Room={id:string;name:string;kind:Kind;template:Template;archived:boolean;locked:boolean;slow_seconds:number; forwarding_allowed:boolean}
+type Room={id:string;name:string;kind:Kind;template:Template;archived:boolean;locked:boolean;slow_seconds:number; forwarding_allowed:boolean;
+  classification:Classification}
 type Post={id:string;sender:string;body:string;kind:'message'|'announcement';created_at:string;edited_at:string|null;removed_at:string|null; forwarded:boolean}
 type Roster={user_id:string;role:Role}
 type Entry={user_id:string;kind:'invite'|'request';invited_role:Role;expires_at:string}
-type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:string;details:{from?:Kind;to?:Kind;previous_owners?:string[]}}
+type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:string;details:{
+  from?:Kind;to?:Kind;previous_owners?:string[];from_classification?:Classification;to_classification?:Classification
+}}
 type ThreadState={post_id:string;replies:number;following:boolean;excerpt:string}
 type DirectoryProps={space:string;user:string;manager:boolean;profiles:Record<string,Profile>;workspaceAdminIds:string[];allowedRoomKinds?:string[];initialRoom?:string}
 const kinds:Record<Kind,string>={public:'Workspace-wide',private:'Private',admin:'Admins only',announcement:'Announcements',broadcast:'Broadcast'}
@@ -87,7 +92,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
   const directoryVersion=useRef(0)
   const refresh=useCallback(async()=>{
     const version=++directoryVersion.current
-    const {data,error}=await db!.from('st_v6_rooms').select('id,name,kind,template,archived,locked,slow_seconds,forwarding_allowed').eq('workspace_id',space).order('name')
+    const {data,error}=await db!.from('st_v6_rooms').select('id,name,kind,template,archived,locked,slow_seconds,forwarding_allowed,classification').eq('workspace_id',space).order('name')
     if(version!==directoryVersion.current)return
     if(error){setError('Could not load room directory.');return}
     setRooms(data as Room[])
@@ -220,7 +225,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const roomTypingPulse=useRef<{parent:string|null;sentAt:number;stopped:boolean}|null>(null)
   const staff=role==='moderator'||role==='owner'
   const canPost=role&&role!=='read_only'&&!room.archived&&(staff||(!room.locked&&!['announcement','broadcast'].includes(room.kind)))
-  const forwardingAvailable=room.kind==='public'&&room.forwarding_allowed&&!room.archived&&!room.locked&&(staff||role==='member')
+  const canShareClassification=room.classification==='public'||room.classification==='internal'
+  const forwardingAvailable=room.kind==='public'&&canShareClassification&&room.forwarding_allowed&&!room.archived&&!room.locked&&(staff||role==='member')
   const refresh=useCallback(async()=>{
     const version=++refreshVersion.current
     const [identity,requests,members,messages,pinned,activity,blocked]=await Promise.all([
@@ -458,6 +464,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     {forwarding&&<ForwardMessageDialog key={forwarding} source={{kind:'room',conversation:room.id,message:forwarding}}
       close={()=>setForwarding(null)} onSent={()=>setNotice('Message forwarded.')}/>}
     <h2>{room.name}</h2><p>{kinds[room.kind]}{room.template!=='blank'?' · '+templates[room.template].name+' template':''}{room.archived?' · Archived':room.locked?' · Locked':''}{role?' · '+roleLabel(role):''}</p>
+    <p className="pill">{classificationLabels[room.classification]} classification</p>
     {role&&<div>
       <button type="button" className="secondary" aria-expanded={quietHours}
         onClick={()=>setQuietHours(!quietHours)}>Room quiet hours</button>
@@ -548,6 +555,23 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         </>}
       </>}
       {actualView==='settings'&&<>
+        {manager&&!room.archived&&<form className="release-form" key={room.classification} onSubmit={event=>{
+          event.preventDefault()
+          const classification=new FormData(event.currentTarget).get('classification')
+          void perform(async()=>{
+            await call('st_v6_set_room_classification',{p_room:room.id,p_classification:classification})
+            setNotice('Room classification saved.')
+          })
+        }}>
+          <h3>Data classification</h3>
+          <label>Classification<select name="classification" defaultValue={room.classification} required>
+            {Object.entries(classificationLabels).filter(([value])=> !['private','admin'].includes(room.kind)
+              ||value==='confidential'||value==='restricted')
+              .map(([value,label])=><option key={value} value={value}>{label}</option>)}
+          </select></label>
+          <p>Confidential and Restricted labels disable in-app forwarding. Room visibility controls access.</p>
+          <button className="secondary" disabled={working}>Save classification</button>
+        </form>}
         {receiptPolicy.settings&&<div className="release-section">
           <h3>Room read receipts</h3>
           {!receiptPolicy.settings.workspace_enabled&&<p>Workspace policy disables read receipts.</p>}
@@ -558,7 +582,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         {staff&&room.kind==='public'&&!room.archived&&<div className="release-section">
           <h3>Message forwarding</h3>
           <p>Allow members to forward text messages between this room and eligible rooms in this workspace.</p>
-          <button className="secondary" type="button" disabled={working} aria-pressed={room.forwarding_allowed}
+          <button className="secondary" type="button" disabled={working||!canShareClassification} aria-pressed={room.forwarding_allowed&&canShareClassification}
             onClick={()=>void perform(async()=>{
               await call('st_v6_set_room_forwarding',{p_room:room.id,p_allowed:!room.forwarding_allowed})
             })}>Allow message forwarding</button>
@@ -608,6 +632,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         <strong>{note.action.replaceAll('.',' ')}</strong><span>{name(note.actor)} · {new Date(note.occurred_at).toLocaleString()}</span>
         {note.action.startsWith('membership.')&&note.target&&<span>Member {name(note.target)}</span>}
         {note.details.from&&note.details.to&&<span>{kinds[note.details.from]} → {kinds[note.details.to]}</span>}
+        {note.details.from_classification&&note.details.to_classification&&
+          <span>{classificationLabels[note.details.from_classification]} → {classificationLabels[note.details.to_classification]}</span>}
         {note.details.previous_owners?.length?<span>Previous owner {note.details.previous_owners.map(name).join(', ')}</span>:null}
       </li>)}</ol>:<p>No room audit entries.</p>)}
     </>}

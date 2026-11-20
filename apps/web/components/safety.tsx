@@ -17,6 +17,9 @@ import { OperationalMetrics } from './operational-metrics'
 import { DirectAttachmentHolds, type DirectHoldTarget } from './direct-attachment-holds'
 import { AttachmentQuarantine } from './attachment-quarantine'
 import { QueueOperations } from './queue-operations'
+import { SecurityIncidents } from './security-incidents'
+import { SecurityCenterOverview } from './security-center-overview'
+import { CaseCollaboration, CaseCollaborationAlerts } from './case-collaboration'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
@@ -44,6 +47,7 @@ const labels: Record<string, string> = {
   submitted:'Report received', escalated:'Escalated for review', warn:'Account warning issued',
   restrict:'Seven-day restriction', remove:'Indefinite restriction',
   redacted:'Reported message removed',
+  case_note_added:'Collaboration note added', case_note_evidence_viewed:'Linked evidence opened',
 }
 
 function DateLabel({ value }: { value: string }) {
@@ -79,7 +83,9 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 export function Safety({ staff, refresh }: { staff: string; refresh: () => Promise<void> }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview'>('mine')
+  const [incidentRole, setIncidentRole] = useState('none')
+  const [incidentReport, setIncidentReport] = useState<string | null>(null)
   const [scanReviewer, setScanReviewer] = useState(false)
   const [holdTargets, setHoldTargets] = useState<DirectHoldTarget[]>([])
   const [flagOperator,setFlagOperator]=useState(false)
@@ -169,13 +175,26 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
     return () => { current = false; window.clearInterval(timer) }
   }, [refreshQueueStatus, staffAccess])
   const queueAccess = staffAccess ? queueStatus : 'none'
-  const visibleView=((view==='latency'||view==='usage'||view==='feedback'||view==='trends'||view==='operations')&&staff!=='verified')||(view==='queue'&&!staffAccess)
+  useEffect(() => {
+    if (staff !== 'verified') { setIncidentRole('none'); setIncidentReport(null); return }
+    let active = true
+    const update = async () => {
+      const { data, error } = await db!.rpc('st_v6_incident_access')
+      if (active) setIncidentRole(!error && (data === 'lead' || data === 'responder') ? data : 'none')
+    }
+    void update()
+    const timer = window.setInterval(update, 15000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [staff])
+  const incidentAccess = staff === 'verified' && incidentRole !== 'none'
+  const visibleView=((view==='overview'||view==='latency'||view==='usage'||view==='feedback'||view==='trends'||view==='operations')&&staff!=='verified')||(view==='queue'&&!staffAccess)
     ||(view==='release'&&!releaseAccess)||(view==='tenants'&&tenantStatus==='none')||(view==='delivery-queue'&&queueAccess==='none')
-    ||(view==='holds'&&!holdAccess)||(view==='quarantine'&&!scanAccess)?'mine':view
+    ||(view==='holds'&&!holdAccess)||(view==='quarantine'&&!scanAccess)||(view==='incidents'&&!incidentAccess)?'mine':view
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
     <SectionTabs label="Safety center sections" value={visibleView} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
+      ...(staff==='verified'?[['overview','Security overview'] as const]:[]),
       ['mine','My reports'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
       ...(staff==='verified'?[['latency','Delivery metrics'] as const,['usage','Usage metrics'] as const,
         ['feedback','Warning feedback'] as const,['trends','Threat trends'] as const,['operations','Operational metrics'] as const]:[]),
@@ -184,13 +203,16 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
       ...(holdAccess?[['holds','Attachment holds'] as const]:[]),
       ...(scanAccess?[['quarantine','Attachment quarantine'] as const]:[]),
       ...(queueAccess!=='none'?[['delivery-queue','Queue operations'] as const]:[]),
+      ...(incidentAccess?[['incidents','Incidents'] as const]:[]),
     ]}/>
-    {visibleView==='latency'?<DeliveryLatency revision={analyticsRevision}/>:visibleView==='usage'?<UsageMetrics revision={analyticsRevision}/>:visibleView==='release'?<ReleaseControls/>:
+    {visibleView==='overview'?<SecurityCenterOverview/>:
+      visibleView==='latency'?<DeliveryLatency revision={analyticsRevision}/>:visibleView==='usage'?<UsageMetrics revision={analyticsRevision}/>:visibleView==='release'?<ReleaseControls/>:
       visibleView==='feedback'?<RiskFeedback/>:
       visibleView==='trends'?<ThreatTrends/>:
       visibleView==='operations'?<OperationalMetrics/>:
       visibleView==='holds'?<DirectAttachmentHolds targets={holdTargets}/>:
       visibleView==='quarantine'?<AttachmentQuarantine/>:
+      visibleView==='incidents'?<SecurityIncidents report={incidentReport} onLinked={()=>setIncidentReport(null)}/>:
       visibleView==='delivery-queue' ? (queueAccess === 'verified'
         ? <QueueOperations onAccessChanged={refreshQueueStatus}/>
         : <StaffMfa refresh={async () => { await refreshQueueStatus(); await refresh() }}
@@ -199,7 +221,9 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
         ? <TenantOperations onAccessChanged={refreshTenantStatus}/>
         : <StaffMfa refresh={async () => { await refreshTenantStatus(); await refresh() }}
           explanation="An authenticator code is required to view workspace metadata."/>) :
-      visibleView==='queue' ? (staff === 'verified' ? <QueuePanel /> : <StaffMfa refresh={refresh}/>) :
+      visibleView==='queue' ? (staff === 'verified' ? <QueuePanel linkIncident={incidentAccess ? reportId => {
+        setIncidentReport(reportId);setView('incidents')
+      } : undefined} /> : <StaffMfa refresh={refresh}/>) :
       visibleView==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
         {error&&<p role="alert" className="error">{error}</p>}
         {!notices.length&&<p>No account notices.</p>}
@@ -280,7 +304,7 @@ function StaffMfa({ refresh, explanation = 'An authenticator code is required to
   </div>
 }
 
-function QueuePanel() {
+function QueuePanel({linkIncident}: {linkIncident?: (report: string) => void}) {
   const [rows, setRows] = useState<QueueTimer[] | null>(null)
   const [selected, setSelected] = useState<Case | null>(null)
   const [offset, setOffset] = useState(0)
@@ -315,6 +339,7 @@ function QueuePanel() {
     if (error) setError(formatError(error, 'Could not load case.'))
     else setSelected(data as Case)
     setWorking(false)
+    return !error && Boolean(data)
   }
 
   async function action(event: FormEvent<HTMLFormElement>) {
@@ -341,6 +366,7 @@ function QueuePanel() {
   return <div className="panel"><div className="panel-header"><h2><ShieldAlert size={20}/> {selected ? 'Report details' : 'Moderation queue'}</h2>
     <button className="secondary" disabled={working} onClick={() => { if (selected) { setSelected(null); setError('') } else void load() }}>{selected ? 'Back to queue' : 'Refresh'}</button></div>
     {error && <p className="error" role="alert">{error}</p>}
+    {!selected && <CaseCollaborationAlerts open={open}/>}
     {selected ? <div className="case">
       <span className={'pill state-' + selected.status}>{labels[selected.status]}</span>
       <h2>{categories[selected.category]}</h2><p>@{selected.subject_handle} · <DateLabel value={selected.created_at}/></p>
@@ -354,10 +380,13 @@ function QueuePanel() {
       {selected.suspended_until==='infinity'&&<p className="warning">Restricted until staff restore access</p>}
       <h3>Reporter notes</h3><p className="case-text">{selected.details || 'No notes provided.'}</p>
       <h3>Shared evidence</h3>{selected.evidence ? <blockquote>{selected.evidence}</blockquote> : <p>No message was attached.</p>}
+      {linkIncident&&<button type="button" className="secondary" disabled={working}
+        onClick={()=>linkIncident(selected.id)}>Link report to incident</button>}
       {selected.attachment&&<button type="button" className="secondary" onClick={async()=>{
         if(!selected.attachment)return
         try{await downloadChatFile(selected.attachment)}catch{setError('Evidence attachment could not be downloaded.')}
       }}>Download shared file</button>}
+      <CaseCollaboration key={selected.id} report={selected.id}/>
       <form onSubmit={action}><h3>Record a decision</h3><label>Action<select name="action" required defaultValue="reviewing">
         <option value="reviewing">Mark in review</option><option value="escalated">Escalate for review</option>
         {selected.message_redaction_available&&<option value="redact_message">Redact reported message</option>}

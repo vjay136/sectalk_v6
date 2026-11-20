@@ -7,7 +7,7 @@ type Share = { id: string; expires_at: string; max_downloads: number; downloads:
   view_only: boolean; watermark: boolean }
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
-export function AttachmentShareLinks({ file, onChanged }: { file: string; onChanged: () => void }) {
+export function AttachmentShareLinks({ file, onChanged, allowPreview }: { file: string; onChanged: () => void; allowPreview: boolean }) {
   const [links, setLinks] = useState<Share[]>([])
   const [created, setCreated] = useState('')
   const [busy, setBusy] = useState(false)
@@ -79,9 +79,9 @@ export function AttachmentShareLinks({ file, onChanged }: { file: string; onChan
         <option value="900">15 minutes</option><option value="3600">1 hour</option>
         <option value="86400">1 day</option><option value="604800">7 days</option>
       </select></label>
-      <label>Link access<select value={viewOnly ? 'preview' : 'download'} onChange={event=>setViewOnly(event.target.value==='preview')}>
+      {allowPreview && <label>Link access<select value={viewOnly ? 'preview' : 'download'} onChange={event=>setViewOnly(event.target.value==='preview')}>
         <option value="download">Allow downloading</option><option value="preview">View only</option>
-      </select></label>
+      </select></label>}
       {viewOnly && <label className="task-check"><input name="watermark" type="checkbox" defaultChecked/> Watermark previews</label>}
       <label>{viewOnly ? 'Maximum previews' : 'Maximum downloads'}<input name="downloads" type="number" min={1} max={100} defaultValue={5} required/></label>
       <button className="secondary" disabled={busy}>Create share link</button>

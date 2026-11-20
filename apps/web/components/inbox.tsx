@@ -188,6 +188,11 @@ export function Inbox({ user }: { user: string }) {
           case 'admin.room': announceAlert('New activity in a workspace admin room.',payload.priority); break
         }
       })
+      .on('broadcast', { event: 'case_collaboration' }, () => {
+        void db!.rpc('st_v6_case_collaboration_alerts', { p_unread_only: true }).then(({ data, error }) => {
+          if (!error && Array.isArray(data) && data.length) setNotice('You have a new staff case mention.')
+        })
+      })
       .on('broadcast', { event: 'workspace_memberships' }, () => { void reloadWorkspaces(); void refresh() })
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))
@@ -1285,7 +1290,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         if(fileCapacity && file.size>fileCapacity.max_file_bytes){
           inform('Your limit is '+formatChatFileBytes(fileCapacity.max_file_bytes)+' per attachment.');return
         }
-        if(!supportedFile(file)){inform('Choose an image, PDF or text file up to 4 MiB.');return}
+        if(!supportedFile(file)){inform('Choose an image, PDF, text or supported Office file up to 4 MiB.');return}
         setReplying(null);setAttachment({file,id:crypto.randomUUID()})
       }}/>
       <button type="button" className="icon" title="Attach file" aria-label="Attach file"
