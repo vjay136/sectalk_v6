@@ -51,3 +51,7 @@ Supabase checks each source table’s read permissions before returning search r
 ## PLAT-08 · Offline shell
 
 The app manifest declares a standalone start URL and 192 and 512 pixel icons. The service worker keeps a single public offline document in its cache. A same-origin navigation falls back to that document when the network fails. The document links back to the app so users can retry once connected. Authenticated HTML, API responses, attachment bytes, and message content are excluded from the cache.
+
+## CALL-06 · Meeting lobby
+
+Workspace members request admission before joining media. The active host can admit or decline a waiting participant or choose Admit all eligible attendees. Bulk admission fills available seats in request order, up to the 12-person meeting limit including the host. It checks current membership, account status and blocks. Individual and bulk decisions update attendance, record an audit entry and notify each affected attendee privately. The media-token route checks that the attendee is admitted, the meeting is live and the host and attendee remain eligible.

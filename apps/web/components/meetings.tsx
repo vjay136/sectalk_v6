@@ -103,6 +103,7 @@ function MeetingDetail({meeting,user,mediaReady,host,refresh}: {
   const [error,setError]=useState('')
   const [busy,setBusy]=useState(false)
   const [media,setMedia]=useState<{url:string;token:string}|null>(null)
+  const [lobbyNotice,setLobbyNotice]=useState('')
   const reload=useCallback(async () => {
     const result=await db!.from('st_v3_attendance').select('*').eq('meeting_id',meeting.id).order('requested_at').limit(100)
     if(result.error) return
@@ -127,10 +128,14 @@ function MeetingDetail({meeting,user,mediaReady,host,refresh}: {
 
   async function action(name:string,input:Record<string,unknown>) {
     if(busy) return
-    setBusy(true);setError('')
+    setBusy(true);setError('');setLobbyNotice('')
     try {
-      const {error}=await db!.rpc(name,{p_meeting:meeting.id,...input})
+      const {data,error}=await db!.rpc(name,{p_meeting:meeting.id,...input})
       if(error) throw error
+      if(name==='st_v6_admit_all'&&typeof data==='number'){
+        setLobbyNotice(data===0?'No eligible attendees could be admitted.':
+          data===1?'Admitted 1 attendee.':'Admitted '+data+' attendees.')
+      }
       await Promise.all([refresh(),reload()])
     } catch(error){setError(formatError(error,'The meeting action failed.'))}
     finally{setBusy(false)}
@@ -163,6 +168,9 @@ function MeetingDetail({meeting,user,mediaReady,host,refresh}: {
     </div>}
     {media && self==='admitted' && !ended && <MeetingMedia {...media} leave={refreshMedia}/>}
     {host && <section className="release-section"><h2>Waiting room and attendance</h2>
+      {meeting.status==='live'&&!ended&&people.some(person=>person.status==='waiting')&&
+        <button className="primary" type="button" disabled={busy} onClick={()=>void action('st_v6_admit_all',{})}>Admit all eligible attendees</button>}
+      {lobbyNotice&&<p role="status">{lobbyNotice}</p>}
       {!people.length&&<p>No attendees yet.</p>}
       {people.map(person=><div className="release-row" key={person.user_id}><strong>{profiles[person.user_id]?.name||'Workspace member'}</strong><span className="pill">{person.status}</span>
         {person.admitted_at&&<time dateTime={person.admitted_at}>{new Date(person.admitted_at).toLocaleString()}</time>}

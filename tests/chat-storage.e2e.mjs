@@ -269,7 +269,7 @@ if(app) {
       await second.getByRole('button',{name:'Unread',exact:true}).click()
       await second.getByText('You have no unread notifications.',{exact:true}).waitFor()
       const startsAt=Date.now()+60_000
-      data(await sender.client.rpc('st_v3_schedule',{
+      const meeting=data(await sender.client.rpc('st_v3_schedule',{
         p_workspace:workspace,p_title:'Browser notification meeting',p_agenda:'',
         p_start:new Date(startsAt).toISOString(),p_end:new Date(startsAt+60*60_000).toISOString(),p_id:randomUUID(),
       }))
@@ -284,6 +284,38 @@ if(app) {
       await second.getByRole('button',{name:'Unread task updates',exact:true}).waitFor()
       await meetingNotice.waitFor({state:'detached'})
       console.log('Passed live meeting notification, read and unread filters, and notification grouping.')
+
+      const navigateMeeting=async page=>{
+        await page.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Meetings',exact:true}).click()
+        await page.getByRole('button',{name:'Browser notification meeting',exact:true}).click()
+      }
+      await Promise.all([navigateMeeting(first),navigateMeeting(second)])
+      await first.getByRole('button',{name:'Open waiting room',exact:true}).click()
+      await second.getByRole('button',{name:'Request admission',exact:true}).click()
+      await second.getByText('Waiting for the host to admit you',{exact:true}).waitFor()
+      assert.equal(await second.getByRole('button',{name:'Admit all eligible attendees',exact:true}).count(),0)
+      assert.equal(data(await recipient.client.rpc('st_v3_media_access',{p_meeting:meeting})),false)
+      const tokenRequest=async ()=>{
+        const session=data(await recipient.client.auth.getSession()).session
+        return fetch(app+'/api/meetings/token',{
+          method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},
+          body:JSON.stringify({meetingId:meeting}),
+        })
+      }
+      if(process.env.SECTALK_TEST_LOCAL_MEETING_TOKEN==='1')assert.equal((await tokenRequest()).status,403)
+      await first.getByRole('button',{name:'Admit all eligible attendees',exact:true}).click()
+      await first.getByText('Admitted 1 attendee.',{exact:true}).waitFor()
+      await second.getByText('Waiting for the host to admit you',{exact:true}).waitFor({state:'detached'})
+      assert.equal(data(await recipient.client.rpc('st_v3_media_access',{p_meeting:meeting})),true)
+      if(process.env.SECTALK_TEST_LOCAL_MEETING_TOKEN==='1'){
+        const issued=await tokenRequest()
+        assert.equal(issued.status,200)
+        const {token}=await issued.json()
+        const claims=JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString())
+        assert.equal(claims.sub,recipient.user)
+        assert.equal(claims.video.room,'sectalk-v3-'+meeting)
+      }
+      console.log('Passed two-browser waiting room, host bulk admission, and server media admission.')
       await first.getByRole('button',{name:'Inbox',exact:true}).click()
     }
     await first.getByRole('button',{name:'Find Friends',exact:true}).first().click()
