@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bell, Check, Search } from 'lucide-react'
 import { db, liveChannel, onReconnect } from '../lib/data'
 import { SectionTabs } from './section-tabs'
@@ -22,8 +22,14 @@ const searchParams=({query,kind,filters}:SearchRequest)=>{
   if(end)end.setDate(end.getDate()+1)
   return {p_query:query,p_kind:kind==='all'?null:kind,p_filters:{...other,from:start?.toISOString(),until:end?.toISOString()}}
 }
-type Notification = { id:number; kind:string; meeting_id:string; created_at:string; read_at:string|null }
+type Notification = { id:number; kind:string; meeting_id:string|null; room_id:string|null; workspace_id:string; created_at:string; read_at:string|null }
 const notificationText:Record<string,string>={'meeting.scheduled':'A workspace meeting was scheduled','meeting.started':'A workspace meeting has started','meeting.admitted':'The host admitted you to a meeting','meeting.declined':'A host declined your meeting request'}
+const mentionDetails:Record<string,{label:string;priority:number}>={
+  'mention.user':{label:'You were mentioned directly',priority:4},
+  'mention.group':{label:'Your group was mentioned',priority:3},
+  'mention.here':{label:'Online room members were mentioned',priority:2},
+  'mention.channel':{label:'Everyone in your room was mentioned',priority:1},
+}
 
 function highlight(text:string,terms:string) {
   if(!terms)return text
@@ -203,51 +209,133 @@ export function GlobalSearch({ openChat,openMeeting,openPalette,initialQuery='' 
   </section>
 }
 
-export function Notifications({user,openMeeting}: {user:string;openMeeting:(id:string)=>void}) {
+type DigestEntry={id:string;occurred_at:string;label:string}&(
+  {kind:'call.missed';chat_id:string;video:boolean}
+  |{kind:'mention.user'|'mention.group'|'mention.here'|'mention.channel';workspace_id:string;room_id:string}
+)
+type DigestNavigation={openRoom:(workspace:string,room:string)=>void;openChat:(id:string)=>void}
+
+function NotificationDigest({openRoom,openChat}:DigestNavigation) {
+  const [days,setDays]=useState<'1'|'7'>('1')
+  const [entries,setEntries]=useState<DigestEntry[]|null>(null)
+  const [error,setError]=useState(false)
+  const requestVersion=useRef(0)
+  const reload=useCallback(async()=>{
+    const version=++requestVersion.current
+    setError(false)
+    const result=await db!.rpc('st_v6_notification_digest',{p_days:Number(days)})
+    if(version!==requestVersion.current)return
+    if(result.error){setError(true);return}
+    setEntries(result.data as DigestEntry[])
+  },[days])
+
+  useEffect(()=>{
+    void reload()
+    return ()=>{requestVersion.current++}
+  },[reload])
+
+  const calls=entries?.filter(item=>item.kind==='call.missed')
+  const mentions=entries?.filter(item=>item.kind!=='call.missed')
+  return <>
+    <div className="release-row">
+      <SectionTabs label="Digest period" value={days} onChange={next=>{if(next!==days){setEntries(null);setDays(next)}}} options={ [['1','Last 24 hours'],['7','Last 7 days']] }/>
+      <button className="secondary" onClick={()=>void reload()}>Refresh digest</button>
+    </div>
+    {error&&<p role="alert" className="error">Could not load your digest.</p>}
+    {!error&&entries===null&&<p role="status">Loading digest…</p>}
+    {entries&&<div className="panel release-panel">
+      <section aria-label="Missed calls">
+        <h2>Missed calls</h2>
+        {calls?.length===0&&<p>No missed calls in this period.</p>}
+        {calls?.length===50&&<p>Showing the latest 50 missed calls.</p>}
+        {calls?.map(item=><article className="release-board-item" key={item.id}>
+          <div className="release-row"><strong>{item.label}</strong><DigestTime value={item.occurred_at}/></div>
+          <p>Missed {item.video?'video':'audio'} call</p>
+          <button className="secondary" onClick={()=>openChat(item.chat_id)}>Open conversation</button>
+        </article>)}
+      </section>
+      <section aria-label="Mentions">
+        <h2>Mentions</h2>
+        {mentions?.length===0&&<p>No mentions in this period.</p>}
+        {mentions?.length===50&&<p>Showing the latest 50 mentions.</p>}
+        {mentions?.map(item=><article className="release-board-item" key={item.id}>
+          <div className="release-row"><strong>{mentionDetails[item.kind].label}</strong><DigestTime value={item.occurred_at}/></div>
+          <p>{item.label}</p>
+          <button className="secondary" onClick={()=>openRoom(item.workspace_id,item.room_id)}>View room</button>
+        </article>)}
+      </section>
+    </div>}
+  </>
+}
+
+function DigestTime({value}:{value:string}) {
+  return <time dateTime={value}>{new Date(value).toLocaleString()}</time>
+}
+
+export function Notifications({user,openMeeting,openRoom,openChat}: DigestNavigation & {
+  user:string;openMeeting:(id:string)=>void
+}) {
   const [items,setItems]=useState<Notification[]|null>(null)
-  const [category,setCategory]=useState<'meetings'|'tasks'>('meetings')
+  const [category,setCategory]=useState<'meetings'|'mentions'|'tasks'|'digest'>('meetings')
   const [filter,setFilter]=useState<'all'|'unread'>('all')
   const [headings,setHeadings]=useState<Record<string,string>>({})
   const [error,setError]=useState('')
+  const requestVersion=useRef(0)
   const reload=useCallback(async ()=>{
-    const {data,error}=await db!.from('st_v3_notifications').select('id,kind,meeting_id,created_at,read_at').eq('recipient',user).order('id',{ascending:false}).limit(100)
+    if(category==='tasks'||category==='digest')return
+    const version=++requestVersion.current
+    let query=db!.from('st_v3_notifications').select('id,kind,meeting_id,room_id,workspace_id,created_at,read_at').eq('recipient',user)
+      .like('kind',category==='mentions'?'mention.%':'meeting.%')
+    if(filter==='unread')query=query.is('read_at',null)
+    const {data,error}=await query.order('id',{ascending:false}).limit(100)
+    if(version!==requestVersion.current)return
     if(error){setError('Could not load notifications.');return}
     setItems(data as Notification[])
-    const ids=[...new Set(data.flatMap(row=>row.meeting_id?[row.meeting_id]:[]))]
-    if(ids.length){
-      const result=await db!.from('st_v3_meetings').select('id,title').in('id',ids)
-      if(result.data)setHeadings(Object.fromEntries(result.data.map(row=>[row.id,row.title])))
-    }
     setError('')
-  },[user])
+    if(category==='mentions'){
+      const ids=[...new Set(data.flatMap(row=>row.room_id?[row.room_id]:[]))]
+      if(!ids.length)return
+      const result=await db!.from('st_v6_rooms').select('id,name').in('id',ids)
+      if(result.data&&version===requestVersion.current)setHeadings(Object.fromEntries(result.data.map(row=>[row.id,row.name])))
+    }else{
+      const ids=[...new Set(data.flatMap(row=>row.meeting_id?[row.meeting_id]:[]))]
+      if(!ids.length)return
+      const result=await db!.from('st_v3_meetings').select('id,title').in('id',ids)
+      if(result.data&&version===requestVersion.current)setHeadings(Object.fromEntries(result.data.map(row=>[row.id,row.title])))
+    }
+  },[category,filter,user])
   useEffect(()=>{
+    if(category==='tasks'||category==='digest')return
     void reload()
     const channel=liveChannel('notifications:'+user,reload).on('postgres_changes',{event:'*',schema:'public',table:'st_v3_notifications',filter:'recipient=eq.'+user},reload).subscribe()
     const reconnect=onReconnect(reload)
     const timer=window.setInterval(reload,10000)
-    return ()=>{reconnect();window.clearInterval(timer);void db!.removeChannel(channel)}
-  },[reload,user])
+    return ()=>{requestVersion.current++;reconnect();window.clearInterval(timer);void db!.removeChannel(channel)}
+  },[category,reload,user])
   async function mark(id:number|null) {
-    const {error}=await db!.rpc('st_v3_mark_notification',{p_id:id})
+    const {error}=await db!.rpc('st_v3_mark_notification',{p_id:id,p_category:category==='mentions'?'mention':'meeting'})
     if(error)setError('Could not mark notifications as read.')
     else await reload()
   }
-  const visible=items?.filter(item=>filter==='all'||!item.read_at)
+  const visible=items?.filter(item=>(category==='mentions'?Boolean(item.room_id):Boolean(item.meeting_id))
+    &&(filter==='all'||!item.read_at))
+  if(category==='mentions')visible?.sort((a,b)=>(mentionDetails[b.kind]?.priority||0)-(mentionDetails[a.kind]?.priority||0))
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Bell size={22}/></div><div><h1>Notifications</h1></div></header>
-    <SectionTabs label="Notification categories" value={category} onChange={setCategory} options={ [['meetings','Meetings'],['tasks','Task updates']] }/>
-    {category==='tasks'?<TaskNotices user={user}/>:<>
+    <SectionTabs label="Notification categories" value={category} onChange={next=>{if(next!==category){setItems(null);setCategory(next)}}} options={ [['meetings','Meetings'],['mentions','Mentions'],['tasks','Task updates'],['digest','Digest']] }/>
+    {category==='tasks'?<TaskNotices user={user}/>:category==='digest'?<NotificationDigest openRoom={openRoom} openChat={openChat}/>:<>
     {error&&<p role="alert" className="error">{error}</p>}
     <SectionTabs label="Notification filters" value={filter} onChange={setFilter} options={ [['all','All updates'], ['unread','Unread']] }/>
-    <button className="secondary" disabled={!items?.some(item=>!item.read_at)} onClick={()=>void mark(null)}><Check size={15}/> Mark all read</button>
+    <button className="secondary" disabled={!visible?.some(item=>!item.read_at)} onClick={()=>void mark(null)}><Check size={15}/> Mark all read</button>
     <div className="panel release-panel">
       {items===null&&<p>Loading notifications…</p>}
       {visible?.length===0&&<p>{filter==='unread'?'You have no unread notifications.':'You have no notifications yet.'}</p>}
       {visible?.map(item=><article className="release-board-item" key={item.id}><div className="release-row">
-        {!item.read_at&&<span className="status-dot" aria-label="Unread"/>}<strong>{notificationText[item.kind]||'Workspace update'}</strong>
+        {!item.read_at&&<span className="status-dot" aria-label="Unread"/>}<strong>{mentionDetails[item.kind]?.label||notificationText[item.kind]||'Workspace update'}</strong>
         <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time>
-      </div><p>{headings[item.meeting_id]}</p><div className="release-row">
-        <button className="secondary" onClick={()=>{void mark(item.id);openMeeting(item.meeting_id)}}>View meeting</button>
+      </div>{(item.room_id||item.meeting_id)&&<p>{headings[(item.room_id||item.meeting_id)!]}</p>}<div className="release-row">
+        {item.meeting_id&&<button className="secondary" onClick={()=>{void mark(item.id);openMeeting(item.meeting_id!)}}>View meeting</button>}
+        {item.room_id&&<button className="secondary" onClick={()=>{void mark(item.id);openRoom(item.workspace_id,item.room_id!)}}>View room</button>}
         {!item.read_at&&<button className="text-button" onClick={()=>void mark(item.id)}>Mark read</button>}
       </div></article>)}
     </div>

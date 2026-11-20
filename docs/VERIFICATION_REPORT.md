@@ -6,8 +6,8 @@
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
-| Unit tests | 14 passed, including file type and ticket checks, calendar export, readiness, safety heuristics, vault, emoji data and disclosure configuration |
-| Supabase database integration | All 36 rollback suites passed, including channel and room lifecycle, quiet-hours delivery, search filters, and the audit chain |
+| Unit tests | 16 passed, including versioned warning scores, confidence and severity thresholds alongside existing file, calendar, readiness, vault and disclosure checks |
+| Supabase database integration | All 40 rollback suites passed, including workspace roster, room mentions, notification digest and private warning feedback |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -52,9 +52,14 @@
 | Room and channel management | Browser and SQL checks covered changing visibility, explicit private membership, ownership transfer, archive and restore, posting restrictions and audit scope. Managers without private membership could manage metadata while message reads remained restricted. |
 | Search filters | SQL checked permissions and filter semantics. The browser verified room, sender, dates, type, status, has-file, mentions and saved filter restoration. |
 | Audit integrity | SQL checked the SHA-256 journal, hourly verifier configuration, source-row changes, cascades, and rewind detection with an independently held digest. A hosted destination for independent receipt retention is pending. |
+| Workspace membership | Browser verified bulk invitations for existing handles and workspace access disappearing and returning after a member was suspended and restored. SQL verified role and workspace isolation. |
+| Room mention priority | SQL and browser verified eligible recipients, quiet-hour filtering, direct mention priority, live delivery, read state and room links. |
+| Missed-call and mention digest | SQL verified recipient scope, room access removal and period boundaries. Browser verified the 24-hour and seven-day views and navigation to room and chat. |
+| Meeting network adaptation | Two browsers exchanged media over a real loopback LiveKit server while the test injected poor and recovered quality signals. The test verified lower video quality, continuous audio, and pause and resume of incoming and outgoing video. Impaired WAN and physical devices remain unverified. |
+| Warning score and feedback | Unit tests verified score, confidence and severity limits. Browser checked the warning evidence and feedback payload. SQL validated access, deduplication, and aggregate review. Staff reached Warning feedback after a real TOTP challenge. |
 | Local database security advisor | No warning or error reported for the isolated candidate at test time. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
-| Updated candidate | `npm run build` passed with room and channel management, conversation quiet hours and search filters. |
+| Updated candidate | `npm run build` passed with roster controls, room mentions and digests, meeting network adaptation and warning feedback. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |
 | Production npm dependency advisory check | 0 reported advisories at test time |

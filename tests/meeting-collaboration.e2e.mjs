@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
+import { ConnectionQuality, SignalRequest, SignalResponse, VideoQuality } from '@livekit/protocol'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
@@ -47,6 +48,9 @@ const browser = await chromium.launch({
 })
 
 const diagnostics = []
+let setHostQuality
+const videoSettings = []
+const subscriptions = []
 async function open(person) {
   const page = await browser.newPage({ locale: 'en-US', permissions: ['microphone', 'camera'] })
   page.on('console', event => {
@@ -57,6 +61,49 @@ async function open(person) {
     const every = window.setInterval.bind(window)
     window.setInterval = (handler, delay, ...args) => every(handler, delay === 5000 ? 30000 : delay, ...args)
   })
+  if (person === host) {
+    await page.addInitScript(() => {
+      const replaceTrack = RTCRtpSender.prototype.replaceTrack
+      window.pausedVideoSenders = new Set()
+      RTCRtpSender.prototype.replaceTrack = async function (track) {
+        const pausingVideo = track === null && this.track?.kind === 'video'
+        await replaceTrack.call(this, track)
+        if (pausingVideo) window.pausedVideoSenders.add(this)
+        else if (track?.kind === 'video') window.pausedVideoSenders.delete(this)
+      }
+    })
+    // Replace the host's own quality updates while forwarding real signaling and media traffic.
+    await page.routeWebSocket(/^ws:\/\/127\.0\.0\.1:7880\/rtc(?:[/?]|$)/, client => {
+      const server = client.connectToServer()
+      let hostSid
+      let forced = false
+      client.onMessage(message => {
+        if (typeof message !== 'string') {
+          const request = SignalRequest.fromBinary(message).message
+          if (request.case === 'trackSetting') videoSettings.push(request.value)
+          if (request.case === 'subscription') subscriptions.push(request.value)
+        }
+        server.send(message)
+      })
+      server.onMessage(message => {
+        if (typeof message === 'string') return client.send(message)
+        const response = SignalResponse.fromBinary(message)
+        if (response.message.case === 'join') hostSid = response.message.value.participant?.sid
+        if (response.message.case === 'connectionQuality' && forced) {
+          response.message.value.updates = response.message.value.updates.filter(update => update.participantSid !== hostSid)
+          return client.send(Buffer.from(response.toBinary()))
+        }
+        client.send(message)
+      })
+      setHostQuality = quality => {
+        assert.ok(hostSid)
+        forced = true
+        client.send(Buffer.from(new SignalResponse({ message: { case: 'connectionQuality', value: {
+          updates: [{ participantSid: hostSid, quality }],
+        } } }).toBinary()))
+      }
+    })
+  }
   await page.goto(link.href)
   await page.getByLabel('Email address', { exact: true }).fill(person.email)
   await page.getByLabel('Password', { exact: true }).fill(password)
@@ -76,6 +123,7 @@ const tile = (page, name) => stage(page).locator('.lk-participant-tile').filter(
 const focused = (page, person) => stage(page).locator('[data-focused-participant="' + person.id + '"]')
 const button = (page, name) => page.getByRole('button', { name, exact: true })
 const realtimeTimeout = 6500
+const networkStatus = page => stage(page).getByRole('status').filter({ hasText: 'Network:' })
 
 try {
   const [hostPage, guestPage] = await Promise.all([open(host), open(guest)])
@@ -117,6 +165,37 @@ try {
   await guestPage.waitForFunction(() => [...document.querySelectorAll('.meeting-media audio')].some(audio =>
     audio.srcObject?.getAudioTracks().length && audio.currentTime > 0))
   await tile(guestPage, host.name).locator('[data-lk-muted=true]').waitFor({ state: 'detached' })
+
+  await button(guestPage, 'Camera').click()
+  const guestVideo = tile(hostPage, guest.name).locator('video')
+  await guestVideo.waitFor()
+  await guestVideo.evaluate(video => video.play())
+  const settingsStart = videoSettings.length
+  setHostQuality(ConnectionQuality.POOR)
+  await networkStatus(hostPage).getByText('Network: Poor · Reduced video quality').waitFor()
+  await networkStatus(hostPage).getByText('Network: Poor · Audio-only').waitFor({ timeout: 7000 })
+  await stage(hostPage).getByText('Video paused to keep audio clear').waitFor()
+  await guestVideo.waitFor({ state: 'detached' })
+  await hostPage.waitForFunction(() => window.pausedVideoSenders.size > 0)
+  const lowVideo = videoSettings.slice(settingsStart).find(setting => setting.quality === VideoQuality.LOW && !setting.width && !setting.disabled)
+  assert.ok(lowVideo, 'LiveKit should receive a low video quality request')
+  const [guestVideoSid] = lowVideo.trackSids
+  assert.ok(subscriptions.some(subscription => subscription.trackSids.includes(guestVideoSid) && !subscription.subscribe))
+  const audio = stage(guestPage).locator('audio').first()
+  const audioTime = await audio.evaluate(element => element.currentTime)
+  await guestPage.waitForFunction(time => document.querySelector('.meeting-media audio')?.currentTime > time + 0.25, audioTime)
+  assert.equal(await camera.getAttribute('aria-pressed'), 'true')
+  assert.equal(await microphone.getAttribute('aria-pressed'), 'true')
+  setHostQuality(ConnectionQuality.GOOD)
+  await networkStatus(hostPage).getByText('Network: Good · Audio-only').waitFor()
+  setHostQuality(ConnectionQuality.EXCELLENT)
+  await networkStatus(hostPage).getByText('Network: Excellent', { exact: true }).waitFor({ timeout: 11000 })
+  await hostPage.waitForFunction(() => window.pausedVideoSenders.size === 0)
+  await guestVideo.waitFor()
+  await guestVideo.evaluate(video => video.play())
+  assert.ok(subscriptions.some(subscription => subscription.trackSids.includes(guestVideoSid) && subscription.subscribe))
+  await button(guestPage, 'Camera').click()
+
   await microphone.click()
   await tile(guestPage, host.name).locator('[data-lk-muted=true]').waitFor()
   await camera.click()
@@ -146,4 +225,4 @@ try {
   await browser.close()
 }
 
-console.log('Passed two-browser in-call roster and chat, synthetic camera and mic delivery/mute, local pin, shared spotlight, and access cleanup.')
+console.log('Passed two-browser roster, chat, camera and microphone, quality adaptation, audio-only recovery, pin, spotlight, and access cleanup.')

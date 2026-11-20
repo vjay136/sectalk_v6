@@ -49,6 +49,11 @@
 | P5 | Manage visibility, ownership, membership and archives for rooms and workspace channels | Room and channel lifecycle SQL and browser tests, including private history restrictions for managers |
 | P5 | Add saved room, sender, date, type, status, file and mention filters | Search SQL and integrated browser checks for all filters and saved value restoration |
 | P10 | Journal existing audit changes and periodically verify and checkpoint the chain | Audit integrity SQL fixture covers edit, delete, chain corruption and a checkpoint held outside the database. Independent log retention for the hosted target remains open. |
+| P5 | Suspend and restore workspace members and invite existing accounts from CSV | Workspace roster SQL and two-browser invitations, suspension and restoration |
+| P5 | Route prioritized mentions for room posts and replies | Mention SQL and two-browser delivery, navigation and read state |
+| P5 | Summarize missed incoming calls and room mentions in a private digest | Digest SQL and browser cases for both periods, links and permission changes |
+| P5 | Adapt meeting video quality and recover from audio-only mode | Two-browser LiveKit test with simulated quality ratings and actual audio and video tracks |
+| P9 | Score message warnings on-device and collect privacy-preserving feedback | Safety unit and browser tests, aggregate review SQL and TOTP browser access. Rule and threshold proposal workflows remain open. |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.

@@ -1,0 +1,40 @@
+.networkStatus {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 6px 115px 6px 12px;
+  background: #181c21;
+  color: #e2ebf3;
+  font-size: 13px;
+}
+
+.videoStage {
+  flex: 1;
+  min-height: 0;
+}
+
+.networkStatus svg {
+  flex-shrink: 0;
+}
+
+.networkStatus[data-quality='excellent'],
+.networkStatus[data-quality='good'] {
+  color: #a3e6ad;
+}
+
+.networkStatus[data-quality='poor'],
+.networkStatus[data-quality='lost'] {
+  color: #ffe09c;
+}
+
+.audioOnly {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+}

@@ -5,10 +5,13 @@ import {
   GridLayout, LiveKitRoom, ParticipantTile, RoomAudioRenderer, useTracks,
 } from '@livekit/components-react'
 import { Track } from 'livekit-client'
-import { MoreHorizontal } from 'lucide-react'
+import { MoreHorizontal, Signal, VideoOff } from 'lucide-react'
 import '@livekit/components-styles'
+import { useMeetingNetwork } from './meeting-network'
+import styles from './meeting-media.module.css'
 
 function ConferenceStage({ focus }: { focus: string | null }) {
+  const network = useMeetingNetwork()
   const tracks = useTracks([
     { source: Track.Source.Camera, withPlaceholder: true },
     { source: Track.Source.ScreenShare, withPlaceholder: false },
@@ -18,14 +21,25 @@ function ConferenceStage({ focus }: { focus: string | null }) {
 
   return <div className="lk-video-conference">
     <div className="lk-video-conference-inner">
-      {focused ? <div className="lk-focus-layout-wrapper" data-focused-participant={focused.participant.identity}>
+      <div className={styles.networkStatus} role="status" data-quality={network.quality}>
+        <Signal size={15} aria-hidden="true"/>
+        <span>Network: {network.label}
+          {network.mode === 'reduced' && ' · Reduced video quality'}
+          {network.mode === 'audio-only' && ' · Audio-only'}
+        </span>
+      </div>
+      {network.mode === 'audio-only' ? <div className={styles.audioOnly}>
+        <VideoOff size={24} aria-hidden="true"/>
+        <strong>Video paused to keep audio clear</strong>
+        <span>Video resumes automatically when the connection improves.</span>
+      </div> : focused ? <div className={`lk-focus-layout-wrapper ${styles.videoStage}`} data-focused-participant={focused.participant.identity}>
         <FocusLayoutContainer>
           <CarouselLayout tracks={tracks.filter(track => track !== focused)}>
             <ParticipantTile/>
           </CarouselLayout>
           <FocusLayout trackRef={focused}/>
         </FocusLayoutContainer>
-      </div> : <div className="lk-grid-layout-wrapper">
+      </div> : <div className={`lk-grid-layout-wrapper ${styles.videoStage}`}>
         <GridLayout tracks={tracks}><ParticipantTile/></GridLayout>
       </div>}
       <ControlBar controls={{ microphone: true, camera: true, screenShare: true, chat: false, leave: true }}
@@ -44,8 +58,11 @@ export default function MeetingMedia({ url, token, focus, leave }: {
       <summary className="secondary" aria-label="Meeting call menu"><MoreHorizontal size={17}/> Call menu</summary>
       <div className="message-menu-panel"><button className="text-button remove-text" type="button" onClick={leave}>Disconnect from media</button></div>
     </details>
-    <LiveKitRoom serverUrl={url} token={token} connect audio={false} video={false} onDisconnected={leave} onError={leave}>
+    <LiveKitRoom serverUrl={url} token={token} connect audio={false} video={false}
+      options={roomOptions} onDisconnected={leave} onError={leave}>
       <ConferenceStage focus={focus}/>
     </LiveKitRoom>
   </div>
 }
+
+const roomOptions = { adaptiveStream: true, dynacast: true, publishDefaults: { simulcast: true } }

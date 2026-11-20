@@ -58,8 +58,10 @@ try{
   await page.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Safety',exact:true}).click()
   const metrics=page.getByRole('button',{name:'Delivery metrics',exact:true})
   const release=page.getByRole('button',{name:'Release controls',exact:true})
+  const feedback=page.getByRole('button',{name:'Warning feedback',exact:true})
   assert.equal(await metrics.count(),0)
   assert.equal(await release.count(),0)
+  assert.equal(await feedback.count(),0)
   await page.getByRole('button',{name:'Staff console',exact:true}).click()
   await page.getByRole('button',{name:'Set up authenticator',exact:true}).click()
   const secret=(await page.locator('.mfa-setup code').textContent()).trim()
@@ -84,6 +86,15 @@ try{
   assert.deepEqual(Object.keys(aggregate).sort(),['metrics','through'])
   assert.ok(Object.values(aggregate.metrics).every(count=>count>=10&&count%10===0))
   await page.getByRole('region',{name:'Product usage',exact:true}).getByText('Active accounts',{exact:true}).waitFor()
+  const warningFeedback=page.waitForResponse(response=>response.url().endsWith('/rpc/st_v6_risk_feedback_summary'))
+  await feedback.click()
+  const feedbackResponse=await warningFeedback
+  assert.equal(feedbackResponse.status(),200)
+  for(const row of await feedbackResponse.json()){
+    assert.deepEqual(Object.keys(row).sort(),['accounts','category','reviewed','rule_version'])
+    assert.ok(row.accounts>=5&&row.accounts%5===0)
+  }
+  await page.getByRole('region',{name:'Warning feedback',exact:true}).waitFor()
   await release.click()
   const controls=page.getByRole('region',{name:'Release controls',exact:true})
   const rollout=controls.getByLabel('Rollout percentage',{exact:true})
@@ -106,7 +117,7 @@ try{
   await controls.getByText('Emergency stop',{exact:true}).waitFor({state:'detached'})
   assert.equal(await evaluate(),true)
   releaseRuleChanged=false
-  console.log('Passed authenticator step-up, staff analytics, staged feature rollout and the emergency stop.')
+  console.log('Passed authenticator step-up, warning feedback, staff analytics, staged feature rollout and the emergency stop.')
 }finally{
   await browser.close()
   if(releaseRuleChanged){

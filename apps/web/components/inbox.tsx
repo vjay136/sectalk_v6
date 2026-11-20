@@ -44,7 +44,7 @@ type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id
 type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'; expires_at:string }
 
 export function Inbox({ user }: { user: string }) {
-  const {reload:reloadWorkspaces}=useWorkspaceContext()
+  const {reload:reloadWorkspaces,select:selectWorkspace}=useWorkspaceContext()
   const [profile, setProfile] = useState<Profile | null | undefined>()
   const [profiles, setProfiles] = useState<Record<string, Profile>>({})
   const [chats, setChats] = useState<Chat[]>([])
@@ -52,6 +52,7 @@ export function Inbox({ user }: { user: string }) {
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
   const [requestedMeeting,setRequestedMeeting] = useState<string|null>(()=>typeof window==='undefined'?null:meetingFromQuery(window.location.search))
+  const [requestedRoom,setRequestedRoom] = useState<{workspace:string;id:string}|null>(null)
   const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
     requestedMeeting?'meetings':typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
@@ -142,7 +143,10 @@ export function Inbox({ user }: { user: string }) {
       .on('broadcast', { event: 'presence' }, () => { hints.dispatchEvent(new Event('presence')); void refresh() })
       .on('broadcast', { event: 'availability' }, () => hints.dispatchEvent(new Event('availability')))
       .on('broadcast', { event: 'room_activity' }, ({ payload }) => {
-        if (typeof payload?.room_id === 'string') setNotice('New activity in one of your rooms.')
+        if (typeof payload?.room_id === 'string') {
+          setNotice(payload.mention_kind==='mention.user'?'You were mentioned directly in a room.':
+            typeof payload.mention_kind==='string'?'You received a room mention.':'New activity in one of your rooms.')
+        }
       })
       .on('broadcast', { event: 'channel_activity' }, ({ payload }) => {
         if (typeof payload?.channel_id === 'string') setNotice('New activity in one of your workspace channels.')
@@ -296,6 +300,11 @@ export function Inbox({ user }: { user: string }) {
     setRequestedMeeting(id)
     setTab('meetings')
   }
+  function openRoom(workspace:string,id:string) {
+    selectWorkspace(workspace)
+    setRequestedRoom({workspace,id})
+    setTab('rooms')
+  }
   function openRequests() {
     setMode('requests');select(null)
   }
@@ -344,7 +353,7 @@ export function Inbox({ user }: { user: string }) {
       <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>Friends</span></button>
       <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>Calls</span></button>
       <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>Workspaces</span></button>
-      <button className={tab==='rooms'?'active':''} aria-current={tab==='rooms'?'page':undefined} onClick={()=>setTab('rooms')}><Hash size={19}/><span>Rooms</span></button>
+      <button className={tab==='rooms'?'active':''} aria-current={tab==='rooms'?'page':undefined} onClick={()=>{setRequestedRoom(null);setTab('rooms')}}><Hash size={19}/><span>Rooms</span></button>
       <button className={tab==='tasks'?'active':''} aria-current={tab==='tasks'?'page':undefined} onClick={()=>setTab('tasks')}><ListChecks size={19}/><span>Tasks</span></button>
       <button className={tab==='calendar'?'active':''} aria-current={tab==='calendar'?'page':undefined} onClick={()=>setTab('calendar')}><CalendarDays size={19}/><span>Calendar</span></button>
       <button className={tab==='meetings'?'active':''} aria-current={tab==='meetings'?'page':undefined} onClick={()=>{setRequestedMeeting(null);setTab('meetings')}}><CalendarDays size={19}/><span>Meetings</span></button>
@@ -415,7 +424,7 @@ export function Inbox({ user }: { user: string }) {
       tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}/>:
       tab==='saved'?<SavedMessages openChat={select}/>:
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} /> :
-      tab==='workspaces'||tab==='rooms'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} /> :
+      tab==='workspaces'||tab==='rooms'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} requestedRoom={tab==='rooms'?requestedRoom:null} /> :
       tab==='tasks' ? <div className="task-center">
         <SectionTabs label="Task sections" value={taskSection} onChange={setTaskSection} options={[
           ['scoped','Room and chat tasks'],['workspace','Workspace tasks'],
@@ -427,7 +436,7 @@ export function Inbox({ user }: { user: string }) {
       tab === 'meetings' ? <Meetings key={requestedMeeting||'all'} requested={requestedMeeting} user={user}/> :
       tab === 'vault' ? <FilesLibrary user={user} openChat={select}/> :
       tab === 'search' ? <GlobalSearch key={paletteSearch.sequence} initialQuery={paletteSearch.query} openChat={select} openMeeting={openMeeting} openPalette={()=>setPaletteOpen(true)}/> :
-      tab === 'notifications' ? <Notifications user={user} openMeeting={openMeeting}/> :
+      tab === 'notifications' ? <Notifications user={user} openMeeting={openMeeting} openRoom={openRoom} openChat={select}/> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
         <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={peerExtras.photo}/>
@@ -1025,7 +1034,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
             </button>}
           </div>
           {!own&&!message.revoked_at&&<MessageSafetyWarning key={message.id+':'+(message.edited_at||message.created_at)}
-            account={self} message={message.id} revision={message.edited_at||message.created_at} body={message.body}
+            account={self} message={message.id} revision={message.edited_at||message.created_at} body={message.body} sender={message.sender}
             onReport={()=>onReport(message,file)}/>}
           <div className="message-meta"><time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
             {message.edited_at&&!message.revoked_at && (!blocked&&(own||activity?.share_peer_edit_history)?

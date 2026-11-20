@@ -14,7 +14,8 @@ type Invite = { id: string; workspace_name: string }
 type Channel = {id:string;name:string;owner:string;visibility:'workspace'|'private';archived:boolean}
 type ChannelEvent = {id:number;actor:string;action:string;target:string|null;detail:string|null;occurred_at:string}
 type ChannelDetails = {can_read:boolean;can_manage:boolean;members?:string[];audit?:ChannelEvent[]}
-type Member = { user_id: string; role: 'owner' | 'admin' | 'member' }
+type Member = { user_id: string; role: 'owner' | 'admin' | 'member'; suspended_at: string | null }
+type BulkInviteResult = { handle: string; sent: boolean }
 type Post = { id: string; sender: string; body: string; created_at: string }
 type ItemKind = 'task' | 'note' | 'event' | 'announcement'
 type Item = { id: string; kind: ItemKind; title: string; details: string; due_at: string | null; completed: boolean; created_by: string }
@@ -62,7 +63,27 @@ async function rpc(name: string, values: Record<string, unknown>) {
   return data
 }
 
-export function Workspaces({ user, view = 'workspaces' }: { user:string;view?:WorkspaceView }) {
+async function readInviteHandles(file: File) {
+  if (file.size > 16000) throw new Error('Choose a CSV file up to 16 KB.')
+  const rows = (await file.text()).replace(/^\uFEFF/, '').split(/\r\n|\n|\r/)
+  const handles: string[] = []
+  let firstField = true
+  for (const [index, row] of rows.entries()) {
+    const value = row.trim().toLowerCase()
+    if (!value) continue
+    const field = /^(?:"([a-z0-9_]{3,24})"|([a-z0-9_]{3,24}))$/.exec(value)
+    if (!field) throw new Error('Enter one SecTalk handle on CSV row ' + (index + 1) + '.')
+    const handle = field[1] || field[2]
+    if (!firstField || handle !== 'handle') handles.push(handle)
+    firstField = false
+  }
+  if (handles.length < 1 || handles.length > 100) throw new Error('Include between 1 and 100 handles.')
+  return handles
+}
+
+export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
+  user:string;view?:WorkspaceView;requestedRoom?:{workspace:string;id:string}|null
+}) {
   const {active:space,workspaces,reload:reloadWorkspaces}=useWorkspaceContext()
   const [invites, setInvites] = useState<Invite[]>([])
   const [error, setError] = useState('')
@@ -107,12 +128,13 @@ export function Workspaces({ user, view = 'workspaces' }: { user:string;view?:Wo
       <WorkspaceSwitcher/>
       {view==='workspaces' && workspaces && <WorkspaceOnboarding openByDefault={!space} onCreated={reloadWorkspaces}/>}
     </div>
-    {space ? <WorkspaceArea key={space.id+view+space.role} space={space} user={user} view={view} /> :
+    {space ? <WorkspaceArea key={space.id+view+space.role} space={space} user={user} view={view}
+      initialRoom={space.id===requestedRoom?.workspace?requestedRoom.id:undefined} /> :
       workspaces?.length===0&&view!=='workspaces'&&<p>Join or create a workspace to get started.</p>}
   </section>
 }
 
-function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view:WorkspaceView }) {
+function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;user:string;view:WorkspaceView;initialRoom?:string }) {
   const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'activity'>('people')
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
@@ -121,13 +143,15 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
   const [members, setMembers] = useState<Member[]>([])
   const [profiles, setProfiles] = useState<Record<string, Profile>>({})
   const [audit, setAudit] = useState<Audit[]>([])
+  const [bulkResults, setBulkResults] = useState<BulkInviteResult[]>([])
   const [error, setError] = useState('')
-  const role = members.find(member => member.user_id === user)?.role
+  const activeMembers = members.filter(member => !member.suspended_at)
+  const role = activeMembers.find(member => member.user_id === user)?.role
   const manager = role === 'owner' || role === 'admin'
   const load = useCallback(async () => {
     const [channelResult, memberResult] = await Promise.all([
       db!.from('st_v2_channels').select('id,name,owner,visibility,archived').eq('workspace_id', space.id).order('name'),
-      db!.from('st_v2_members').select('user_id,role').eq('workspace_id', space.id).order('joined_at').limit(500),
+      db!.from('st_v2_members').select('user_id,role,suspended_at').eq('workspace_id', space.id).order('joined_at').limit(500),
     ])
     if (channelResult.error || memberResult.error) { setError('Could not load the workspace.'); return }
     setError('')
@@ -163,9 +187,9 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
     ]}/>}
     {error && <p role="alert" className="error">{error}</p>}
     {view==='rooms'&&<SectionTabs label="Room sections" value={roomView} onChange={setRoomView} options={ [['rooms','Room directory'],['channels','Workspace channels']] }/>}
-    {view==='rooms'&&roomView==='rooms'&&<RoomDirectory space={space.id} user={user} manager={manager} profiles={profiles}
+    {view==='rooms'&&roomView==='rooms'&&<RoomDirectory key={initialRoom} initialRoom={initialRoom} space={space.id} user={user} manager={manager} profiles={profiles}
       allowedRoomKinds={space.policy?.room_kinds}
-      workspaceAdminIds={members.filter(member=>member.role!=='member').map(member=>member.user_id)}/>}
+      workspaceAdminIds={activeMembers.filter(member=>member.role!=='member').map(member=>member.user_id)}/>}
     {((view==='rooms'&&roomView==='channels')||(view==='workspaces'&&tab==='channels')) && <div className="release-section">
       <SectionTabs label="Channel filters" value={archivedChannels?'archived':'active'}
         onChange={next=>setArchivedChannels(next==='archived')} options={ [['active','Active channels'],['archived','Archived channels']] }/>
@@ -179,12 +203,12 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
           setArchivedChannels(false)
         }}><label>Channel name<input name="name" required maxLength={40} pattern="[a-z0-9][a-z0-9\-]{0,39}" placeholder="product-updates" /></label></QuickForm></details>}
       </div>
-      {selectedChannel?<ChannelPanel key={selectedChannel.id+selectedChannel.visibility} channel={selectedChannel} profiles={profiles} user={user}
+      {selectedChannel?<ChannelPanel key={selectedChannel.id+selectedChannel.visibility} channel={selectedChannel} profiles={profiles} activeMembers={activeMembers} user={user}
         refresh={load} onArchiveChange={archived=>{setChannelId(selectedChannel.id);setArchivedChannels(archived)}}/>
         :<p>No {archivedChannels?'archived':'active'} channels.</p>}
     </div>}
     {view==='workspaces' && tab==='board' && <Board space={space.id} manager={manager} />}
-    {view==='workspaces' && tab==='teams' && <WorkspaceGroups workspace={space.id} manager={manager} people={members} profiles={profiles}/>}
+    {view==='workspaces' && tab==='teams' && <WorkspaceGroups workspace={space.id} manager={manager} people={activeMembers} profiles={profiles}/>}
     {view==='tasks'&&<TaskList space={space.id} actor={user} manager={manager} members={members} profiles={profiles}/>}
     {view==='calendar'&&<WorkspaceCalendar space={space.id} />}
     {view==='workspaces'&&(tab==='people'||(tab==='activity'&&!manager)) && <div className="release-section">
@@ -192,13 +216,38 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
         if (!await rpc('st_v2_invite', { p_workspace: space.id, p_handle: fields.get('handle') })) throw new Error('This contact is unavailable or has already been invited.')
         await load()
       }}><label>Invite by SecTalk handle<input name="handle" required minLength={3} maxLength={24} /></label></QuickForm>}
+      {manager && <details className="release-create"><summary>Import invitations from CSV</summary>
+        <QuickForm label="Import invitations" button="Send invitations" send={async fields => {
+          setBulkResults([])
+          const file = fields.get('csv')
+          if (!(file instanceof File) || !file.size) throw new Error('Choose a CSV file.')
+          const handles = await readInviteHandles(file)
+          const results = await rpc('st_v6_bulk_workspace_invite', { p_workspace:space.id, p_handles:handles })
+          setBulkResults(results as BulkInviteResult[])
+          await load()
+        }}>
+          <label>CSV file<input name="csv" type="file" accept=".csv,text/csv" required /></label>
+          <p className="muted">Use one SecTalk handle per row, with an optional handle header. Include up to 100 handles.</p>
+        </QuickForm>
+        {bulkResults.length > 0 && <div role="status">
+          <p>{bulkResults.filter(result => result.sent).length} of {bulkResults.length} invitations sent.</p>
+          <ul>{bulkResults.map(result => <li key={result.handle}>@{result.handle} · {result.sent ? 'Sent' : 'Unavailable or already invited'}</li>)}</ul>
+        </div>}
+      </details>}
       <h2>Members</h2>
       {members.map(member => <div className="release-row" key={member.user_id}>
         <strong>{profiles[member.user_id]?.name || 'Workspace member'}</strong><span className="pill">{member.role}</span>
+        {member.suspended_at && <span className="pill">Suspended</span>}
         {role === 'owner' && member.role !== 'owner' && <QuickForm label="Manage member" button="Apply" send={async fields => {
           await rpc('st_v2_set_member', { p_workspace: space.id, p_member: member.user_id, p_role: fields.get('role') })
           await load()
-        }}><label>Change access<select name="role" defaultValue={member.role}><option value="member">Member</option><option value="admin">Admin</option><option value="remove">Remove access</option></select></label></QuickForm>}
+        }}><label>Change access<select key={member.role} name="role" defaultValue={member.role}><option value="member">Member</option><option value="admin">Admin</option><option value="remove">Remove access</option></select></label></QuickForm>}
+        {(role === 'owner' && member.role !== 'owner' || role === 'admin' && member.role === 'member') &&
+          <QuickForm label={(member.suspended_at ? 'Restore ' : 'Suspend ') + (profiles[member.user_id]?.name || 'workspace member')}
+            button={member.suspended_at ? 'Restore access' : 'Suspend access'} send={async () => {
+              await rpc('st_v2_set_member', { p_workspace:space.id, p_member:member.user_id, p_role:member.suspended_at ? 'restore' : 'suspend' })
+              await load()
+            }}/>}
       </div>)}
     </div>}
     {view==='workspaces'&&tab==='activity'&&manager&&<div className="release-section"><h2>Recent workspace activity</h2>{audit.length===0&&<p>No activity yet.</p>}
@@ -207,8 +256,8 @@ function WorkspaceArea({ space, user, view }: { space:Workspace;user:string;view
   </div>
 }
 
-function ChannelPanel({channel,profiles,user,refresh,onArchiveChange}: {
-  channel:Channel;profiles:Record<string,Profile>;user:string;refresh:()=>Promise<void>;onArchiveChange:(archived:boolean)=>void
+function ChannelPanel({channel,profiles,activeMembers,user,refresh,onArchiveChange}: {
+  channel:Channel;profiles:Record<string,Profile>;activeMembers:Member[];user:string;refresh:()=>Promise<void>;onArchiveChange:(archived:boolean)=>void
 }) {
   const [details,setDetails]=useState<ChannelDetails|null>(null)
   const [error,setError]=useState('')
@@ -228,7 +277,7 @@ function ChannelPanel({channel,profiles,user,refresh,onArchiveChange}: {
   },[load])
 
   const name=(id:string)=>profiles[id]?.name||'Workspace member'
-  const people=Object.values(profiles).filter(person=>person.id!==channel.owner)
+  const people=activeMembers.flatMap(member=>member.user_id!==channel.owner&&profiles[member.user_id]?[profiles[member.user_id]]:[])
   const memberIds=details?.members||[]
   const candidates=people.filter(person=>!memberIds.includes(person.id))
   const peopleOptions=(available:Profile[])=><><option value="">Choose a workspace member</option>{available.map(person=>
@@ -452,7 +501,7 @@ function TaskList({ space,actor,manager,members,profiles }: {
         {owner&&<details className="release-create"><summary>Assign task</summary>
           <QuickForm label={'Assign '+item.title} button="Save assignment" send={fields=>change(item.id,'assign',{p_person:fields.get('assignee')||null})}>
             <label>Assignee<select key={assigned} name="assignee" defaultValue={assigned}>
-              <option value="">Unassigned</option>{members.map(member=><option key={member.user_id} value={member.user_id}>
+              <option value="">Unassigned</option>{members.filter(member=>!member.suspended_at || member.user_id===assigned).map(member=><option key={member.user_id} value={member.user_id}>
                 {profiles[member.user_id]?.name||'Workspace member'}
               </option>)}
             </select></label>

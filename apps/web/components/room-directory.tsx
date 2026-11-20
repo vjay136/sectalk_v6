@@ -15,7 +15,7 @@ type Roster={user_id:string;role:Role}
 type Entry={user_id:string;kind:'invite'|'request';invited_role:Role;expires_at:string}
 type Audit={id:number;actor:string;action:string;target:string|null;occurred_at:string;details:{from?:Kind;to?:Kind;previous_owners?:string[]}}
 type ThreadState={post_id:string;replies:number;following:boolean;excerpt:string}
-type DirectoryProps={space:string;user:string;manager:boolean;profiles:Record<string,Profile>;workspaceAdminIds:string[];allowedRoomKinds?:string[]}
+type DirectoryProps={space:string;user:string;manager:boolean;profiles:Record<string,Profile>;workspaceAdminIds:string[];allowedRoomKinds?:string[];initialRoom?:string}
 const kinds:Record<Kind,string>={public:'Workspace-wide',private:'Private',admin:'Admins only',announcement:'Announcements',broadcast:'Broadcast'}
 const templates={
   blank:{name:'Blank room',kinds:['public','private','admin','announcement','broadcast'],description:''},
@@ -34,11 +34,11 @@ async function call(name:string,input:Record<string,unknown>) {
   return result.data
 }
 
-export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,allowedRoomKinds}:DirectoryProps) {
+export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,allowedRoomKinds,initialRoom}:DirectoryProps) {
   const reactionPolicy=useWorkspaceReactionPolicy(space)
   const [rooms,setRooms]=useState<Room[]|null>(null)
-  const [selected,setSelected]=useState('')
-  const [filter,setFilter]=useState<'active'|'archived'>('active')
+  const [selected,setSelected]=useState(initialRoom||'')
+  const [selectedFilter,setFilter]=useState<'active'|'archived'|null>(null)
   const [template,setTemplate]=useState<Template>('blank')
   const [kind,setKind]=useState<Kind>()
   const [error,setError]=useState('')
@@ -66,6 +66,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
     finally{setWorking(false)}
   }
 
+  const filter=selectedFilter||(rooms?.find(room=>room.id===initialRoom)?.archived?'archived':'active')
   const visible=rooms?.filter(room=>room.archived===(filter==='archived'))
   const current=visible?.find(room=>room.id===selected)
   const preset=templates[template]
@@ -372,7 +373,9 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
           .filter(id=>profiles[id]).map(id=>[id,profiles[id]]))}/>}
       {canPost&&(actualView==='messages'||(actualView==='threads'&&thread&&room.kind!=='announcement'))&&
         <form className="release-form" onSubmit={send}>
-          <label>{actualView==='threads'?'Write a reply':'Write a room message'}<textarea name="body" required maxLength={4000}/></label>
+          <label>{actualView==='threads'?'Write a reply':'Write a room message'}<textarea name="body" required maxLength={4000} aria-describedby="room-mentions-help"/></label>
+          <p id="room-mentions-help">Use <code>@handle</code> to mention a room member.
+            {staff&&<> Use <code>@group:"Group name"</code> for a group, <code>@channel</code> for the room, or <code>@here</code> for online members.</>}</p>
           {staff&&room.kind!=='announcement'&&actualView==='messages'&&<label className="task-check"><input type="checkbox" name="announce"/> Post as announcement</label>}
           <button className="primary" disabled={working}>Send</button>
         </form>}
