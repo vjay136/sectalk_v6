@@ -1,11 +1,12 @@
 import { timingSafeEqual } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { fileAuthOptions, fileHeaders } from '../../../../lib/authenticated-file-request'
-import { digestWorkspaceBytes, workspaceFileBucket, workspaceFileMaximum, workspaceFilePath } from '../../../../lib/workspace-file-storage'
+import { digestWorkspaceBytes, roomFilePath, workspaceFileBucket, workspaceFileMaximum, workspaceFilePath } from '../../../../lib/workspace-file-storage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 type Job = { workspace: string; id: string; size_bytes: number; lease: string; task: 'index' | 'purge' }
+type RoomJob = { room: string; workspace: string; id: string; lease: string }
 const unavailable = (status: number) => new Response(null, { status, headers: fileHeaders })
 
 export async function POST(request: Request) {
@@ -19,8 +20,11 @@ export async function POST(request: Request) {
   const storage = createClient(url, serviceKey, { ...fileAuthOptions, global: {
     fetch: (input, options) => fetch(input, { ...options, signal: AbortSignal.timeout(5000) }),
   } })
-  const claim = await storage.rpc('st_v6_workspace_file_maintenance_claim')
-  if (claim.error) return unavailable(503)
+  const [claim, roomClaim] = await Promise.all([
+    storage.rpc('st_v6_workspace_file_maintenance_claim'),
+    storage.rpc('st_v6_claim_room_file_cleanup'),
+  ])
+  if (claim.error || roomClaim.error) return unavailable(503)
   const bucket = storage.storage.from(workspaceFileBucket)
   const jobs = claim.data as Job[]
   let indexed = 0
@@ -46,10 +50,21 @@ export async function POST(request: Request) {
       if (result.status === 'fulfilled' && result.value === 'purge') purged++
     }
   }
+  const roomJobs = roomClaim.data as RoomJob[]
+  let roomPurged = 0
+  for (let index = 0; index < roomJobs.length; index += 4) {
+    const results = await Promise.allSettled(roomJobs.slice(index, index + 4).map(async job => {
+      const removal = await bucket.remove([roomFilePath(job.workspace, job.room, job.id)])
+      if (removal.error) return false
+      const done = await storage.rpc('st_v6_finish_room_file_cleanup', { p_room: job.room, p_id: job.id, p_lease: job.lease })
+      return !done.error && done.data === true
+    }))
+    roomPurged += results.filter(result => result.status === 'fulfilled' && result.value === true).length
+  }
   const pruned = await storage.rpc('st_v6_prune_workspace_file_history')
   if (pruned.error) return unavailable(503)
-  const deferred = jobs.length - indexed - purged
-  return Response.json({ claimed: jobs.length, indexed, purged, deferred }, {
+  const deferred = jobs.length - indexed - purged + roomJobs.length - roomPurged
+  return Response.json({ claimed: jobs.length, indexed, purged, roomPurged, deferred }, {
     status: deferred ? 503 : 200, headers: fileHeaders,
   })
 }

@@ -130,11 +130,22 @@
 | P10 | Add two-party emergency access with one-time evidence and post-access review | Edge and SQL verified current owner approval, source consent, redaction boundaries, replay denial and auditable closure |
 | P5 | Protect direct calls and fixed-roster meetings with browser media transforms and verification codes | Native Edge and real LiveKit verified encrypted Opus and VP8 in direct calls, three meeting participants, wrong-key denial, roster departure and managed meeting regression |
 | P4 | Add authenticated device trust and public key bundles | Three Edge contexts verified native session binding, nonextractable private keys, signed bundles, remote blocking and independent device approval |
+| P4 | Add remote browser revoke, lock and local-key wipe | Real Edge and SQL verified offline command state, targeted session revoke, IndexedDB key removal and interrupted receipt recovery |
+| P5 | Add same-room Files and Calls tabs | Edge and real services verified private file transfer, scoped participant admission, room media and immediate client access loss |
+| P5 | Enforce per-room contribution and call overrides | Exact Edge controls and database regressions verified role restrictions, live broadcast delivery, room-limited call hosting and permission changes |
+| P10 | Add mobile public product pages and legal drafts | Edge verified touch navigation, live pricing, signup entry and all public routes. Operator approval for Terms and Privacy remains open. |
+| P5 | Add group audio and video with automatic native mesh and LiveKit handoff | Five Edge browsers verified decoded media, continuity during failures in both directions, retry, and an audio-only fallback on camera denial |
+| P4 | Alert trusted devices to suspicious sign-ins and lock the account on request | Native sign-in, two browser sessions, database isolation and Mailpit verified private alerts, controlled recovery and invalid revoked tokens |
+| P10 | Add workspace-level feature pauses constrained by entitlements and global releases | Two-tenant Edge and SQL verified room tasks, recurring meetings, API key access, downgrades, scoped roles and the emergency global override |
+| P10 | Publish an owner-managed Workspace API and signed webhook delivery | Production-mode Edge, SQL and a local receiver verified plan and key scope, private-room exclusion, pagination, limits, HMAC, backoff, history and revocation |
+| P10 | Notify customers during time-boxed emergency access and post-access review | Edge verified real private Realtime alerts, durable read acknowledgment and exact evidence and access history for the current owner |
+| P5 | Add encrypted direct voice notes with optional transcription | Two Edge browsers and a real isolated speech worker verified microphone, waveform, audio playback, opt-in transcript, access denial and physical purge |
+| P4 | Add contact key comparison, QR and live change warnings | Real Edge and SQL verified symmetric signed keys, wrong-code handling, approved-key changes and scoped notifications |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 147 verified features. The next checkpoint is due at 157, and the matrix records evidence as each feature passes.
+Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 157 verified features. The next checkpoint is due at 167, and the matrix records evidence as each feature passes.
 
 ## Remaining work by dependency
 

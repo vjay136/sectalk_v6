@@ -25,6 +25,9 @@ import { useWorkspaceContext } from './workspace-context'
 import { ScopedTasks } from './scoped-tasks'
 import { SectionTabs } from './section-tabs'
 import { NetworkDiagnostics } from './network-diagnostics'
+import { GroupCalls } from './group-calls'
+import { ContactKeyVerification } from './contact-key-verification'
+import { VoiceNotePlayer, VoiceNoteRecorder } from './voice-note'
 import { CommandPalette, type Command } from './command-palette'
 import { ScheduledMessages } from './scheduled-messages'
 import { useOfflineMessages } from '../lib/use-offline-messages'
@@ -216,10 +219,23 @@ export function Inbox({ user }: { user: string }) {
         hints.dispatchEvent(new Event('account_security_lifecycle'))
         announceAlert('There is new activity in your account security settings.', 'critical')
       })
+      .on('broadcast', { event: 'emergency_customer_notice' }, () => {
+        hints.dispatchEvent(new Event('emergency_customer_notice'))
+        announceAlert('Review the new workspace emergency access notice in Safety.', 'critical')
+      })
+      .on('broadcast', { event: 'contact_key_changed' }, () => hints.dispatchEvent(new Event('contact_key_changed')))
       .on('broadcast', { event: 'session_lifecycle' }, () => {
         hints.dispatchEvent(new Event('session_lifecycle'))
+        window.dispatchEvent(new Event('sectalk-device-command'))
         void db!.rpc('st_v7_current_session_valid').then(({data,error}) => {
           if (!error && data === false) void db!.auth.signOut({scope:'local'})
+        })
+      })
+      .on('broadcast', { event: 'login_anomaly' }, () => {
+        hints.dispatchEvent(new Event('login_anomaly'))
+        void db!.rpc('st_v7_list_login_anomalies').then(({data,error})=>{
+          if (!error&&Array.isArray(data)&&data.some(row=>row.state==='pending'))
+            announceAlert('Review an unusual sign-in in your account security settings.', 'critical')
         })
       })
       .on('broadcast', { event: 'device_registry' }, () => hints.dispatchEvent(new Event('device_registry')))
@@ -511,7 +527,7 @@ export function Inbox({ user }: { user: string }) {
       </section> :
       tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}/>:
       tab==='saved'?<SavedMessages openChat={select}/>:
-      tab === 'safety' ? <Safety staff={staff} refresh={refresh} /> :
+      tab === 'safety' ? <Safety staff={staff} refresh={refresh} hints={hints} /> :
       tab==='workspaces'||tab==='rooms'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} requestedRoom={tab==='rooms'?requestedRoom:null} /> :
       tab==='tasks' ? <div className="task-center">
         <SectionTabs label="Task sections" value={taskSection} onChange={setTaskSection} options={[
@@ -538,6 +554,7 @@ export function Inbox({ user }: { user: string }) {
               }}><ListChecks size={18}/></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start audio call" title="Start audio call" onClick={() => void call.start(chat.id, false)}><Phone size={18} /></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start video call" title="Start video call" onClick={() => void call.start(chat.id, true)}><Video size={20} /></button>
+              <ContactKeyVerification key={peerId(chat,user)} owner={user} peer={peerId(chat,user)} name={peer?.name || 'your contact'} hints={hints}/>
               <details className="call-menu">
                 <summary className="icon" aria-label="Protected call options" title="Protected calls"><ShieldCheck size={18}/></summary>
                 <div className="message-menu-panel" style={{top:'100%',right:0,bottom:'auto'}}>
@@ -600,7 +617,7 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
   state: ReturnType<typeof useCalling>; openChat: (id: string) => void; openInbox: () => void
 }) {
   const [rows, setRows] = useState<Call[] | null>(null)
-  const [filter, setFilter] = useState<'all' | 'missed' | 'audio' | 'video' | 'diagnostics'>('all')
+  const [filter, setFilter] = useState<'all' | 'missed' | 'audio' | 'video' | 'diagnostics' | 'groups'>('all')
   const [now,setNow]=useState(()=>Date.now())
   const [error, setError] = useState(false)
   const reload = useCallback(async () => {
@@ -624,8 +641,10 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
 
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><Phone size={22} /></div><div><h1>Calls</h1><p>Start a call from an approved conversation or return a recent call.</p></div></header>
-    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['missed','Missed'], ['audio', 'Audio'], ['video', 'Video'], ['diagnostics', 'Network diagnostics']] }/>
-    {filter==='diagnostics' ? <NetworkDiagnostics inCall={Boolean(state.call)}/> : <div className="panel">
+    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['missed','Missed'], ['audio', 'Audio'], ['video', 'Video'], ['groups','Groups'], ['diagnostics', 'Network diagnostics']] }/>
+    {filter==='diagnostics' ? <NetworkDiagnostics inCall={Boolean(state.call)}/> : filter==='groups' ?
+      <GroupCalls user={user} inDirectCall={Boolean(state.call)} contacts={chats.filter(chat=>chat.status==='accepted'&&!blocks.includes(peerId(chat,user)))
+        .map(chat=>({id:peerId(chat,user),name:profiles[peerId(chat,user)]?.name || 'Contact'}))}/> : <div className="panel">
       <div className="panel-header"><h2>Recent calls</h2><button className="secondary" onClick={openInbox}>Open inbox <ChevronRight size={16} /></button></div>
       {error && <div className="list-empty"><p role="alert">Could not load call history.</p><button className="secondary" onClick={reload}>Try again</button></div>}
       {!error && rows === null && <div className="list-empty" role="status">Loading calls…</div>}
@@ -1252,7 +1271,9 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
             {quote?<><strong>{quote.sender===self?selfName:peerName}</strong>{' · '}<EmojiText value={quote.body}/></>:'Original message unavailable'}
           </blockquote>}
           <div className={'bubble'+(message.revoked_at?' revoked-message':'')}>
-            {(!file||message.body!=='Attachment: '+file.filename)&&<EmojiText value={message.body}/>}
+            {message.voice_note&&!message.revoked_at ?
+              <VoiceNotePlayer chat={chat.id} message={message.id} blocked={blocked} revision={Boolean(message.voice_transcript)}/> :
+              (!file||message.body!=='Attachment: '+file.filename)&&<EmojiText value={message.body}/>}
             {file&&<button className="attachment-file" type="button" onClick={()=>void download(file)}>
               <Download size={16}/><span>{file.filename}<small>{Math.ceil(file.size_bytes/1024)} KiB</small></span>
             </button>}
@@ -1283,8 +1304,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
                 <button type="button" className="text-button" onClick={()=>setReacting(message.id)}>More reactions</button>
                 {!message.expires_at&&<button type="button" className="text-button" onClick={() => void update('st_v2_pin', { p_chat: chat.id, p_message: message.id })}>Pin message</button>}
                 <button type="button" className="text-button" onClick={() => setReplying(message)}>Reply</button>
-                {!file&&!message.expires_at&&<button type="button" className="text-button" onClick={()=>setForwarding(message.id)}>Forward message</button>}
-                {own&&!file&&!message.expires_at&&Date.now()-Date.parse(message.created_at)<86400000&&<button type="button" className="text-button" onClick={()=>setEditing(message)}>Edit message</button>}</>}
+                {!file&&!message.voice_note&&!message.expires_at&&<button type="button" className="text-button" onClick={()=>setForwarding(message.id)}>Forward message</button>}
+                {own&&!file&&!message.voice_note&&!message.expires_at&&Date.now()-Date.parse(message.created_at)<86400000&&<button type="button" className="text-button" onClick={()=>setEditing(message)}>Edit message</button>}</>}
                 {file&&<button type="button" className="text-button" onClick={()=>void download(file)}>Download attachment</button>}
                 {!message.revoked_at&&!message.expires_at&&<button type="button" className="text-button" onClick={async()=>{
                   const result=await setSavedMessage(message.id,true)
@@ -1383,6 +1404,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       <option value={0}>Off</option><option value={60}>1 minute</option><option value={3600}>1 hour</option>
       <option value={86400}>1 day</option><option value={604800}>7 days</option>
     </select></label>
+    <VoiceNoteRecorder key={chat.id} chat={chat.id} blocked={blocked} timer={expireAfter}
+      disabled={busy||Boolean(attachment)||Boolean(replying)} onSent={()=>void load()}/>
     <form className="composer" onSubmit={send}>
       <input ref={filePicker} hidden type="file" accept={extensions} onChange={event=>{
         const file=event.target.files?.[0]

@@ -38,13 +38,15 @@ function authMessage(error: { code?: string; status?: number }, step: Step): Pla
   return 'verificationSendFailed'
 }
 
-export function Entry({ recovering, authenticatorReset }: { recovering: boolean; authenticatorReset?: boolean }) {
+export function Entry({ recovering, authenticatorReset, startRecovery }: { recovering: boolean; authenticatorReset?: boolean; startRecovery?: boolean }) {
   const { t } = useLocale()
-  const [step, setStep] = useState<Step>('sign-in')
+  const [step, setStep] = useState<Step>(startRecovery?'forgot':'sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [code, setCode] = useState('')
+  const [recoveryFactor,setRecoveryFactor]=useState('')
+  const [factorCode,setFactorCode]=useState('')
   const [busy, setBusy] = useState(false)
   const [alert, setAlert] = useState<PlainMessageKey | ''>('')
   const [info, setInfo] = useState<PlainMessageKey | ''>('')
@@ -63,6 +65,7 @@ export function Entry({ recovering, authenticatorReset }: { recovering: boolean;
     setPassword('')
     setConfirmation('')
     setCode('')
+    if (next !== 'new-password') {setRecoveryFactor('');setFactorCode('')}
     setAlert('')
     setInfo(message)
   }
@@ -70,6 +73,19 @@ export function Entry({ recovering, authenticatorReset }: { recovering: boolean;
   useEffect(() => {
     if (current !== 'sign-in') heading.current?.focus({ preventScroll: true })
   }, [current])
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('mode') === 'signup') setStep('sign-up')
+  }, [])
+
+  useEffect(() => {
+    if (!recovering) return
+    let active=true
+    void db?.auth.mfa.listFactors().then(({data,error})=>{
+      if (active&&!error) setRecoveryFactor(data.totp.find(factor=>factor.status==='verified')?.id??'')
+    })
+    return ()=>{active=false}
+  }, [recovering])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -112,6 +128,9 @@ export function Entry({ recovering, authenticatorReset }: { recovering: boolean;
           const client = transientAuthClient()
           const result = await client!.auth.verifyOtp({ email: address, token: code, type: 'recovery' })
           if (result.error) throw result.error
+          const factors=await client!.auth.mfa.listFactors()
+          if (factors.error) throw factors.error
+          setRecoveryFactor(factors.data.totp.find(factor=>factor.status==='verified')?.id??'')
           recovery.current = client
           go('new-password')
           break
@@ -119,8 +138,15 @@ export function Entry({ recovering, authenticatorReset }: { recovering: boolean;
         case 'new-password': {
           const client = recovering ? db : recovery.current
           if (!client) { go('forgot'); return }
+          if (recoveryFactor) {
+            const assurance=await client.auth.mfa.challengeAndVerify({factorId:recoveryFactor,code:factorCode})
+            if (assurance.error) {setAlert('authenticatorCodeError');return}
+            setRecoveryFactor('')
+            setFactorCode('')
+          }
           const { error } = await client.auth.updateUser({ password })
           if (error) throw error
+          await client.rpc('st_v7_note_lockdown_password_recovery')
           await client.auth.signOut({ scope: 'global' })
           recovery.current = null
           go('sign-in', 'passwordUpdated')
@@ -198,6 +224,9 @@ export function Entry({ recovering, authenticatorReset }: { recovering: boolean;
           {showEmail && <label>{t('emailAddress')}<div className="input-icon"><Mail size={16} /><input dir="ltr" type="email" autoComplete="email" maxLength={254} required placeholder="you@example.com" value={email} onChange={event => setEmail(event.target.value)} /></div></label>}
           {passwordRequired && <label>{t('password')}<div className="input-icon"><KeyRound size={16} /><input key={current} type="password" autoComplete={newPassword ? 'new-password' : 'current-password'} minLength={newPassword ? 12 : undefined} maxLength={256} required placeholder={newPassword ? t('minimumPassword') : t('yourPassword')} value={password} onChange={event => setPassword(event.target.value)} /></div></label>}
           {newPassword && <label>{t('confirmPassword')}<div className="input-icon"><KeyRound size={16} /><input type="password" autoComplete="new-password" minLength={12} maxLength={256} required placeholder={t('reenterPassword')} value={confirmation} onChange={event => setConfirmation(event.target.value)} /></div></label>}
+          {current==='new-password'&&recoveryFactor&&<label>{t('authenticatorCode')}<input name="recovery-authenticator"
+            autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required value={factorCode}
+            onChange={event=>setFactorCode(event.target.value)}/></label>}
           {codeRequired && <label>{t('verificationCode')}<input dir="ltr" className="code-input" type="text" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6,10}" maxLength={10} required placeholder={t('enterEmailCode')} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} /></label>}
           {current === 'sign-in' && <button className="text-button forgot" type="button" disabled={busy} onClick={() => go('forgot')}>{t('forgotPassword')}</button>}
           {alert && <p className="form-message error" role="alert">{t(alert)}</p>}
@@ -220,6 +249,11 @@ export function Entry({ recovering, authenticatorReset }: { recovering: boolean;
       <div><span className="benefit-icon"><AudioLines /></span><h2>{t('liveConversations')}</h2><p>{t('liveConversationsDescription')}</p></div>
       <div><span className="benefit-icon"><Flag /></span><h2>{t('safetyControls')}</h2><p>{t('safetyControlsDescription')}</p></div>
     </section>
-    <footer className="site-footer"><Brand /><span>SecTalk by Eagle Security</span><a href="/status">{t('serviceStatus')}</a><a href="/security">{t('securityDisclosures')}</a><a href="#account">{t('accountAccess')} <Send size={14}/></a></footer>
+    <footer className="site-footer"><Brand />
+      <nav aria-label="Public information">
+        <a href="/about">Overview</a><a href="/pricing">Pricing</a><a href="/docs">Docs</a><a href="/legal/privacy">Privacy</a>
+        <a href="/status">{t('serviceStatus')}</a><a href="/security">{t('securityDisclosures')}</a><a href="#account">{t('accountAccess')} <Send size={14}/></a>
+      </nav>
+    </footer>
   </main>
 }

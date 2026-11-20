@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
+import type { Feature } from '../lib/use-feature'
 
 type Scope='global'|'workspace'|'account'
-type Feature='task_creation'|'recurring_meetings'
 type Rule={feature:Feature;scope:Scope;target:string|null;enabled:boolean;rollout:number;killed:boolean}
-const labels={task_creation:'Task creation',recurring_meetings:'Recurring meetings'}
+const labels:Record<Feature,string>={task_creation:'Task creation',recurring_meetings:'Recurring meetings',integration_api:'Workspace API'}
 const scopeLabel={global:'Global',workspace:'Workspace',account:'Account'}
 const firstRule:Rule={feature:'task_creation',scope:'global',target:null,enabled:true,rollout:100,killed:false}
 

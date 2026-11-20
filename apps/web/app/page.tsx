@@ -8,9 +8,11 @@ import { Inbox } from '../components/inbox'
 import { useLocale } from '../components/locale-provider'
 import { WorkspaceContextProvider } from '../components/workspace-context'
 import { SignInMfa } from '../components/account-mfa'
+import { DeviceLockScreen, useDeviceProtection } from '../components/device-lock-screen'
+import { AccountLockdownScreen, type AccountLock } from '../components/login-anomalies'
 import { unsubscribeBrowserPush } from '../components/web-push-settings'
 
-type Access = { user: string; state: 'allowed' | 'challenge' | 'error' }
+type Access = { user: string; state: 'allowed' | 'challenge' | 'error'; lockdown?: AccountLock }
 
 export default function Home() {
   const { t } = useLocale()
@@ -18,10 +20,12 @@ export default function Home() {
   const [loaded,setLoaded] = useState(!db)
   const [recovering, setRecovering] = useState(false)
   const [authenticatorReset, setAuthenticatorReset] = useState(false)
+  const [startRecovery, setStartRecovery] = useState(false)
   const [access, setAccess] = useState<Access | null>(null)
   const [attempt, setAttempt] = useState(0)
   const user = session?.user.id
   const token = session?.access_token
+  const protection = useDeviceProtection(user)
   useEffect(() => {
     if (!db) return
     const { data } = db.auth.onAuthStateChange((event, value) => {
@@ -31,7 +35,7 @@ export default function Home() {
         void unsubscribeBrowserPush().catch(() => undefined)
       }
       if (!value) setAccess(null)
-      else if (event === 'SIGNED_IN') setAuthenticatorReset(false)
+      else if (event === 'SIGNED_IN') {setAuthenticatorReset(false);setStartRecovery(false)}
       setSession(value)
       setLoaded(true)
     })
@@ -45,14 +49,16 @@ export default function Home() {
     void Promise.all([
       client.auth.mfa.getAuthenticatorAssuranceLevel(token),
       client.rpc('st_v7_current_session_valid'),
-    ]).then(([assurance, validation]) => {
+      client.rpc('st_v7_account_lock_status'),
+    ]).then(([assurance, validation, lockdown]) => {
       if (!active) return
       if (!validation.error && validation.data === false) {
         void client.auth.signOut({scope:'local'})
         return
       }
       const {data,error}=assurance
-      setAccess({ user, state: error || validation.error || !data.currentLevel ? 'error' : data.nextLevel === 'aal2' && data.currentLevel !== 'aal2' ? 'challenge' : 'allowed' })
+      setAccess({ user, state: error || validation.error || lockdown.error || !data.currentLevel ? 'error' : data.nextLevel === 'aal2' && data.currentLevel !== 'aal2' ? 'challenge' : 'allowed',
+        lockdown:(lockdown.data as AccountLock|null)??undefined })
     }).catch(() => { if (active) setAccess({ user, state: 'error' }) })
     return () => { active = false }
   }, [user, token, recovering, attempt])
@@ -69,14 +75,20 @@ export default function Home() {
     }
     const timer = window.setInterval(check,60000)
     document.addEventListener('visibilitychange',check)
-    return () => { active = false; window.clearInterval(timer); document.removeEventListener('visibilitychange',check) }
+    window.addEventListener('online',check)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange',check)
+      window.removeEventListener('online',check)
+    }
   }, [user,recovering])
 
   const retry = () => setAttempt(value => value + 1)
-  if (!loaded || (user && !recovering && access?.user !== user)) {
+  if (!loaded || (user && !recovering && (access?.user !== user || !protection.checked || protection.value?.wiped))) {
     return <main className="center-page"><Brand /><p role="status">{t('opening')}</p></main>
   }
-  if (!user || recovering) return <Entry recovering={recovering} authenticatorReset={authenticatorReset} />
+  if (!user || recovering) return <Entry recovering={recovering} authenticatorReset={authenticatorReset} startRecovery={startRecovery} />
   if (access?.state === 'challenge') return <SignInMfa key={user} retry={retry} recovered={() => {
     setAuthenticatorReset(true)
     setSession(null)
@@ -87,5 +99,11 @@ export default function Home() {
     <button type="button" onClick={retry}>{t('authenticatorRetry')}</button>
     <button type="button" className="secondary" onClick={() => void db!.auth.signOut({ scope: 'local' })}>{t('signOut')}</button>
   </section></main>
+  if (access?.lockdown?.locked) return <AccountLockdownScreen status={access.lockdown} refresh={retry} startRecovery={()=>{
+    setStartRecovery(true)
+    void db!.auth.signOut({scope:'local'})
+  }}/>
+  if (protection.value && (protection.value.locked || protection.value.unavailable))
+    return <DeviceLockScreen device={protection.value.device} unavailable={protection.value.unavailable} refresh={protection.refresh}/>
   return <WorkspaceContextProvider key={user} user={user}><Inbox user={user} /></WorkspaceContextProvider>
 }

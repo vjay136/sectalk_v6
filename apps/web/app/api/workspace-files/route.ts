@@ -1,6 +1,6 @@
 import { authenticateFileRequest, fileFailure, fileHeaders } from '../../../lib/authenticated-file-request'
 import { validFileId } from '../../../lib/file-download-ticket'
-import { readAttachmentUpload } from '../../../lib/attachment-upload-body'
+import { readAttachmentUpload, readUploadFilename } from '../../../lib/attachment-upload-body'
 import { allowedFileType, attachmentDocumentFormat, officeFormatPattern } from '../../../lib/file-type-policy'
 import { attachmentInspectionLabel, inspectAttachment } from '../../../lib/attachment-inspection'
 import { scanAttachment } from '../../../lib/attachment-scan-server'
@@ -10,18 +10,12 @@ export const runtime = 'nodejs'
 export const maxDuration = 40
 
 const forbidden = () => fileFailure(404, 'Workspace file access is unavailable.')
-function requestFilename(request: Request) {
-  const value = request.headers.get('x-sectalk-file-name')
-  if (!value || value.length > 1680) return null
-  try { return decodeURIComponent(value).trim() } catch { return null }
-}
-
 async function handle(request: Request) {
   const query = new URL(request.url).searchParams
   const workspace = query.get('workspace')?.toLowerCase()
   const file = query.get('file')?.toLowerCase()
   const action = query.get('action')
-  const filename = requestFilename(request)
+  const filename = readUploadFilename(request)
   const mime = request.headers.get('content-type') || ''
   if (!validFileId(workspace) || (file !== undefined && !validFileId(file))) return fileFailure(400, 'Choose a valid workspace file.')
   const auth = await authenticateFileRequest(request)

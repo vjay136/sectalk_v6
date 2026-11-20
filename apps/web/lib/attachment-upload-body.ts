@@ -18,3 +18,8 @@ export async function readAttachmentUpload(request: Request, maximumBytes: numbe
     reader.releaseLock()
   }
 }
+export function readUploadFilename(request: Request) {
+  const value = request.headers.get('x-sectalk-file-name')
+  if (!value || value.length > 1680) return null
+  try { return decodeURIComponent(value).trim() } catch { return null }
+}

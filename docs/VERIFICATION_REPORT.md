@@ -5,9 +5,9 @@
 | Check | Result |
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
-| Clean source snapshot | The staged 147-feature snapshot passed 34 unit tests and a production build on checksum-verified Node 24.22.3, targeted Edge flows, and source and browser secret checks. A fresh local Supabase project installed the exact migrations and passed 96 rollback suites. |
-| Unit tests | 34 passed, including document heuristics, attachment MIME handling, export payloads, SMTP, VAPID and readiness |
-| Supabase database integration | The earlier 127-feature checkpoint passed 84 rollback suites, including case collaboration, classified forwarding, workspace overview, incident scope and expanded scanner policy |
+| Clean source snapshot | The staged 157-feature snapshot passed a production build on checksum-verified Node 24.22.3, source and browser secret checks, and the production dependency audit. The staged app passed Edge tests for public mobile navigation, trusted device and contact key verification, signed workspace integrations, and emergency access against the local QA backend. |
+| Unit tests | 36 passed, including webhook transport, document heuristics, attachment MIME handling, export payloads, SMTP, VAPID and readiness. |
+| Supabase database integration | A fresh local Supabase project installed the exact staged migrations and passed all 101 rollback suites. |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |

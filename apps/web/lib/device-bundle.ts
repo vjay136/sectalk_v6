@@ -16,6 +16,10 @@ export function deviceBindingTranscript(challenge: DeviceChallenge) {
     challenge.challenge,challenge.nonce,challenge.signing,challenge.agreement]))
 }
 
+export function deviceCommandTranscript(owner: string,device: string,nonce: string,at: string) {
+  return encode.encode(JSON.stringify(['sectalk-device-command-v1',owner,device,nonce,at]))
+}
+
 export function binaryToBase64url(data: ArrayBuffer) {
   return btoa(String.fromCharCode(...new Uint8Array(data))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')
 }

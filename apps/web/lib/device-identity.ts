@@ -1,21 +1,29 @@
 import { db } from './data'
 import { binaryToBase64url, deviceBindingTranscript, deviceBundleTranscript, type DeviceChallenge } from './device-bundle'
 
-type LocalDevice = {
+export type LocalDevice = {
   id: string
   owner: string
   signing: CryptoKeyPair
   agreement: CryptoKeyPair
 }
 const storageName='sectalk-device-identity'
-const keyStore='identities'
+export const keyStore='identities'
+export const deviceReceiptStore='command-receipts'
 
-function openDeviceStore(): Promise<IDBDatabase> {
+export function openDeviceStore(): Promise<IDBDatabase> {
   return new Promise((resolve,reject)=>{
-    const request=indexedDB.open(storageName,1)
-    request.onupgradeneeded=()=>request.result.createObjectStore(keyStore,{keyPath:'owner'})
+    const request=indexedDB.open(storageName,2)
+    request.onupgradeneeded=()=>{
+      if (!request.result.objectStoreNames.contains(keyStore)) request.result.createObjectStore(keyStore,{keyPath:'owner'})
+      if (!request.result.objectStoreNames.contains(deviceReceiptStore))
+        request.result.createObjectStore(deviceReceiptStore,{keyPath:'command'})
+    }
     request.onerror=()=>reject(request.error)
-    request.onsuccess=()=>resolve(request.result)
+    request.onsuccess=()=>{
+      request.result.onversionchange=()=>request.result.close()
+      resolve(request.result)
+    }
   })
 }
 

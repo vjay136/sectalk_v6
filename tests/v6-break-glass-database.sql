@@ -39,6 +39,7 @@ declare
   no_consent uuid;
   grant_id uuid;
   later_grant uuid;
+  notice_id uuid;
   value text;
 begin
   if has_table_privilege('authenticated','sectalk_private.st_v6_break_glass_requests','select')
@@ -121,6 +122,22 @@ begin
       is distinct from array['requested','approved','accessed','closed']
     or public.st_v6_break_glass_list(workspace)::text like '%Confidential reporter note%' then
     raise exception 'Audit history is incomplete or disclosed reporter notes';
+  end if;
+  select n.id into notice_id from public.st_v6_my_emergency_notices() n where n.stage='accessed';
+  if notice_id is null or (select count(*) from public.st_v6_my_emergency_notices() n where n.stage='closed')<>1
+    or has_table_privilege('authenticated','sectalk_private.st_v6_emergency_notices','select') then
+    raise exception 'Customer notice history did not match the actual access';
+  end if;
+  perform set_config('request.jwt.claims',operator_claims,true);
+  perform public.st_v6_read_emergency_notice(notice_id);
+  if exists(select from public.st_v6_my_emergency_notices()) then raise exception 'Operator saw tenant customer notices'; end if;
+  perform set_config('request.jwt.claims',owner_claims,true);
+  if exists(select from public.st_v6_my_emergency_notices() n where n.id=notice_id and n.read_at is not null) then
+    raise exception 'Unrelated operator acknowledged the customer notice';
+  end if;
+  perform public.st_v6_read_emergency_notice(notice_id);
+  if not exists(select from public.st_v6_my_emergency_notices() n where n.id=notice_id and n.read_at is not null) then
+    raise exception 'Current tenant owner could not acknowledge the notice';
   end if;
 end $$;
 

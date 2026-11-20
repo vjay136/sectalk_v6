@@ -64,9 +64,17 @@ async function lookup(page, person) {
   const scoped=createClient(origin,key,{...options,global:{headers:{Authorization:'Bearer '+session.access_token}}})
   return data(await scoped.rpc('st_v7_peer_device_bundles',{p_peer:person.user.id}))
 }
+async function openVerification(page, name) {
+  await page.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Inbox',exact:true}).click()
+  await page.locator('.chat-item').filter({hasText:name}).click()
+  await page.getByRole('button',{name:'Verify contact keys',exact:true}).click()
+  const verification=page.getByRole('dialog',{name:'Verify keys with '+name,exact:true})
+  await verification.locator('code[aria-label="Safety number"]').waitFor()
+  return verification
+}
 async function keyInfo(page,ownerId) {
   return page.evaluate(accountId=>new Promise((resolve,reject)=>{
-    const open=indexedDB.open('sectalk-device-identity',1)
+    const open=indexedDB.open('sectalk-device-identity')
     open.onerror=()=>reject(open.error)
     open.onsuccess=()=>{
       const database=open.result
@@ -121,6 +129,30 @@ try {
   const contract=new TextEncoder().encode(JSON.stringify(['sectalk-device-bundle-v1',owner.user.id,bundle.device,bundle.signing_key,bundle.agreement_key]))
   assert.ok(await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},validator,Buffer.from(bundle.bundle_signature,'base64url'),contract))
 
+  const [ownerKeys, peerKeys]=await Promise.all([
+    openVerification(first,'Device fixture peer'), openVerification(recipient,'Device fixture owner'),
+  ])
+  const safetyNumber = area=>area.locator('code[aria-label="Safety number"]').textContent()
+  const compared=await safetyNumber(ownerKeys)
+  assert.match(compared,/^\d{5}(?: \d{5}){11}$/)
+  assert.equal(await safetyNumber(peerKeys),compared)
+  const qr = area=>area.getByRole('img',{name:'QR code for the current safety number'})
+  await qr(ownerKeys).waitFor()
+  await qr(peerKeys).waitFor()
+  const qrData=await qr(ownerKeys).getAttribute('src')
+  assert.match(qrData,/^data:image\/gif;base64,/)
+  assert.equal(await qr(peerKeys).getAttribute('src'),qrData)
+  await peerKeys.getByLabel('Safety number or scanned QR value').fill('0'.repeat(60))
+  await peerKeys.getByRole('button',{name:'Check and verify',exact:true}).click()
+  await peerKeys.getByText('The values differ. Confirm them with your contact.').waitFor()
+  await peerKeys.getByLabel('Safety number or scanned QR value').fill(compared)
+  await peerKeys.getByRole('button',{name:'Check and verify',exact:true}).click()
+  await peerKeys.getByText('The current contact keys are verified on this browser.',{exact:true}).waitFor()
+  assert.deepEqual(data(await outsider.client.rpc('st_v7_contact_key_manifest',{p_peer:owner.user.id})),[])
+  await ownerKeys.getByRole('button',{name:'Close dialog',exact:true}).click()
+  await first.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Profile',exact:true}).click()
+  await first.getByRole('button',{name:'Devices and sessions',exact:true}).click()
+
   const issued=await browserSession(first)
   const extra=await first.evaluate(async ({url,publicKey})=>{
     const storage=Object.keys(localStorage).find(name=>name.endsWith('-auth-token'))
@@ -161,10 +193,13 @@ try {
   await registry(first).getByText('Blocked',{exact:true}).waitFor()
   await second.getByLabel('Email address',{exact:true}).waitFor()
   assert.deepEqual((await lookup(recipient,owner)).map(item=>item.device),[keyState.id])
+  await peerKeys.getByText('A previously verified key set changed. Compare the new keys before trusting it.',{exact:true}).waitFor()
+  assert.notEqual(await safetyNumber(peerKeys),compared)
+  await peerKeys.getByText('The current contact keys are verified on this browser.',{exact:true}).waitFor({state:'hidden'})
   await openRegistry(second,owner)
   await registry(second).getByRole('button',{name:'Register this device',exact:true}).click()
   await registry(second).getByRole('alert').filter({hasText:'This device is unavailable for registration'}).waitFor()
-  console.log('Passed unknown, known, trusted, managed and blocked devices, real private keys, verified peer bundle, fresh trust, rotation and linked session revocation.')
+  console.log('Passed native device enrollment, trust, rotation, symmetric safety numbers, QR display, live key-change warning and linked session revocation.')
 } finally {
   await browser.close()
   assert.match(chat,/^[a-f0-9-]{36}$/)

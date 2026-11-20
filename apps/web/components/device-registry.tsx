@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
 import { verifyAccountCredential } from '../lib/account-credential'
 import { enrollCurrentDevice } from '../lib/device-identity'
+import { DeviceRemoteControls, type DeviceCommand } from './device-remote-controls'
 
 type Trust = 'known' | 'trusted' | 'managed' | 'blocked'
 type Device = {id: string;state: Trust;fingerprint: string;created_at: string;current_device: boolean;active_sessions: number}
@@ -13,19 +14,23 @@ const decisionLabels = {known:'Remove trust',trusted:'Trust device',blocked:'Blo
 
 export function DeviceRegistry({hints}: {hints: EventTarget}) {
   const [rows,setRows]=useState<Device[]|null>(null)
+  const [commands,setCommands]=useState<DeviceCommand[]>([])
   const [hasFactor,setHasFactor]=useState(false)
   const [decision,setDecision]=useState<Decision|null>(null)
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
   const [feedback,setFeedback]=useState('')
   const load=useCallback(async()=>{
-    const [registry,factors]=await Promise.all([db!.rpc('st_v7_list_devices'),db!.auth.mfa.listFactors()])
-    if (registry.error || factors.error) {
+    const [registry,factors,remote]=await Promise.all([
+      db!.rpc('st_v7_list_devices'),db!.auth.mfa.listFactors(),db!.rpc('st_v7_list_device_commands'),
+    ])
+    if (registry.error || factors.error || remote.error) {
       setError('Could not load the device trust registry.')
       return
     }
     setHasFactor(factors.data.totp.some(factor=>factor.status==='verified'))
     setRows(registry.data as Device[])
+    setCommands(remote.data as DeviceCommand[])
   },[])
 
   useEffect(()=>{
@@ -114,6 +119,8 @@ export function DeviceRegistry({hints}: {hints: EventTarget}) {
         <div className="actions"><button className="primary" disabled={busy}>Confirm {decisionLabels[decision.state].toLowerCase()}</button>
           <button className="secondary" type="button" disabled={busy} onClick={()=>setDecision(null)}>Cancel trust change</button></div>
       </form>}
+      {commands.filter(command=>command.device===device.id).map(command=><DeviceRemoteControls key={command.device}
+        status={command} hasFactor={hasFactor} hasRegisteredDevice={Boolean(current)} onChange={load}/>)}
     </article>)}
   </section>
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { db, onReconnect } from './data'
 
-type Feature='task_creation'|'recurring_meetings'
+export type Feature='task_creation'|'recurring_meetings'|'integration_api'
 
 export function useFeature(feature:Feature,workspace:string|null,needed=true){
   const [result,setResult]=useState<{key:string;value:boolean}|null>(null)

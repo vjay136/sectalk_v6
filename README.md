@@ -31,6 +31,10 @@ GOTRUE_SESSIONS_INACTIVITY_TIMEOUT=168h
 
 The device registry uses secure browser storage and requires the server-only `SECTALK_DEVICE_BUNDLE_SERVICE_KEY` to finish device enrollment after verifying the signing key. Managed status requires a trusted management integration calling the provider-only registry procedure. The registry publishes approved public keys for authorized direct contacts. End-to-end message encryption is a separate protocol.
 
+Remote revoke ends the device's linked sessions immediately. A lock prevents the same registered browser from using or re-enrolling its keys until the account holder verifies their credentials. A key wipe waits for that browser to reach SecTalk and acknowledge deletion of its registered signing and agreement keys. A pending command can be cancelled before dispatch. Cancelling keeps any ended sessions signed out.
+
+Login alerts use the browser family and network prefix already observed by GoTrue. The detector requires both signals to differ from active trusted sessions. Alerts expose only the sign-in time and review status. Account lockdown requires a PostgREST pre-request guard and the existing Auth SMTP setup. The migration stops if a different pre-request hook is configured. Preserve that hook and integrate a call to the lockdown guard when applying the migration.
+
 ## Staff access
 
 Have the staff member verify an email code and create a SecTalk profile. Confirm the correct identity in Supabase Auth before running the following with a database operator account. Replace the UUID placeholder.

@@ -23,6 +23,7 @@ import { CaseCollaboration, CaseCollaborationAlerts } from './case-collaboration
 import { CaseEscalation, CaseEscalationAssignments } from './case-escalation'
 import { MyRoomReports, RoomReportQueue } from './room-reports'
 import { StaffMfa } from './staff-mfa'
+import { EmergencyNotices } from './emergency-notices'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
@@ -84,7 +85,7 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
   </form></Dialog>
 }
 
-export function Safety({ staff, refresh }: { staff: string; refresh: () => Promise<void> }) {
+export function Safety({ staff, refresh, hints }: { staff: string; refresh: () => Promise<void>; hints: EventTarget }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
   const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports'>('mine')
@@ -240,11 +241,12 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
       } : undefined} /><RoomReportQueue scope="platform"/></> : <StaffMfa refresh={refresh}/>) :
       visibleView==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
         {error&&<p role="alert" className="error">{error}</p>}
-        {!notices.length&&<p>No account notices.</p>}
+        {!notices.length&&<p>No account restriction notices.</p>}
         {notices.map(notice=><div className="release-board-item" key={notice.id}><strong>{labels[notice.action]}</strong><p><DateLabel value={notice.created_at}/></p>
           {notice.until_at&&notice.until_at!=='infinity'&&<p>Restriction ends <DateLabel value={notice.until_at}/></p>}
           {notice.until_at==='infinity'&&<p>Messaging and calls are restricted until staff restore access.</p>}
         </div>)}
+        <EmergencyNotices hints={hints}/>
       </div> :
       selected?<div className="panel release-panel"><div className="panel-header"><h2>Report timeline</h2>
         <button className="secondary" onClick={()=>{setSelected(null);setTimeline(null);setError('')}}>Back to reports</button></div>

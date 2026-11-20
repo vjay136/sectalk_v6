@@ -7,6 +7,7 @@ import { db } from '../lib/data'
 import { Brand } from './entry'
 import { useLocale } from './locale-provider'
 import { AccountSecurityChanges } from './account-security-changes'
+import { LoginAnomalies } from './login-anomalies'
 
 type RecoveryStatus = 'staff' | 'ready' | 'missing'
 type Setup = { id: string; qr: string; secret: string }
@@ -137,7 +138,10 @@ export function AccountMfa({hints}: {hints: EventTarget}) {
       <button className="secondary" type="button" onClick={() => setCodes([])}>{t('recoveryCodesSaved')}</button>
     </div>}
     {error && <p role="alert">{error}</p>}
-  </div>{factors && status && <AccountSecurityChanges hints={hints} hasAuthenticator={Boolean(totp)} staff={status === 'staff'}/>}</>
+  </div>{factors && status && <>
+    <AccountSecurityChanges hints={hints} hasAuthenticator={Boolean(totp)} staff={status === 'staff'}/>
+    <LoginAnomalies hints={hints} hasFactor={Boolean(totp)}/>
+  </>}</>
 }
 
 export function SignInMfa({ retry, recovered }: { retry: () => void; recovered: () => void }) {

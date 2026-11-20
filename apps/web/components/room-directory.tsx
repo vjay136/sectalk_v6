@@ -14,14 +14,17 @@ import { RoomRetirement } from './room-retirement'
 import { RoomPostReport } from './room-reports'
 import { RoomGuestLinks } from './room-guest-links'
 import { RoomThreadSummary } from './room-thread-summary'
+import { RoomFiles } from './workspace-files'
+import { RoomCalls } from './room-calls'
+import { RoomPermissionSettings, useRoomPermissions } from './room-permissions'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
 const classificationLabels={public:'Public',internal:'Internal',confidential:'Confidential',restricted:'Restricted'}
 type Classification=keyof typeof classificationLabels
 
-function RoomComposer({user,room,parent,staff,showAnnounce,working,canToggleTyping,shareTyping,onTyping,onStopTyping,onToggleTyping,onSend}:{
-  user:string;room:string;parent:string|null;staff:boolean;showAnnounce:boolean;working:boolean
+function RoomComposer({user,room,parent,staff,mentionAll,showAnnounce,working,canToggleTyping,shareTyping,onTyping,onStopTyping,onToggleTyping,onSend}:{
+  user:string;room:string;parent:string|null;staff:boolean;mentionAll:boolean;showAnnounce:boolean;working:boolean
   canToggleTyping:boolean;shareTyping:boolean;onTyping:(value:string)=>void;onStopTyping:()=>void;onToggleTyping:()=>void
   onSend:(body:string,announce:boolean,parent:string|null,onSent:()=>void)=>void
 }){
@@ -44,7 +47,8 @@ function RoomComposer({user,room,parent,staff,showAnnounce,working,canToggleTypi
       }} onBlur={()=>{draft.flush();onStopTyping()}}/></label>
     <DraftStatus draft={draft}/>
     <p id="room-mentions-help">Use <code>@handle</code> to mention a room member.
-      {staff&&<> Use <code>@group:"Group name"</code> for a group, <code>@channel</code> for the room, or <code>@here</code> for online members.</>}</p>
+      {staff&&<> Use <code>@group:"Group name"</code> for a group.</>}
+      {mentionAll&&<> Use <code>@channel</code> for the room or <code>@here</code> for online members.</>}</p>
     {showAnnounce&&<label className="task-check"><input type="checkbox" name="announce"/> Post as announcement</label>}
     <button className="primary" disabled={working}>Send</button>
     <button className="secondary" type="button" disabled={!canToggleTyping}
@@ -214,7 +218,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const [threadRoot,setThreadRoot]=useState<Post|null>(null)
   const refreshVersion=useRef(0)
   const replyVersion=useRef(0)
-  const [view,setView]=useState<'messages'|'threads'|'pins'|'people'|'settings'|'audit'|'tasks'>('messages')
+  const [view,setView]=useState<'messages'|'threads'|'pins'|'files'|'people'|'settings'|'audit'|'tasks'|'calls'>('messages')
   const [taskSource,setTaskSource]=useState<string|null>(null)
   const [editingPost,setEditingPost]=useState<string|null>(null)
   const [forwarding,setForwarding]=useState<string|null>(null)
@@ -228,7 +232,9 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const [roomTyping,setRoomTyping]=useState<{parent:string|null;share:boolean;until:string|null}|null>(null)
   const roomTypingPulse=useRef<{parent:string|null;sentAt:number;stopped:boolean}|null>(null)
   const staff=role==='moderator'||role==='owner'
-  const canPost=role&&role!=='read_only'&&!room.archived&&(staff||(!room.locked&&!['announcement','broadcast'].includes(room.kind)))
+  const permissions=useRoomPermissions(role?room.id:null)
+  const canPostByRoom=role&&role!=='read_only'&&!room.archived&&(staff||(!room.locked&&!['announcement','broadcast'].includes(room.kind)))
+  const canPost=canPostByRoom&&permissions.state?.post
   const canShareClassification=room.classification==='public'||room.classification==='internal'
   const forwardingAvailable=room.kind==='public'&&canShareClassification&&room.forwarding_allowed&&!room.archived&&!room.locked&&(staff||role==='member')
   const refresh=useCallback(async()=>{
@@ -435,7 +441,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
       <p className={post.removed_at?'meeting-agenda revoked-message':'meeting-agenda'}>{post.body}</p>
       {!post.removed_at&&post.sender===user&&readCount>0&&<span className="pill">Read by {readCount}</span>}
       {!post.removed_at&&<RoomPostReactions room={room.id} post={post.id} policy={reactionPolicy}
-        reactions={reactions.items[post.id]} canAdd={Boolean(canPost)} canRemove={canModify} onChange={reactions.refresh}/>}
+        reactions={reactions.items[post.id]} canAdd={Boolean(canPostByRoom&&permissions.state?.react)} canRemove={canModify} onChange={reactions.refresh}/>}
       {editingPost===post.id&&canEdit?<form className="release-form" onSubmit={event=>{
         event.preventDefault()
         void updatePost(post,'edit',new FormData(event.currentTarget).get('editedBody'))
@@ -459,7 +465,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
       {canReport&&reporting===post.id&&<RoomPostReport key={post.id} room={room.id} post={post.id} close={()=>setReporting(null)}/>}
       {actions&&<div className="action-row">
         <button className="secondary" type="button" onClick={()=>openThread(post.id)}>Open thread{summary?' ('+summary.replies+')':''}</button>
-        {canPost&&!post.removed_at&&<button className="secondary" type="button" onClick={()=>{setTaskSource(post.id);setView('tasks')}}>Create task from message</button>}
+        {canPostByRoom&&!post.removed_at&&<button className="secondary" type="button" onClick={()=>{setTaskSource(post.id);setView('tasks')}}>Create task from message</button>}
         {staff&&!room.archived&&(pinned||!post.removed_at)&&<button className="secondary" type="button" disabled={working} onClick={()=>void settings(pinned?'unpin':'pin',{p_post:post.id})}>
           {pinned?'Unpin':'Pin'}
         </button>}
@@ -490,7 +496,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     </div>:!room.archived&&['public','announcement','broadcast'].includes(room.kind)&&<button className="primary" type="button" disabled={working} onClick={()=>void member('join')}>Join room</button>)}
     {(role||manager)&&<>
       <SectionTabs label="Room tabs" value={actualView} onChange={setView} options={[
-        ...(role?[['messages','Messages'] as const,['threads','Threads'] as const,['pins','Pins'] as const,['tasks','Tasks'] as const]:[]),
+        ...(role?[['messages','Messages'] as const,['threads','Threads'] as const,['pins','Pins'] as const,
+          ['files','Files'] as const,['tasks','Tasks'] as const,['calls','Calls'] as const]:[]),
         ...(manager||role!=='guest'?[['people','Members'] as const]:[]),
         ...(canManage?[['settings','Settings'] as const,['audit','Audit'] as const]:[]),
       ]}/>
@@ -513,13 +520,15 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         {thread&&replies.length===0&&<p>No replies yet.</p>}
       </>}
       {actualView==='pins'&&(pins.length?pins.map(post=>renderPost(post,true)):<p>No pinned messages.</p>)}
+      {actualView==='files'&&role&&<RoomFiles key={room.id} room={room.id}/>}
+      {actualView==='calls'&&role&&<RoomCalls key={room.id} room={room.id}/>}
       {actualView==='tasks'&&<ScopedTasks user={user} scope={{kind:'room',id:room.id}} source={taskSource}
-        moderator={staff} canCreate={Boolean(canPost)} onSourceUsed={()=>setTaskSource(null)}
+        moderator={staff} canCreate={Boolean(canPostByRoom)} onSourceUsed={()=>setTaskSource(null)}
         people={Object.fromEntries((room.kind==='admin'?workspaceAdminIds:roster.map(row=>row.user_id))
           .filter(id=>profiles[id]).map(id=>[id,profiles[id]]))}/>}
       {activeTyping?.until&&Date.parse(activeTyping.until)>Date.now()&&<p className="thread-typing" role="status">Someone is typing…</p>}
       {canPost&&(actualView==='messages'||(actualView==='threads'&&thread&&room.kind!=='announcement'))&&
-        <RoomComposer key={typingParent||'root'} user={user} room={room.id} parent={typingParent} staff={staff}
+        <RoomComposer key={typingParent||'root'} user={user} room={room.id} parent={typingParent} staff={staff} mentionAll={Boolean(permissions.state?.mention_all)}
           showAnnounce={staff&&room.kind!=='announcement'&&actualView==='messages'} working={working}
           canToggleTyping={Boolean(activeTyping)&&!typingPolicyBusy} shareTyping={Boolean(activeTyping?.share)}
           onTyping={value=>void sendRoomTyping(value)} onStopTyping={()=>void stopRoomTyping(typingParent)}
@@ -565,6 +574,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         </>}
       </>}
       {actualView==='settings'&&<>
+        {permissions.state&&<RoomPermissionSettings room={room.id} editable={permissions.state.editable} refresh={permissions.refresh}/>}
         {role==='owner'&&<RoomGuestLinks room={room.id}
           policyVersion={JSON.stringify([room.kind,room.classification,room.forwarding_allowed,room.archived,room.locked])}/>}
         {manager&&!room.archived&&<form className="release-form" key={room.classification} onSubmit={event=>{

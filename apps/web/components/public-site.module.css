@@ -1,0 +1,36 @@
+.shell {
+  min-height: 100dvh;
+  background: radial-gradient(ellipse at 80% 5%, #112b4d, transparent 45rem), var(--bg, #080e1a);
+}
+.header, .content, .footer { width: min(1120px, calc(100% - 2rem)); margin-inline: auto; }
+.header, .footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.header { padding-block: 1rem; border-bottom: 1px solid #27405a; }
+.header a, .footer a { text-decoration: none; }
+.links, .footer nav { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; }
+.links a, .footer a { color: #b9cee7; }
+.links a:hover, .footer a:hover { color: #eaf7ff; text-decoration: underline; }
+.brand { display: inline-flex; align-items: center; gap: .7rem; color: inherit; font-weight: 700; white-space: nowrap; }
+.brand img { border-radius: 10px; }
+.brand small { display: block; color: #a8bfda; font-weight: 500; }
+.content { min-height: 67vh; padding-block: clamp(2rem, 6vw, 5.5rem); }
+.footer { border-top: 1px solid #27405a; padding-block: 1.5rem; color: #b9cee7; }
+.hero { display: grid; grid-template-columns: 1.35fr .65fr; gap: clamp(1.5rem, 6vw, 5rem); align-items: center; }
+.hero img { width: 100%; height: auto; border-radius: 20px; filter: drop-shadow(0 12px 44px #0065b957); }
+.hero h1, .heading h1 { font-size: clamp(2.4rem, 6vw, 4.6rem); line-height: 1.06; letter-spacing: -.048em; margin-block: 0 1.05rem; }
+.hero p, .heading p { color: #b9cee7; max-width: 56ch; font-size: clamp(1rem, 2vw, 1.17rem); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 1rem; margin-top: 2rem; }
+.cards > article { border: 1px solid #27405a; border-radius: 16px; padding: 1.35rem; background: #12213a78; }
+.cards h2 { font-size: 1.2rem; }
+.cards p { color: #bfd0e7; }
+.reading { max-width: 78ch; }
+.reading h2 { margin-top: 1.8rem; }
+.reading p, .reading li { color: #c4d2e4; line-height: 1.65; }
+.controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; margin-block: 1.5rem; }
+.controls label { display: grid; gap: .35rem; }
+.notice { color: #b9cee7; }
+@media (max-width: 690px) {
+  .header, .footer { flex-wrap: wrap; }
+  .links { order: 3; width: 100%; }
+  .hero { grid-template-columns: 1fr; }
+  .hero img { max-width: 220px; justify-self: start; }
+}

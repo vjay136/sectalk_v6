@@ -57,7 +57,7 @@ const nav = page => page.getByRole('navigation', { name: 'SecTalk features' })
 
 async function open(person) {
   const page = await browser.newPage()
-  await page.goto(new URL('/#account', app).href)
+  await page.goto(new URL('/#account', app).href, { waitUntil: 'domcontentloaded', timeout: 90000 })
   await page.getByLabel('Email address', { exact: true }).fill(person.email)
   await page.getByLabel('Password', { exact: true }).fill(password)
   await page.locator('button.submit-auth').click()
@@ -95,6 +95,10 @@ try {
   assert.deepEqual(value(await operator.client.from('st_v6_room_posts').select('body').eq('id', post)), [])
 
   const [opsPage, ownerPage] = await Promise.all([open(operator), open(owner)])
+  await button(nav(ownerPage), 'Safety').click()
+  const readyNotices = ownerPage.waitForResponse(response => response.ok() && response.url().endsWith('/rpc/st_v6_my_emergency_notices'))
+  await button(ownerPage, 'Account notices').click()
+  await readyNotices
   await button(nav(opsPage), 'Safety').click()
   await button(opsPage, 'Tenant operations').click()
   await enroll(opsPage, 'Verify access')
@@ -114,6 +118,14 @@ try {
   assert.equal((await read()).status, 403)
   await ops.getByText('Request sent to the workspace owner for review.', { exact: true }).waitFor()
   assert.equal(await ops.getByText(source, { exact: true }).count(), 0)
+  const notices = ownerPage.getByRole('region', { name: 'Workspace emergency notices' })
+  await notices.getByText('Emergency evidence access was requested.', { exact: true }).waitFor()
+  assert.equal(await notices.getByText(source, { exact: true }).count(), 0)
+  assert.deepEqual(value(await reporter.client.rpc('st_v6_my_emergency_notices')), [])
+  const acknowledged = ownerPage.waitForResponse(response => response.ok() && response.url().endsWith('/rpc/st_v6_read_emergency_notice'))
+  await button(notices, 'Mark notice as read').click()
+  await acknowledged
+  await button(notices, 'Mark notice as read').waitFor({ state: 'hidden' })
 
   await button(nav(ownerPage), 'Profile').click()
   await button(ownerPage, 'Security').click()
@@ -134,6 +146,7 @@ try {
   await button(ops, 'Refresh requests').click()
   await button(ops, 'View approved evidence once').click()
   await ops.getByText(source, { exact: true }).waitFor()
+  await ownerPage.getByText('Review the new workspace emergency access notice in Safety.', { exact: true }).waitFor()
   assert.equal((await read()).status, 403)
   await button(ops, 'Close evidence').click()
   assert.equal(await ops.getByText(source, { exact: true }).count(), 0)
@@ -148,7 +161,11 @@ try {
   for (const state of ['requested', 'approved', 'accessed', 'closed']) {
     await review.getByRole('listitem').filter({ hasText: new RegExp('^' + state) }).waitFor()
   }
-  console.log('Passed actual operator TOTP, owner approval, one-time evidence, excluded notes and final emergency review audit.')
+  await button(nav(ownerPage), 'Safety').click()
+  await button(ownerPage, 'Account notices').click()
+  await notices.getByText('The approved evidence was accessed.', { exact: true }).waitFor()
+  await notices.getByText('The emergency access review was closed.', { exact: true }).waitFor()
+  console.log('Passed actual operator TOTP, owner approval, one-time evidence, private live customer notices and review audit.')
 } finally {
   await browser.close()
   if (workspace) sql(`delete from sectalk_private.st_v6_break_glass_audit where workspace_id='${workspace}';

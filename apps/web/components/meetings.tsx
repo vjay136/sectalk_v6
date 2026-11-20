@@ -21,7 +21,7 @@ import type { MeetingChoices } from './meeting-prejoin'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
 const MeetingPrejoin = dynamic(() => import('./meeting-prejoin'), { ssr: false })
-type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null; meeting_locked:boolean; chat_disabled:boolean; screen_share_disabled:boolean; media_protection?:number }
+type Meeting = { id:string; workspace_id:string; room_id?:string|null; room_host_grant?:string|null; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null; meeting_locked:boolean; chat_disabled:boolean; screen_share_disabled:boolean; media_protection?:number }
 type Attendance = { user_id:string; status:'waiting'|'admitted'|'declined'|'left'; requested_at:string; admitted_at:string|null; left_at:string|null; is_cohost:boolean; removed_at:string|null }
 export function Meetings({ user, requested }: { user:string; requested:string|null }) {
   const {active,workspaces,select}=useWorkspaceContext()
@@ -152,7 +152,8 @@ function WorkspaceMeetings({ user, requested, workspace }: { user:string; reques
       </div>)}
     </div>}
     {selected && <MeetingDetail key={selected.id} meeting={selected} user={user} mediaReady={ready}
-      host={selected.host_id===user && canHost} bulkAdmit={workspace.policy?.bulk_admit!==false} refresh={reload}/>}
+      host={selected.host_id===user && (canHost||Boolean(selected.room_host_grant))}
+      bulkAdmit={workspace.policy?.bulk_admit!==false} refresh={reload}/>}
   </>
 }
 
@@ -271,14 +272,14 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
       <MeetingModeratorActions locked={meeting.meeting_locked} chatDisabled={meeting.chat_disabled} shareDisabled={meeting.screen_share_disabled}
         busy={actionBusy} moderate={moderation.act}/>}
     {protectedMode ? self==='admitted' && !ended && <ProtectedMeeting meeting={meeting.id} user={user}/> : <>
-      {host && self==='admitted' && meeting.status==='live' && !ended && mediaReady && !media &&
+      {!meeting.room_id && host && self==='admitted' && meeting.status==='live' && !ended && mediaReady && !media &&
         <ProtectedMeetingStart meeting={meeting.id} refresh={refresh}/>}
       {self==='admitted' && meeting.status==='live' && !ended && mediaReady && !media &&
         <MeetingPrejoin busy={busy} join={connect} requestMedia={requestMedia}/>}
       <MeetingRecording meeting={meeting.id} workspace={meeting.workspace_id} ended={ended}/>
       {ended && <MeetingCaptions meeting={meeting.id} ended/>}
       <MeetingSummary meeting={meeting.id}/>
-      {host && <MeetingGuestHost meeting={meeting.id} locked={meeting.meeting_locked}/>}
+      {!meeting.room_id && host && <MeetingGuestHost meeting={meeting.id} locked={meeting.meeting_locked}/>}
       {media && self==='admitted' && !ended && <MeetingMedia {...media} meeting={meeting.id} focus={focus}
         screenShareDisabled={meeting.screen_share_disabled} leave={refreshMedia}/>}
       {self==='admitted'&&meeting.status==='live'&&!ended&&<>
