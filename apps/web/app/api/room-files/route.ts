@@ -60,6 +60,9 @@ async function handle(request: Request) {
   const gate = await command('access')
   if (gate.error) return fileFailure(503, 'Room file authorization is unavailable.')
   if (!gate.data) return unavailable()
+  const payment = await auth.client.rpc('st_v7_workspace_payment_state', {p_room:room})
+  if (payment.error) return fileFailure(payment.error.code === '42501' ? 403 : 503, 'Workspace upload status is unavailable.')
+  if (payment.data?.mode === 'read_only') return fileFailure(423, 'This workspace is read-only until payment is restored.')
   const bytes = await readAttachmentUpload(request, workspaceFileMaximum).catch(() => null)
   if (bytes === undefined) return fileFailure(413, 'Choose a file up to 4 MiB.')
   if (!bytes?.length) return fileFailure(400, 'Choose a file that contains data.')
@@ -81,6 +84,7 @@ async function handle(request: Request) {
     return fileFailure(503, 'Room file security scanning is unavailable.')
   }
   const reservation = await command('reserve', bytes.length, hash)
+  if (reservation.error?.code === 'PT423') return fileFailure(423, 'This workspace is read-only until payment is restored.')
   if (reservation.error?.code === 'PT413') return fileFailure(413, 'The room file storage limit was reached.')
   if (reservation.error?.code === 'PT422') return fileFailure(422, 'The room file was blocked by security scanning.')
   if (reservation.error) return fileFailure(503, 'Room file storage is unavailable.')
@@ -91,6 +95,7 @@ async function handle(request: Request) {
   if (stored.error || !stored.data || stored.data.size !== bytes.length ||
     digestWorkspaceBytes(Buffer.from(await stored.data.arrayBuffer())) !== hash) return fileFailure(409, 'The room file could not be verified.')
   const published = await command('publish', bytes.length, hash)
+  if (published.error?.code === 'PT423') return fileFailure(423, 'This workspace is read-only until payment is restored.')
   if (published.error?.code === 'PT422') return fileFailure(422, 'The room file was blocked by security scanning.')
   if (published.error) return fileFailure(503, 'The room file could not be published.')
   return published.data ? Response.json(published.data, { headers: fileHeaders }) : unavailable()

@@ -1,0 +1,9 @@
+# Stripe billing portal
+
+The account owner's **Billing → Manage billing** menu opens short-lived Stripe sessions for payment methods, plan changes, invoice history, tax IDs, and end-of-period cancellation. Once Stripe confirms a pending cancellation, **Keep subscription active** opens the portal for its cancellation reversal. After Stripe has fully ended the subscription, use ordinary checkout if eligible. Stripe applies all payment and subscription changes and SecTalk reflects verified provider updates.
+
+Set `SECTALK_STRIPE_PORTAL_CONFIGURATION` to the dedicated active Stripe Customer Portal configuration ID in the same account and mode as the existing billing credentials. Configure payment-method updates, invoice history, customer updates for tax IDs (with optional billing name and address), price-only subscription updates with active SecTalk catalog prices, and cancellation at period end. Leave shareable Stripe portal login disabled. The app checks the configuration and rejects arbitrary customer, subscription, and redirect choices. Hosted return links always go back to SecTalk. Only the standard Stripe billing session host is supported.
+
+Launching the portal requires fresh native billing proof and the requesting account's persisted Stripe customer and subscription. Direct subscription actions also recheck the current Stripe subscription owner and lifecycle status. Delegated workspace billing remains read-only. SecTalk records the issuance purpose and time, and does not store portal URLs, card details or tax IDs.
+
+The local browser fixture exercises provider capability checks, targeted flow requests, portal navigation, and the signed cancellation status update. Live Stripe portal configuration, displayed provider settings, and customer actions inside Stripe require separate hosted verification.

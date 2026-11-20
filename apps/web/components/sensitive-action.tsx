@@ -4,7 +4,7 @@ import {useState,type FormEvent} from 'react'
 import {db,transientAuthClient} from '../lib/data'
 import {verifyAccountCredential} from '../lib/account-credential'
 
-type Scope='billing'|'room_role'|'export'
+type Scope='billing'|'room_role'|'export'|'history_transfer'
 type Method='password'|'totp'|'passkey'
 type Pending={method:Method; run:()=>Promise<void>; scope:Scope}
 

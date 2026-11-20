@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
+import { SocResponseActions } from './soc-response-actions'
 
 const categories = {
   harassment: 'Harassment', threat: 'Threat', scam: 'Scam', impersonation: 'Impersonation',
@@ -176,6 +177,7 @@ export function RoomReportQueue({scope}: {scope: 'platform' | 'workspace'}) {
       {selected.details && <p className="case-text">{selected.details}</p>}
       {selected.evidence ? <blockquote>{selected.evidence}</blockquote> : <p>The reported post is no longer available.</p>}
       {selected.handed_off_at && <p>Shared with authorized workspace admins.</p>}
+      {scope==='workspace' && selected.handed_off_at && <SocResponseActions key={selected.id} report={selected.id} roomCase/>}
       {scope === 'platform' && !selected.share_with_workspace && <p>Reporter selected platform review only.</p>}
       {(selected.share_with_workspace || selected.stage) && <dl className="profile-stats">
         <div><dt>Current stage</dt><dd>{stages[selected.stage ?? 0]}</dd></div>

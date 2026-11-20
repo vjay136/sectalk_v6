@@ -93,6 +93,43 @@ function ManagedLinkPreview({ account, link }: { account: string; link: Link }) 
   </span>
 }
 
+function ManagedLink({ link, text, account }: { link: Link; text: string; account: string }) {
+  const [busy,setBusy] = useState(false)
+  const [status,setStatus] = useState('')
+  async function open() {
+    if (busy) return
+    const tab = window.open('about:blank','_blank')
+    if (tab) tab.opener = null
+    setBusy(true)
+    setStatus('')
+    try {
+      const { data: { session } } = await db!.auth.getSession()
+      if (session?.user.id!==account) throw new Error()
+      const response = await fetch('/api/safety/url-inspection',{
+        method:'POST',headers:{Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},
+        body:JSON.stringify({url:link.inspect,policyOnly:true}),
+      })
+      if (!response.ok) throw new Error()
+      if ((await response.json()).allowed!==true) {
+        tab?.close()
+        setStatus('This link is blocked by Safety policy.')
+      } else if (tab) {
+        const referrer = tab.document.createElement('meta')
+        referrer.name = 'referrer'
+        referrer.content = 'no-referrer'
+        tab.document.head.append(referrer)
+        tab.location.replace(link.href)
+      } else setStatus('Allow pop-ups to open this link.')
+    } catch {
+      tab?.close()
+      setStatus('The link could not be checked.')
+    } finally { setBusy(false) }
+  }
+  return <span><button type="button" className="text-button rich-message-link" disabled={busy} onClick={() => void open()}>
+    <bdi>{text}</bdi>{text!==link.href && <small> (<bdi>{link.host}</bdi>)</small>}
+  </button>{status && <span role="status">{status}</span>}</span>
+}
+
 export function RichMessage({ value, account, mode, allowLinks = true }: {
   value: string; account?: string; mode?: 'managed' | 'encrypted'; allowLinks?: boolean
 }) {
@@ -110,6 +147,9 @@ export function RichMessage({ value, account, mode, allowLinks = true }: {
         if (address && safe(address) && mode === 'encrypted') return <button key={index} type="button" className="text-button rich-message-link"
           onClick={() => window.open(address.href, '_blank', 'noopener,noreferrer')}><bdi>{part.text}</bdi>
           {part.text !== address.href && <small> (<bdi>{address.host}</bdi>)</small>}</button>
+        if (address && safe(address) && mode==='managed' && account) {
+          return <ManagedLink key={index + ':' + address.href} link={address} text={part.text} account={account}/>
+        }
         return address && safe(address) ?
         <a key={index} href={part.url.href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">
           <bdi>{part.text}</bdi>{part.text !== part.url.href && <small> (<bdi>{part.url.host}</bdi>)</small>}

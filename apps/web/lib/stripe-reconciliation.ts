@@ -15,6 +15,7 @@ export function stripeSubscriptionSnapshot(subscription: Stripe.Subscription) {
   const legacy = legacyOfferForPrice(item.price.id)
   return {user, customer, subscription: subscription.id, price: item.price.id, legacy_plan: legacy?.plan ?? null,
     legacy_cadence: legacy?.cadence ?? null, status: subscription.status,
+    cancellation_reason: subscription.cancellation_details?.reason ?? null,
     period_end: new Date(item.current_period_end * 1000).toISOString(), cancel: subscription.cancel_at_period_end,
     currency: item.price.currency.toUpperCase(), amount: item.price.unit_amount}
 }

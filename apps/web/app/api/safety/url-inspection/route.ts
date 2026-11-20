@@ -33,10 +33,15 @@ export async function POST(request: Request) {
 
     const body = await readBoundedText(request, 1800)
     if (!body) return reply(400, { error: 'Enter a web URL under 1,500 characters.' })
-    const original = normalizeInspectionUrl(JSON.parse(body)?.url)
+    const input = JSON.parse(body)
+    const original = normalizeInspectionUrl(input?.url)
     if (!original) return reply(400, { error: 'Enter a web URL with a domain name and no embedded credentials.' })
     const offline = { normalized: original.url.href, stripped: original.stripped, outcome: 'unavailable',
       hops: [], domains: [{ ...inspectionDomainSignals(original.url), reputation: { status: 'unavailable' } }] }
+    const allowed = await session.rpc('st_v7_link_policy_allows', { p_url: original.url.href })
+    if (allowed.error || typeof allowed.data !== 'boolean') return reply(503, { error: 'Link policy is unavailable.' })
+    if (input?.policyOnly === true) return reply(200, { allowed: allowed.data })
+    if (!allowed.data) return reply(200, { ...offline, outcome: 'blocked' })
     const service = worker()
     if (!service) return reply(200, offline)
     try {

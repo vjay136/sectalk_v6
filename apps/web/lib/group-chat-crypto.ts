@@ -1,6 +1,7 @@
 import { base64urlToBinary, binaryToBase64url, deviceBundleTranscript } from './device-bundle'
 import { keyStore, openDeviceStore, type LocalDevice } from './device-identity'
 import type { ManifestEntry } from './contact-key-verification'
+import {groupHistoryTranscript,type GroupHistoryProof} from './group-history-proof'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -49,18 +50,22 @@ async function unseal(key: CryptoKey, blob: string, additionalData: Uint8Array<A
   return crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData }, key, bytes.subarray(12))
 }
 
+async function verifiedAgreement(entry:ManifestEntry){
+  const signing=await crypto.subtle.importKey('raw',base64urlToBinary(entry.signing_key),
+    {name:'ECDSA',namedCurve:'P-256'},false,['verify'])
+  const valid=await crypto.subtle.verify(signingAlgorithm,signing,base64urlToBinary(entry.bundle_signature),
+    deviceBundleTranscript({owner:entry.owner_id,device:entry.device,signing:entry.signing_key,agreement:entry.agreement_key}))
+  if(!valid)throw new Error('An approved device bundle failed signature validation.')
+  return crypto.subtle.importKey('raw',base64urlToBinary(entry.agreement_key),agreementAlgorithm,false,[])
+}
+
 export async function rotateGroupKey(group: string, epoch: number, entries: ManifestEntry[]) {
   const shared = crypto.getRandomValues(new Uint8Array(32))
   const keyPair = await crypto.subtle.generateKey(agreementAlgorithm, false, ['deriveBits'])
   const ephemeral = binaryToBase64url(await crypto.subtle.exportKey('raw', keyPair.publicKey))
   try {
     return Object.fromEntries(await Promise.all(entries.map(async entry => {
-      const signing = await crypto.subtle.importKey('raw', base64urlToBinary(entry.signing_key),
-        { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
-      const valid = await crypto.subtle.verify(signingAlgorithm, signing, base64urlToBinary(entry.bundle_signature),
-        deviceBundleTranscript({ owner: entry.owner_id, device: entry.device, signing: entry.signing_key, agreement: entry.agreement_key }))
-      if (!valid) throw new Error('An approved device bundle failed signature validation.')
-      const peer = await crypto.subtle.importKey('raw', base64urlToBinary(entry.agreement_key), agreementAlgorithm, false, [])
+      const peer = await verifiedAgreement(entry)
       const context = data(['wrap', group, epoch, entry.owner_id, entry.device, ephemeral])
       return [entry.device, { ephemeral, sealed: await seal(await wrappingKey(keyPair.privateKey, peer, context), shared, context) }]
     })))
@@ -69,15 +74,38 @@ export async function rotateGroupKey(group: string, epoch: number, entries: Mani
   }
 }
 
-export async function openGroupKey(group: string, device: LocalDevice, envelope: GroupEnvelope) {
+async function unwrapGroupKeyData(group:string,device:LocalDevice,envelope:GroupEnvelope){
   const publicKey = await crypto.subtle.importKey('raw', base64urlToBinary(envelope.ephemeral), agreementAlgorithm, false, [])
   const context = data(['wrap', group, envelope.epoch, device.owner, device.id, envelope.ephemeral])
-  const raw = await unseal(await wrappingKey(device.agreement.privateKey, publicKey, context), envelope.sealed, context)
+  return unseal(await wrappingKey(device.agreement.privateKey,publicKey,context),envelope.sealed,context)
+}
+
+export async function openGroupKey(group: string, device: LocalDevice, envelope: GroupEnvelope) {
+  const raw=await unwrapGroupKeyData(group,device,envelope)
   try {
     return await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt'])
   } finally {
     new Uint8Array(raw).fill(0)
   }
+}
+
+export async function rewrapGroupHistory(proof:GroupHistoryProof,device:LocalDevice,recipient:ManifestEntry,original:GroupEnvelope[]){
+  if(proof.source!==device.id||proof.target!==recipient.device||recipient.owner_id!==device.owner||proof.target===device.id){
+    throw new Error('History can be transferred only to another approved device on your account.')
+  }
+  const peer=await verifiedAgreement(recipient)
+  const keyPair=await crypto.subtle.generateKey(agreementAlgorithm,false,['deriveBits'])
+  const ephemeral=binaryToBase64url(await crypto.subtle.exportKey('raw',keyPair.publicKey))
+  const envelopes=await Promise.all(original.map(async envelope=>{
+    const clear=new Uint8Array(await unwrapGroupKeyData(proof.group,device,envelope))
+    try{
+      const context=data(['wrap',proof.group,envelope.epoch,recipient.owner_id,recipient.device,ephemeral])
+      const sealed=await seal(await wrappingKey(keyPair.privateKey,peer,context),clear,context)
+      return {epoch:envelope.epoch,ephemeral,sealed}
+    }finally{clear.fill(0)}
+  }))
+  const signature=binaryToBase64url(await crypto.subtle.sign(signingAlgorithm,device.signing.privateKey,groupHistoryTranscript(proof,envelopes)))
+  return {envelopes,signature}
 }
 
 export async function encryptGroupMessage(group: string, epoch: number, device: LocalDevice, key: CryptoKey, message: string) {

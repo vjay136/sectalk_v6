@@ -237,6 +237,19 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const [typingPolicyBusy,setTypingPolicyBusy]=useState(false)
   const [roomTyping,setRoomTyping]=useState<{parent:string|null;share:boolean;until:string|null}|null>(null)
   const roomTypingPulse=useRef<{parent:string|null;sentAt:number;stopped:boolean}|null>(null)
+  const [delegate, setDelegate]=useState<{ room:string; permissions:string[] }>()
+  useEffect(()=>{
+    if(role!=='member')return
+    let live=true
+    const refresh=async()=>{
+      const result=await db!.rpc('st_v7_custom_room_access',{p_room:room.id})
+      if(live)setDelegate({room:room.id,permissions:result.data??[]})
+    }
+    void refresh()
+    const timer=window.setInterval(refresh,8000)
+    return()=>{live=false;window.clearInterval(timer)}
+  },[role,room.id])
+  const delegated=(permission:string)=>role==='member'&&delegate?.room===room.id&&delegate.permissions.includes(permission)
   const staff=role==='moderator'||role==='owner'
   const permissions=useRoomPermissions(role?room.id:null)
   const canPostByRoom=role&&role!=='read_only'&&!room.archived&&(staff||(!room.locked&&!['announcement','broadcast'].includes(room.kind)))
@@ -476,7 +489,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
       {actions&&<div className="action-row">
         <button className="secondary" type="button" onClick={()=>openThread(post.id)}>Open thread{summary?' ('+summary.replies+')':''}</button>
         {canPostByRoom&&!post.removed_at&&<button className="secondary" type="button" onClick={()=>{setTaskSource(post.id);setView('tasks')}}>Create task from message</button>}
-        {staff&&!room.archived&&(pinned||!post.removed_at)&&<button className="secondary" type="button" disabled={working} onClick={()=>void settings(pinned?'unpin':'pin',{p_post:post.id})}>
+        {(staff||delegated(pinned?'room.unpin':'room.pin'))&&!room.archived&&(pinned||!post.removed_at)&&<button className="secondary" type="button" disabled={working} onClick={()=>void settings(pinned?'unpin':'pin',{p_post:post.id})}>
           {pinned?'Unpin':'Pin'}
         </button>}
       </div>}
@@ -484,6 +497,11 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   }
 
   return <section className="panel release-panel" aria-label={room.name} ref={receiptFeed}>
+    {delegated('room.slow')&&!room.archived&&<form className="release-flex" aria-label="Delegated room moderation" onSubmit={event=>{
+      event.preventDefault()
+      void settings('slow',{p_seconds:Number(new FormData(event.currentTarget).get('seconds'))})
+    }}><label>Slow mode in seconds<input key={room.slow_seconds} name="seconds" type="number" min={0} max={300} required defaultValue={room.slow_seconds}/></label>
+      <button className="secondary" disabled={working}>Save slow mode</button></form>}
     <MessageFormatting account={user} mode='managed'/>
     {confirmation}
     {dlpPrompt}

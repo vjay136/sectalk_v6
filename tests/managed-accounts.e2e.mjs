@@ -86,7 +86,7 @@ async function open(person) {
 }
 async function openPeople(page) {
   await button(nav(page), 'Workspaces').click()
-  await button(page, kind === 'family' ? 'Family' : 'People').click()
+  await button(page, kind === 'family' ? 'Family' : 'School').click()
   await panel(page).waitFor()
 }
 async function tryContact(page, handle) {

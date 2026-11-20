@@ -70,7 +70,7 @@ begin
   begin
     perform public.st_v6_workspace_group_change(space,groups_id,'archive');
     raise exception 'Another workspace owner changed this group' using errcode='P0004';
-  exception when raise_exception then null; end;
+  exception when insufficient_privilege then null; end;
 
   perform set_config('request.jwt.claims',json_build_object('sub',member_id,'role','authenticated')::text,true);
   if exists(select 1 from public.st_v6_workspace_groups) then raise exception 'A pending invitation exposed the directory'; end if;
@@ -84,7 +84,7 @@ begin
   begin
     perform public.st_v6_workspace_group_change(space,groups_id,'member_added',p_user=>member_id);
     raise exception 'A member changed group membership' using errcode='P0004';
-  exception when raise_exception then null; end;
+  exception when insufficient_privilege then null; end;
   begin
     insert into public.st_v6_workspace_group_members(workspace_id,group_id,user_id) values(space,groups_id,member_id);
     raise exception 'Direct table writes bypassed the RPC' using errcode='P0004';

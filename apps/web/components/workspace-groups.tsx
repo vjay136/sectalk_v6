@@ -17,6 +17,7 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
   const [page,setPage]=useState(0)
   const [items,setItems]=useState<Group[]|null>(null)
   const [active,setActive]=useState('')
+  const [delegate,setDelegate]=useState<{group:string;permissions:string[]}>()
   const [roster,setRoster]=useState<string[]|null>(null)
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
@@ -29,23 +30,25 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
     const groups=db!.from('st_v6_workspace_groups').select('id,name,description,archived_at')
       .eq('workspace_id',workspace).eq('kind',kind).order('name').order('id')
       .range(page*pageSize,page*pageSize+pageSize)
-    const [directory,members]=await Promise.all([
+    const [directory,members,delegation]=await Promise.all([
       (archived?groups.not('archived_at','is',null):groups.is('archived_at',null)).returns<Group[]>(),
       active?db!.from('st_v6_workspace_group_members').select('user_id').eq('workspace_id',workspace).eq('group_id',active):null,
+      !manager&&active?db!.rpc('st_v7_custom_group_access',{p_workspace:workspace,p_group:active}):null,
     ])
     if(directory.error||members?.error) throw new Error('Could not load the workspace directory.')
-    return {directory:directory.data,roster:members?.data?.map(row=>row.user_id)??null}
-  },[active,archived,kind,page,workspace])
+    return {directory:directory.data,roster:members?.data?.map(row=>row.user_id)??null,permissions:(delegation?.data??[]) as string[]}
+  },[active,archived,kind,manager,page,workspace])
 
   useEffect(()=>{
-    let active=true
+    const activeId=active
+    let currentView=true
     const loadCurrent=async()=>{
       const current=++loadVersion.current
       try{
         const result=await load()
-        if(active&&current===loadVersion.current){setItems(result.directory);setRoster(result.roster);setLoadError('')}
+        if(currentView&&current===loadVersion.current){setItems(result.directory);setRoster(result.roster);setDelegate({group:activeId,permissions:result.permissions});setLoadError('')}
       }catch(error){
-        if(active&&current===loadVersion.current){
+        if(currentView&&current===loadVersion.current){
           setItems(null);setRoster(null);setLoadError(formatError(error,'Could not load the workspace directory.'))
         }
       }
@@ -53,8 +56,8 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
     void loadCurrent()
     const reconnect=onReconnect(loadCurrent)
     const timer=window.setInterval(loadCurrent,8000)
-    return()=>{active=false;reconnect();clearInterval(timer)}
-  },[load])
+    return()=>{currentView=false;reconnect();clearInterval(timer)}
+  },[load,active])
 
   function reset(next:Kind,showArchived:boolean,nextPage=0){
     setKind(next);setArchived(showArchived);setPage(nextPage)
@@ -100,6 +103,7 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
     finally{setBusy(false)}
   }
 
+  const can=(permission:string)=>manager||(delegate?.group===selected?.id&&delegate?.permissions.includes(permission))
   const available=people.filter(person=>!(roster||[]).includes(person.user_id))
   return <section className="release-section" aria-label="Workspace groups and teams">
     <h2>Workspace directory</h2>
@@ -126,7 +130,7 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
     </div>}
     {selected&&<article className="panel release-panel">
       <h3>{selected.name}</h3>{selected.description&&<p>{selected.description}</p>}
-      {manager&&!archived&&<details className="release-create" key={selected.id+selected.name+selected.description}><summary>Edit {title[kind].toLowerCase()}</summary>
+      {can('rename')&&!archived&&<details className="release-create" key={selected.id+selected.name+selected.description}><summary>Edit {title[kind].toLowerCase()}</summary>
         <form className="release-form" onSubmit={event=>{
           event.preventDefault()
           const values=new FormData(event.currentTarget)
@@ -153,7 +157,7 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
           {available.map(member=><option key={member.user_id} value={member.user_id}>{profiles[member.user_id]?.name||'Workspace member'}{profiles[member.user_id]?' @'+profiles[member.user_id].handle:''}</option>)}
         </select></label><button className="secondary" disabled={busy}>Add member</button>
       </form>}
-      {manager&&<button type="button" className="secondary" disabled={busy}
+      {can(archived?'restore':'archive')&&<button type="button" className="secondary" disabled={busy}
         onClick={()=>void change(archived?'restore':'archive')}>{archived?'Restore':'Archive'} {title[kind].toLowerCase()}</button>}
     </article>}
   </section>

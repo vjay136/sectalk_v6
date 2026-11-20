@@ -112,7 +112,8 @@ Database RPC and RLS policies continue to enforce record scope. Pending roles an
 | `POST /api/billing/action` | Account | `billing.checkout` | `billingIdentity` `rpc:st_v7_sensitive_action_status` |
 | `GET /api/billing/catalog` | Public | — | Published pricing only. |
 | `GET /api/billing/invoices` | Account | `billing.invoice.read` | `billingIdentity` `rpc:st_v7_current_session_valid` `rpc:st_v7_billing_admin_view` `readInvoiceTicket` `rpc:st_v7_pin_stripe_invoice` |
-| `POST /api/billing/reconcile` | Signed service | — | Private Stripe reconciliation worker bearer. `notificationDrainAuthorized` `rpc:st_v7_stripe_reconcile_claim` `rpc:st_v7_stripe_reconcile_finish` |
+| `POST /api/billing/reconcile` | Signed service | — | Private Stripe reconciliation worker bearer. `notificationDrainAuthorized` `rpc:st_v7_stripe_reconcile_claim` `rpc:st_v7_stripe_reconcile_finish` `rpc:st_v7_renewal_probe_claim` `rpc:st_v7_renewal_probe_finish` |
+| `POST /api/billing/renewal-mail` | Signed service | — | Private transactional renewal mail worker bearer. `notificationDrainAuthorized` `rpc:st_v7_renewal_mail_claim` `rpc:st_v7_renewal_mail_confirm` `rpc:st_v7_renewal_mail_finish` |
 | `POST /api/billing/webhook` | Signed service | — | Stripe raw body signature and durable receipt. `constructEvent` `rpc:st_v7_stripe_claim` `rpc:st_v7_stripe_finish` |
 | `GET /api/billing/workspace` | Account | `billing.workspace.read` | `billingIdentity` `rpc:st_v7_billing_admin_view` `rpc:st_v7_billing_admin_provider_scope` |
 | `GET /api/compliance-exports/[caseId]` | Account | `compliance.export.download` | `operationalReportViewer` `rpc:st_v7_begin_compliance_operation` |
@@ -132,6 +133,10 @@ Database RPC and RLS policies continue to enforce record scope. Pending roles an
 | `POST /api/files/upload` | Account | `file.upload` | `authenticateFileRequest` `rpc:st_v6_authorize_file_upload` |
 | `GET /api/group-calls` | Public | — | Media capability boolean only. |
 | `POST /api/group-calls` | Account | `call.media.join` | `getUser` `rpc:st_v6_group_call` |
+| `GET /api/group-files` | Account | `file.download` | `authenticateFileRequest` `rpc:st_v7_group_file_access` |
+| `POST /api/group-files` | Account | `file.upload` | `authenticateFileRequest` `rpc:st_v7_group_file_access` `rpc:st_v7_lease_group_file_upload` |
+| `POST /api/group-files/purge` | Signed service | — | Private cleanup bearer for expired encrypted group attachment reservations. `timingSafeEqual` `rpc:st_v7_claim_group_file_cleanup` `rpc:st_v7_finish_group_file_cleanup` |
+| `POST /api/group-history` | Account | `account.device.manage` | `getUser` `rpc:st_v7_group_history_proof` `verify` `rpc:st_v7_finish_group_history` |
 | `GET /api/health` | Public | — | Read-only process health. |
 | `GET /api/ice` | Account | `call.media.join` | `getUser` `rpc:st_v6_call_ice_session` |
 | `POST /api/ice/diagnostics` | Account | `call.network.test` | `getUser` `rpc:st_v6_network_diagnostic_run` |
@@ -204,8 +209,8 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `graphql_public.graphql(text, text, jsonb, jsonb)` | `anon`, `authenticated`, `service_role` | invoker | Public exception | `GraphQL gateway. Table grants and row-level security apply to the caller.` |
 | `public.st_call_status(uuid, boolean)` | `authenticated`, `service_role` | definer | Database scope | `sectalk_private.st_v6_call_action`, `auth.jwt`, `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_case(uuid)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
-| `public.st_group_chat(text, uuid, jsonb)` | `authenticated`, `service_role` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.limit_action` |
-| `public.st_group_search_metadata(uuid)` | `authenticated`, `service_role` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.st_v2_active` |
+| `public.st_group_chat(text, uuid, jsonb)` | `authenticated` | definer | Database scope | `sectalk_private.st_group_chat`, `auth.jwt`, `auth.uid`, `sectalk_private.limit_action` |
+| `public.st_group_search_metadata(uuid)` | `authenticated` | definer | Database scope | `sectalk_private.st_group_search_metadata`, `auth.jwt`, `auth.uid`, `sectalk_private.st_v2_active` |
 | `public.st_moderate(uuid, text, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_place_call(uuid, boolean)` | `authenticated`, `service_role` | definer | Database scope | `sectalk_private.place_direct_call`, `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_queue(integer)` | `authenticated`, `service_role` | definer | Database scope | `public.st_staff_status`, `auth.jwt`, `auth.uid` |
@@ -438,7 +443,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v6_room_report_review_access()` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
 | `public.st_v6_room_retention_policy(uuid, integer)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_holds_access` |
 | `public.st_v6_room_retirement(uuid, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_role`, `sectalk_private.st_v6_room_role` |
-| `public.st_v6_room_settings(uuid, text, uuid, integer)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_room_role` |
+| `public.st_v6_room_settings(uuid, text, uuid, integer)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_custom_room_access`, `sectalk_private.limit_action`, `sectalk_private.st_v6_room_role` |
 | `public.st_v6_room_thread_state(uuid, uuid[])` | `authenticated`, `service_role` | invoker | Delegated scope | `auth.uid` |
 | `public.st_v6_room_thread_summary_command(uuid, uuid, uuid, text, boolean)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_room_typing(uuid, uuid, boolean)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_room_can_type` |
@@ -514,7 +519,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v6_workspace_file_history_policy_status(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v2_role`, `sectalk_private.st_v6_holds_access` |
 | `public.st_v6_workspace_file_maintenance_claim()` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_workspace_file_maintenance_finish(uuid, uuid, uuid, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
-| `public.st_v6_workspace_group_change(uuid, uuid, text, text, text, uuid)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
+| `public.st_v6_workspace_group_change(uuid, uuid, text, text, text, uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_custom_group_access`, `sectalk_private.limit_action`, `sectalk_private.st_v2_role` |
 | `public.st_v6_workspace_group_create(uuid, uuid, text, text, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
 | `public.st_v6_workspace_hold_state(uuid)` | `authenticated`, `service_role` | definer | Database scope | `sectalk_private.st_v6_holds_access` |
 | `public.st_v6_workspace_link_accept(text)` | `authenticated` | invoker | Delegated scope | `sectalk_private.st_v6_workspace_link_accept`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role`, `sectalk_private.st_v6_link_domain_allowed` |
@@ -546,6 +551,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v7_admit_file_request(text, text, uuid)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role`, `sectalk_private.st_v6_room_role` |
 | `public.st_v7_admit_password_request(text, inet)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_apply_threat_triage(jsonb, text, text)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_threat_triage_access`, `sectalk_private.limit_action` |
+| `public.st_v7_attach_coupon_checkout(uuid, uuid, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_attach_trial_checkout(uuid, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_authorize_url_inspection()` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active` |
 | `public.st_v7_before_signup(jsonb)` | `supabase_auth_admin` | definer | Native Auth hook | `Signup admission permit` |
@@ -555,9 +561,13 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v7_billing_admin_manage(uuid, uuid, boolean)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role`, `sectalk_private.st_v7_billing_admin_session` |
 | `public.st_v7_billing_admin_provider_scope(uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_billing_admin_view(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v2_role`, `sectalk_private.st_v7_billing_admin_allowed`, `sectalk_private.st_v7_billing_admin_session` |
+| `public.st_v7_billing_portal_prices(text[])` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_billing_portal_record(uuid, text, text, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_billing_portal_scope(text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_v7_case_sender_behavior(uuid)` | `authenticated` | definer | Database scope | `sectalk_private.st_v6_case_redaction_staff`, `auth.jwt`, `auth.uid`, `sectalk_private.st_v2_active` |
 | `public.st_v7_channel_report_queue(text)` | `authenticated` | definer | Database scope | `auth.uid` |
 | `public.st_v7_claim_device_command(uuid, uuid, uuid, timestamp with time zone)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_claim_group_file_cleanup()` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_complete_metered_recording(uuid, uuid, text, bigint)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_complete_playbook_step(uuid, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v7_playbook_can` |
 | `public.st_v7_complete_trial_checkout(uuid, text, timestamp with time zone)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
@@ -566,8 +576,14 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v7_compliance_sources(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_compliance_access` |
 | `public.st_v7_confirm_signin_code(uuid)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_security_session` |
 | `public.st_v7_contact_key_manifest(uuid)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid` |
+| `public.st_v7_coupon_probe_claim()` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_coupon_probe_finish(text, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_current_session_valid()` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.st_v7_session_deadline` |
+| `public.st_v7_custom_group_access(uuid, uuid)` | `authenticated` | definer | Database scope | `sectalk_private.st_v7_custom_scope_access` |
+| `public.st_v7_custom_role_targets(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v6_room_role`, `sectalk_private.st_v7_custom_role_target` |
+| `public.st_v7_custom_room_access(uuid)` | `authenticated` | definer | Database scope | `sectalk_private.st_v7_custom_scope_access` |
 | `public.st_v7_decide_playbook(uuid, boolean, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_playbook_can` |
+| `public.st_v7_decide_soc_response(uuid, boolean, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_room_role`, `sectalk_private.st_v7_soc_channel_case_access`, `sectalk_private.st_v7_soc_response_role`, `sectalk_private.st_v7_soc_response_verified` |
 | `public.st_v7_deploy_detection_rule(uuid, integer, text, text)` | `authenticated` | definer | Database scope | `auth.uid` |
 | `public.st_v7_detection_rule_access()` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.st_v2_active` |
 | `public.st_v7_detection_rule_detail(uuid)` | `authenticated` | definer | Database scope | `public.st_v7_detection_rule_access` |
@@ -575,7 +591,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v7_device_command_key(uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_device_recovery_to_approve()` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid` |
 | `public.st_v7_evidence_vault(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_compliance_access` |
-| `public.st_v7_explain_file_egress(text, uuid, uuid, text)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role`, `sectalk_private.st_v6_room_role` |
+| `public.st_v7_explain_file_egress(text, uuid, uuid, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v2_role`, `sectalk_private.st_v7_custom_scope_access` |
 | `public.st_v7_family_file_policy(uuid, text, uuid, boolean)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role`, `sectalk_private.st_v7_session_deadline` |
 | `public.st_v7_file_egress_policy(uuid)` | `authenticated` | definer | Database scope | `sectalk_private.st_v7_file_egress_operator`, `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
 | `public.st_v7_finish_browser_reputation_link(uuid, uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
@@ -583,10 +599,17 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v7_finish_device_bundle(uuid, uuid, uuid, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_finish_device_recovery_approval(uuid, uuid, uuid, text, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_finish_evidence_operation(uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_finish_group_file_cleanup(uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_finish_group_history(uuid, uuid, uuid, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_finish_org_domain(uuid, uuid, uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_generate_recovery_codes()` | `authenticated`, `service_role` | definer | Database scope | `auth.jwt`, `auth.uid` |
+| `public.st_v7_group_file_access(uuid, text, uuid)` | `authenticated` | definer | Database scope | `auth.uid` |
+| `public.st_v7_group_history_proof(uuid)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid` |
+| `public.st_v7_group_history_targets(uuid)` | `authenticated` | definer | Database scope | `auth.uid` |
 | `public.st_v7_guard_account_lockdown()` | `anon`, `authenticated`, `service_role` | definer | Public exception | `PostgREST pre-request guard. Applies account and native assurance restrictions.` |
 | `public.st_v7_issue_device_command(uuid, text, uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_security_session` |
+| `public.st_v7_lease_group_file_upload(uuid, integer)` | `authenticated` | definer | Database scope | `public.st_v7_group_file_access` |
+| `public.st_v7_link_policy_allows(text)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.st_v2_active` |
 | `public.st_v7_list_device_commands()` | `authenticated` | definer | Database scope | `auth.uid` |
 | `public.st_v7_list_devices()` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.st_v7_session_deadline` |
 | `public.st_v7_list_login_anomalies()` | `authenticated` | definer | Database scope | `auth.uid` |
@@ -612,22 +635,35 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v7_pin_stripe_invoice(boolean, text, text, text, text, timestamp with time zone)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_playbook_catalog()` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v7_playbook_can` |
 | `public.st_v7_playbook_runs(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v7_playbook_can` |
+| `public.st_v7_prepare_group_history(uuid, uuid)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_v7_priority_abuse_queue(text, text, text, integer)` | `authenticated`, `service_role` | definer | Database scope | `sectalk_private.st_v6_case_redaction_staff`, `auth.jwt`, `auth.uid`, `sectalk_private.st_v2_active` |
 | `public.st_v7_public_plan_entitlements()` | `anon`, `authenticated` | definer | Public exception | `Entitlement metadata for published, publicly visible plans.` |
+| `public.st_v7_publish_coupon(text, integer, jsonb)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active` |
+| `public.st_v7_publish_group_file(uuid, jsonb)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_group_file_access` |
 | `public.st_v7_publish_hashed_file(uuid, uuid, text, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_publish_metered_caption(uuid, uuid, text, uuid, text, integer)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_publish_plan_entitlements(text, text, text, boolean, timestamp with time zone, jsonb, integer, integer, integer, integer, bigint, boolean, boolean, boolean)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_quote_coupon(text, text, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_read_compliance_operation(uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_read_evidence_operation(uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_read_room_quarantine_evidence(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v7_soc_response_role`, `sectalk_private.st_v7_soc_response_verified` |
 | `public.st_v7_record_password_failure(text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_record_profile_rule_evaluation(uuid, uuid, uuid, text, integer[], integer[], integer)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_recover_account_lockdown()` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_recent_account_assurance` |
 | `public.st_v7_recover_authenticator(text)` | `authenticated`, `service_role` | definer | Database scope | `public.st_v7_recovery_security_reset`, `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_security_session` |
 | `public.st_v7_recovery_security_reset(text)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_security_session` |
+| `public.st_v7_renewal_mail_claim()` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_renewal_mail_confirm(uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_renewal_mail_finish(uuid, uuid, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_renewal_probe_claim()` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_renewal_probe_finish(text, timestamp with time zone, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v7_renewal_status()` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid` |
 | `public.st_v7_request_compliance_export(uuid, text, text, jsonb)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_compliance_access`, `sectalk_private.limit_action` |
 | `public.st_v7_request_priority_message_review(uuid, uuid, timestamp with time zone, text, text, boolean)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.member`, `sectalk_private.st_v2_active` |
 | `public.st_v7_request_signin_code()` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.limit_action` |
+| `public.st_v7_request_soc_response(text, uuid, uuid, uuid, text, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_room_role`, `sectalk_private.st_v7_soc_response_role`, `sectalk_private.st_v7_soc_response_verified` |
 | `public.st_v7_require_risk_session_totp(uuid, uuid, text)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_account_operator_access`, `sectalk_private.limit_action`, `sectalk_private.st_v7_session_deadline` |
+| `public.st_v7_reserve_coupon_checkout(uuid, text, text, integer, text, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_review_channel_report(uuid, text, text, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_on_call_eligible` |
 | `public.st_v7_review_compliance_export(uuid, text, text)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_compliance_access` |
 | `public.st_v7_review_login_anomaly(uuid, text)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_recent_account_assurance` |
@@ -637,6 +673,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v7_save_detection_rule(uuid, integer, text, text, text, text, integer)` | `authenticated` | definer | Database scope | `auth.uid` |
 | `public.st_v7_save_file_egress_policy(uuid, integer, jsonb)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_v7_save_playbook(uuid, integer, text, text, text, text[])` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_playbook_can` |
+| `public.st_v7_school_classes(uuid, text, uuid, text, uuid, text)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role`, `sectalk_private.st_v6_room_role` |
 | `public.st_v7_score_password_session(uuid, uuid, text, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_search_index_operation(text)` | `authenticated` | definer | Database scope | `sectalk_private.limit_action` |
 | `public.st_v7_security_risk_sessions(boolean)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_account_operator_access`, `sectalk_private.limit_action`, `sectalk_private.st_v7_session_deadline` |
@@ -650,6 +687,10 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v7_siem_finish(uuid, text, uuid, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_signup_admission(text, inet, text, text, integer, boolean)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_simulate_playbook(uuid, integer, uuid, integer, boolean)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_playbook_can` |
+| `public.st_v7_soc_response_catalog()` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v7_soc_response_role`, `sectalk_private.st_v7_soc_response_verified` |
+| `public.st_v7_soc_response_queue()` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v6_room_role`, `sectalk_private.st_v7_soc_channel_case_access`, `sectalk_private.st_v7_soc_response_role`, `sectalk_private.st_v7_soc_response_verified` |
+| `public.st_v7_soc_response_targets(uuid, uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v6_room_role`, `sectalk_private.st_v7_soc_response_role`, `sectalk_private.st_v7_soc_response_verified` |
+| `public.st_v7_stage_group_file(uuid, uuid, integer, integer)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_lock_attachment_owner` |
 | `public.st_v7_start_workspace_trial(uuid, uuid, text, boolean)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_step_up_pending()` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid` |
 | `public.st_v7_stripe_claim(text, text, text, text, timestamp with time zone)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
@@ -664,10 +705,13 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v7_upload_digest_blocked(text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v7_workspace_active_profile_rules(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
 | `public.st_v7_workspace_ai_settings(uuid, boolean, boolean, integer, integer)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
+| `public.st_v7_workspace_custom_roles(uuid, text, uuid, integer, jsonb, uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role`, `sectalk_private.st_v6_room_role`, `sectalk_private.st_v7_custom_role_conditions` |
 | `public.st_v7_workspace_dlp(uuid)` | `authenticated` | definer | Database scope | `sectalk_private.st_v6_holds_access` |
 | `public.st_v7_workspace_email_template(uuid, text, text, text, integer)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
+| `public.st_v7_workspace_payment_state(uuid, uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role`, `sectalk_private.st_v6_room_role` |
 | `public.st_v7_workspace_people(uuid, text, text, text, text)` | `authenticated` | definer | Database scope | `public.st_v7_workspace_people_verified` |
 | `public.st_v7_workspace_people_verified(uuid)` | `authenticated` | definer | Database scope | `sectalk_private.st_v7_workspace_permission`, `auth.uid`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
+| `public.st_v7_workspace_policies(uuid, text, text, integer, jsonb, integer)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_feature_allowed` |
 | `public.st_v7_workspace_room_case_action(uuid, text, text, timestamp with time zone, uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v6_room_report_review_access`, `sectalk_private.limit_action`, `sectalk_private.st_v6_on_call_eligible` |
 | `public.st_v7_workspace_room_review_queue()` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v6_room_report_review_access` |
 | `public.st_v7_workspace_room_reviewers(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v6_room_report_review_access`, `sectalk_private.st_v6_on_call_eligible` |

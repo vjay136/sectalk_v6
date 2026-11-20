@@ -208,6 +208,12 @@ export function Inbox({ user }: { user: string }) {
         })
       })
       .on('broadcast', { event: 'channel_report_updated' }, () => hints.dispatchEvent(new Event('channel_report_updated')))
+      .on('broadcast',{event:'group_file_published'},({payload})=>{
+        if(typeof payload?.group==='string')hints.dispatchEvent(new MessageEvent('group_file_published',{data:payload.group}))
+      })
+      .on('broadcast',{event:'group_history_transferred'},({payload})=>{
+        if(typeof payload?.group==='string')hints.dispatchEvent(new MessageEvent('group_history_transferred',{data:payload.group}))
+      })
       .on('broadcast', { event: 'workspace_room_report' }, () => {
         void db!.rpc('st_v6_room_report_queue', { p_scope: 'workspace' }).then(({ data, error }) => {
           if (!error && Array.isArray(data) && data.length) setNotice('You have a new workspace room report to review.')
@@ -548,7 +554,7 @@ export function Inbox({ user }: { user: string }) {
       tab === 'search' ? <GlobalSearch key={paletteSearch.sequence} initialQuery={paletteSearch.query} openChat={select} openMeeting={openMeeting}
         openRoom={openRoom} openPalette={()=>setPaletteOpen(true)}/> :
       tab === 'notifications' ? <Notifications user={user} hints={hints} openMeeting={openMeeting} openRoom={openRoom} openChat={select}/> :
-      tab === 'group-chats' ? <GroupChat user={user} openDeviceSettings={() => { setProfileTab('sessions'); setTab('profile') }}
+      tab === 'group-chats' ? <GroupChat key={user} user={user} hints={hints} openDeviceSettings={() => { setProfileTab('sessions'); setTab('profile') }}
         contacts={chats.filter(chat => chat.status === 'accepted' && !blocks.includes(peerId(chat,user)))
           .map(chat => ({ id: peerId(chat,user), name: profiles[peerId(chat,user)]?.name || 'Contact' }))} /> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :

@@ -2,12 +2,18 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { createClient } from '@supabase/supabase-js'
+import { verifyStaffPanel } from './workspace-admin-fixture.mjs'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP).origin
 const origin = new URL(process.env.SECTALK_STORAGE_TEST_URL).origin
 const checkReports = process.env.SECTALK_GROUP_REPORTS === '1'
 const checkSearch = process.env.SECTALK_GROUP_SEARCH === '1'
+const checkQuarantine = process.env.SECTALK_GROUP_QUARANTINE === '1'
+const checkFiles = process.env.SECTALK_GROUP_FILES === '1'
+const checkHistory = process.env.SECTALK_GROUP_HISTORY === '1'
+const trace = label => { if (process.env.SECTALK_GROUP_QA_TRACE === '1') console.log(label) }
 assert.equal(new URL(app).hostname, '127.0.0.1')
 assert.equal(origin, 'http://127.0.0.1:55321')
 const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
@@ -16,7 +22,9 @@ const options = { auth: { persistSession: false, autoRefreshToken: false } }
 const admin = createClient(origin, process.env.SECTALK_STORAGE_TEST_SERVICE_KEY, options)
 const password = randomUUID() + '1!Q'
 const users = []
-let browser
+let browser, quarantineCase, attachment
+const sql = input => execFileSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-At',
+  '-U','postgres','-d','postgres','-v','ON_ERROR_STOP=1'],{ input,encoding:'utf8',windowsHide:true }).trim()
 
 function data(result) {
   if (result.error) throw new Error(result.error.message)
@@ -69,17 +77,37 @@ async function open(person, approver) {
 }
 
 async function session(page) {
-  const token = await page.evaluate(() => {
+  const token = await accessToken(page)
+  return createClient(origin, key, { ...options, global: { headers: { Authorization: 'Bearer ' + token } } })
+}
+
+async function accessToken(page) {
+  return page.evaluate(() => {
     const storage = Object.keys(localStorage).find(name => name.endsWith('-auth-token'))
     return JSON.parse(localStorage.getItem(storage)).access_token
   })
-  return createClient(origin, key, { ...options, global: { headers: { Authorization: 'Bearer ' + token } } })
+}
+
+async function requestAs(page, url) {
+  return fetch(url,{headers:{Authorization:'Bearer '+await accessToken(page)},signal:AbortSignal.timeout(10000)})
 }
 
 async function send(page, message) {
   await page.getByLabel('Group message', { exact: true }).fill(message)
   await page.getByRole('button', { name: 'Send encrypted message', exact: true }).click()
   await page.getByText(message, { exact: true }).waitFor()
+}
+
+async function responseConsole(operator) {
+  const page = await browser.newPage()
+  await page.goto(app)
+  await page.getByLabel('Email address',{exact:true}).fill(operator.email)
+  await page.getByLabel('Password',{exact:true}).fill(password)
+  await page.locator('button.submit-auth').click()
+  await nav(page).getByRole('button',{name:'Safety',exact:true}).click()
+  await page.getByRole('group',{name:'Safety center sections'}).getByRole('button',{name:'Threat triage',exact:true}).click()
+  await verifyStaffPanel(page)
+  return page.getByRole('region',{name:'SOC response requests',exact:true})
 }
 
 try {
@@ -93,6 +121,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.SECTALK_TEST_BROWSER })
   const [a, b, c] = await Promise.all([open(owner), open(peer), open(newcomer)])
   const b2 = await open(peer, b)
+  trace('Approved browser fixtures ready.')
   const title = 'Encrypted browser fixture'
   await a.getByRole('button', { name: 'New group', exact: true }).click()
   await a.getByLabel('Group name', { exact: true }).fill(title)
@@ -115,6 +144,100 @@ try {
   assert.notEqual(before.device, beforeSecond.device)
   assert.notEqual(before.envelopes[0].sealed, beforeSecond.envelopes[0].sealed)
   assert.ok(!JSON.stringify(before).includes(first) && before.messages[0].signature.length === 86)
+  if(checkFiles){
+    trace('Beginning encrypted attachment flow.')
+    const filename='private-fixture-'+randomUUID().slice(0,8)+'.txt'
+    const original=Buffer.from('Synthetic confidential attachment '+randomUUID())
+    await a.getByLabel('Encrypted group attachment',{exact:true}).setInputFiles({name:filename,mimeType:'text/plain',buffer:original})
+    trace('Encrypted attachment selected in the browser.')
+    const [stored,result]=await Promise.all([
+      a.waitForResponse(reply=>reply.url().includes('/api/group-files?file=')&&reply.request().method()==='POST',{timeout:15000})
+        .then(reply=>{trace('Encrypted upload returned HTTP '+reply.status()+'.');return reply}),
+      a.waitForResponse(reply=>new URL(reply.url()).pathname.endsWith('/rpc/st_v7_publish_group_file'),{timeout:18000})
+        .then(reply=>{trace('Attachment publication returned HTTP '+reply.status()+'.');return reply}),
+      a.getByRole('button',{name:'Send encrypted attachment',exact:true}).click(),
+    ]).catch(async cause=>{
+      const error=await a.getByRole('alert').first().textContent({timeout:1000}).catch(()=>null)
+      if(error)throw new Error(error,{cause})
+      throw cause
+    })
+    attachment={file:new URL(stored.url()).searchParams.get('file'),url:null}
+    assert.equal(stored.status(),200)
+    const file=attachment.file
+    assert.match(file,/^[a-f0-9-]{36}$/)
+    assert.equal(result.status(),200)
+    const message=result.request().postDataJSON().p_encrypted.id
+    assert.match(message,/^[a-f0-9-]{36}$/)
+    trace('Ciphertext stored and message published.')
+    attachment.url=app+'/api/group-files?file='+file+'&message='+message
+    const storedBytes=data(await admin.storage.from('sectalk-encrypted-group-files').download(file))
+    const cipher=Buffer.from(await storedBytes.arrayBuffer())
+    trace('Stored ciphertext fetched for comparison.')
+    assert.equal(cipher.length,original.length+28)
+    assert.ok(!cipher.includes(original))
+    assert.ok(!JSON.stringify(data(await group(bc,'read'))).includes(filename))
+    assert.equal((await requestAs(c,attachment.url)).status,404)
+    trace('Outsider attachment API access denied.')
+    assert.ok((await bc.storage.from('sectalk-encrypted-group-files').createSignedUrl(file,30)).error)
+    trace('Raw Storage signed URL denied.')
+    for(const page of [b,b2]){
+      const action=page.getByRole('button',{name:'Download '+filename,exact:true})
+      const [saved]=await Promise.all([page.waitForEvent('download',{timeout:15000}),action.click()]).catch(async cause=>{
+        const error=await action.locator('..').getByRole('alert').textContent({timeout:1000}).catch(()=>null)
+        if(error)throw new Error(error,{cause})
+        throw cause
+      })
+      assert.equal(saved.suggestedFilename(),filename)
+      assert.deepEqual(await readFile(await saved.path()),original)
+      trace('Approved browser downloaded expected clear bytes.')
+    }
+    const target=attachment.url
+    await b.route(target,async route=>{
+      const original=await route.fetch()
+      const tampered=await original.body()
+      tampered[tampered.length-1]^=1
+      await route.fulfill({response:original,body:tampered})
+    })
+    await b.getByRole('button',{name:'Download '+filename,exact:true}).click()
+    trace('Attempting tampered ciphertext download.')
+    await b.getByRole('alert').filter({hasText:'The encrypted attachment could not be verified.'}).waitFor()
+    await b.unroute(target)
+    console.log('PASS: private ciphertext upload, two approved browser downloads, raw signed-link denial and tamper rejection')
+  }
+  if(checkHistory){
+    const newBrowser=await open(peer,b)
+    await newBrowser.getByLabel('Open group').selectOption({label:title})
+    await newBrowser.getByText('Ask the group owner to refresh keys for this approved device.',{exact:true}).waitFor()
+    assert.equal(await newBrowser.getByText(first,{exact:true}).count(),0)
+    await b.getByLabel('Open group').selectOption({label:title})
+    await b.getByText(first,{exact:true}).waitFor()
+    const menu=b.locator('details').filter({has:b.getByText('Transfer encrypted history',{exact:true})})
+    await menu.locator('summary').click()
+    const selector=menu.getByLabel('Approved browser',{exact:true})
+    await selector.waitFor()
+    assert.equal(await selector.locator('option').count(),1)
+    const sourceSession=JSON.parse(Buffer.from((await accessToken(b)).split('.')[1],'base64url')).session_id
+    assert.match(sourceSession,/^[a-f0-9-]{36}$/)
+    sql(`update auth.mfa_amr_claims set created_at=now()-interval '11 minutes',updated_at=now()-interval '11 minutes' where session_id='${sourceSession}';`)
+    await menu.getByRole('button',{name:'Transfer group history',exact:true}).click()
+    await menu.getByLabel('Current password',{exact:true}).fill(password)
+    const request=b.waitForResponse(response=>response.url().endsWith('/api/group-history')&&response.request().method()==='POST',{timeout:20000})
+    await menu.getByRole('button',{name:'Verify and continue',exact:true}).click()
+    const completed=await request
+    assert.equal(completed.status(),200)
+    await menu.getByText('Group history was shared with the selected approved browser.',{exact:true}).waitFor()
+    await newBrowser.getByText(first,{exact:true}).waitFor()
+    const payload=completed.request().postDataJSON()
+    assert.deepEqual(Object.keys(payload).sort(),['envelopes','nonce','signature'])
+    assert.ok(!JSON.stringify(payload).includes(first))
+    const reject=async(page,data)=>fetch(app+'/api/group-history',{method:'POST',headers:{
+      Authorization:'Bearer '+await accessToken(page),'Content-Type':'application/json',
+    },body:JSON.stringify(data)})
+    assert.equal((await reject(newBrowser,payload)).status,403)
+    assert.equal((await reject(b,{...payload,signature:'A'.repeat(86)})).status,403)
+    await newBrowser.close()
+    console.log('PASS: fresh native proof and source-device signature restored history only to an approved same-account browser')
+  }
   if (process.env.SECTALK_GROUP_RICH_TEXT === '1') {
     const watch = []
     const link = 'https://approved-a.example.invalid/start?encrypted-local-only=unique'
@@ -275,6 +398,7 @@ try {
     assert.equal((await group(client, 'send', { ...before.messages[0], id: randomUUID(), epoch: 3 })).error?.code, '42501')
     await page.getByLabel('Open group').getByRole('option', { name: title, exact: true }).waitFor({ state: 'detached' })
     assert.equal(await page.getByText(after, { exact: true }).count(), 0)
+    if(checkFiles&&attachment?.url)assert.equal((await requestAs(page,attachment.url)).status,404)
   }
   if (checkSearch) {
     for (const [page, client] of [[b, bc], [b2, b2c]]) {
@@ -337,10 +461,50 @@ try {
     assert.equal((await cc.from('st_reports').select('evidence').eq('reporter', newcomer.id)).error?.code, '42501')
     assert.equal((await cc.rpc('st_v5_case', { p_report: reports[0].id })).error?.message, 'Staff MFA required')
     console.log('PASS: on-device warnings kept both messages local; Safety received plaintext only for the explicitly shared report')
+    if (checkQuarantine) {
+      quarantineCase = sql(`select id from public.st_reports where reporter='${newcomer.id}' and group_message_id='${disclosure.p_message}';`)
+      assert.match(quarantineCase,/^[a-f0-9-]{36}$/)
+      const [requester,reviewer] = await Promise.all([account('qa','Group case requester'),account('qr','Group case reviewer')])
+      sql(`insert into sectalk_private.staff values('${requester.id}'),('${reviewer.id}');
+        insert into sectalk_private.st_v7_threat_reviewers values('${requester.id}','detection'),('${reviewer.id}','detection');
+        insert into sectalk_private.st_v7_soc_response_grants(actor,action,role) values
+          ('${requester.id}','quarantine_message','requester'),('${reviewer.id}','quarantine_message','approver');`)
+      const requestPanel = await responseConsole(requester)
+      await requestPanel.getByLabel('Response action',{exact:true}).selectOption('quarantine_message:')
+      await requestPanel.getByLabel('Open report ID',{exact:true}).fill(quarantineCase)
+      await requestPanel.getByLabel('Request reason',{exact:true}).fill('Exact reported group message and opt-in evidence reviewed.')
+      await requestPanel.getByRole('button',{name:'Request SOC response',exact:true}).click()
+      await requestPanel.getByText('Response sent for separate approval.',{exact:true}).waitFor()
+      const approvalPanel = await responseConsole(reviewer)
+      const card = approvalPanel.getByRole('article').filter({hasText:quarantineCase})
+      await card.getByLabel('Response decision',{exact:true}).selectOption('approve')
+      await card.getByLabel('Decision reason',{exact:true}).fill('Independent scope and consent verified.')
+      await card.getByRole('button',{name:'Apply response decision',exact:true}).click()
+      await card.getByText(/Executed/).waitFor()
+      await c.getByText('Message quarantined by Safety review.',{exact:true}).waitFor()
+      assert.equal(await c.getByText(disclosedText,{exact:true}).count(),0)
+      await c.getByText(privateText,{exact:true}).waitFor()
+      const read = data(await group(cc,'read'))
+      const removed = read.messages.find(message => message.id===disclosure.p_message)
+      assert.equal(removed.quarantined,true)
+      assert.equal('payload' in removed,false)
+      assert.equal(data(await cc.rpc('st_group_search_metadata',{p_group:id})).messages
+        .some(message => message.id===disclosure.p_message),false)
+      assert.equal(sql(`select evidence is not null from public.st_reports where id='${quarantineCase}';`),'t')
+      console.log('PASS: two-person group response produced a live tombstone and preserved only the consented report evidence for staff')
+    }
   }
   console.log('PASS: approved-device enrollment, native encryption and signatures across four browser contexts, no old keys on join, and both devices denied after removal')
 } finally {
   await browser?.close()
+  if(attachment?.file&&/^[0-9a-f-]{36}$/.test(attachment.file)){
+    await admin.storage.from('sectalk-encrypted-group-files').remove([attachment.file])
+    sql(`delete from sectalk_private.st_v7_group_files where id='${attachment.file}';`)
+  }
+  if (quarantineCase) sql(`begin; set local session_replication_role=replica;
+    delete from sectalk_private.st_v7_group_quarantine where case_id='${quarantineCase}';
+    delete from sectalk_private.st_v7_soc_responses where case_id='${quarantineCase}';
+    delete from sectalk_private.audit where report_id='${quarantineCase}'; commit;`)
   if (checkReports && users.length) {
     assert.ok(users.every(id => /^[0-9a-f-]{36}$/.test(id)))
     execFileSync('docker', ['exec', '-i', 'supabase_db_v4-auth-qa', 'psql', '-U', 'postgres', '-d', 'postgres',
@@ -349,5 +513,6 @@ try {
         users.map(id => "'" + id + "'").join(',') + ");",
     })
   }
+  if (checkQuarantine && users.length) sql('delete from sectalk_private.staff where user_id in (' + users.map(id => "'" + id + "'").join(',') + ');')
   await Promise.allSettled(users.map(id => admin.auth.admin.deleteUser(id)))
 }

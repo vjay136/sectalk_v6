@@ -18,6 +18,7 @@ type Operator = { access: 'none' } | { access: 'mfa' } | { access: 'verified'; r
 const reasons: Record<string, string> = {
   access_unavailable: 'File access is unavailable.',
   inherited_access: 'Existing file permissions allow this action.',
+  custom_role_required: 'This file requires a matching custom role.',
   tenant_block: 'The workspace blocks file sharing and downloads.',
   requirements_met: 'Your session and this file meet the workspace policy.',
   device_trust: 'This session does not meet the device trust requirement.',

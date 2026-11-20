@@ -21,6 +21,7 @@ import { ThreatTrends } from './threat-trends'
 import { OperationalMetrics } from './operational-metrics'
 import { DirectAttachmentHolds, type DirectHoldTarget } from './direct-attachment-holds'
 import { AttachmentQuarantine } from './attachment-quarantine'
+import { SocResponseActions } from './soc-response-actions'
 import { QueueOperations } from './queue-operations'
 import { SecurityIncidents } from './security-incidents'
 import { SecurityCenterOverview } from './security-center-overview'
@@ -389,6 +390,7 @@ function QueuePanel({linkIncident}: {linkIncident?: (report: string) => void}) {
         try{await downloadChatFile(selected.attachment)}catch{setError('Evidence attachment could not be downloaded.')}
       }}>Download shared file</button>}
       <CaseCollaboration key={selected.id} report={selected.id}/>
+      <SocResponseActions key={'response:' + selected.id} report={selected.id}/>
       <CaseEscalation key={'escalation-' + selected.id} report={selected.id}/>
       <CaseBehaviorPanel key={'behavior-' + selected.id} report={selected.id}/>
       <form onSubmit={action}><h3>Record a decision</h3><label>Action<select name="action" required defaultValue="reviewing">

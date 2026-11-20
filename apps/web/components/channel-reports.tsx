@@ -3,17 +3,19 @@
 import {useCallback,useEffect,useState,type FormEvent} from 'react'
 import {categories,db,formatError,formatTime} from '../lib/data'
 import {Dialog} from './inbox'
+import {SocResponseActions} from './soc-response-actions'
 
 type Category=keyof typeof categories
 type ReviewScope='platform'|'workspace'
 type ReportState='open'|'reviewing'|'resolved'|'dismissed'
 type Decision='handoff'|Exclude<ReportState,'open'>
-type Timeline={action:Decision;at:string}
+type Timeline={action:Decision|'quarantined';at:string}
 type PersonalReport={id:string;category:Category;state:ReportState;created_at:string;timeline:Timeline[]}
 type QueueReport=Omit<PersonalReport,'timeline'>&{handoff_allowed:boolean;handed_off_at:string|null;
   details:string;evidence:string;channel_name:string|null;workspace_name:string|null}
 const states={open:'Open',reviewing:'In review',resolved:'Resolved',dismissed:'Dismissed'}
-const changes={handoff:'Sent to workspace review',reviewing:'Review started',resolved:'Resolved',dismissed:'Dismissed'}
+const changes={handoff:'Sent to workspace review',reviewing:'Review started',resolved:'Resolved',dismissed:'Dismissed',
+  quarantined:'Channel message quarantined'}
 
 export function ChannelReportDialog({channel,post,body,close,done}:{channel:string;post:string;body:string;close:()=>void;done:()=>void}) {
   const [category,setCategory]=useState<Category>('harassment')
@@ -120,6 +122,8 @@ export function ChannelReportQueue({scope}:{scope:ReviewScope}) {
       {row.workspace_name&&<p>{row.workspace_name}</p>}
       <blockquote aria-label="Consented channel evidence">{row.evidence}</blockquote>
       {row.details&&<p>{row.details}</p>}
+      {scope==='workspace'&&row.handed_off_at&&(row.state==='open'||row.state==='reviewing')&&
+        <SocResponseActions report={row.id} channelCase/>}
       {(row.state==='open'||row.state==='reviewing')&&<form className="release-form" onSubmit={event=>void decide(event,row)}>
         <label>Channel review decision<select aria-label="Channel review decision" name="decision">
           <option value="reviewing">Start review</option>

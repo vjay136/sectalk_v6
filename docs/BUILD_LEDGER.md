@@ -191,11 +191,21 @@
 | P9 | Download finalized invoice and payment receipt copies | Browser, SQL and local Stripe contracts verified exact sequence and tax, authorized PDF bytes, expired ticket denial and live revocation |
 | P4 | Add the Family oversight dashboard and safe-sharing defaults | Edge and SQL verified guardian and participant controls, coarse trusted-device state, link issuance and redemption protection and preserved private access |
 | P10 | Route explicitly consented channel message reports to Safety | Native Edge and SQL verified exact evidence, separate platform and workspace review, severe-report scope and two private live reporter updates |
+| P10 | Require separate approval for scoped SOC actions | Edge and SQL verified exact evidence consent, live room and channel tombstones, encrypted-group protection, private file withdrawal, link rules, account/device actions and retained evidence |
+| P4 | Add School classes, scoped teachers and supervised rooms | Four Edge roles and SQL verified class membership, posting, revocation, forwarding and guest restrictions and independently consented contact rules |
+| P9 | Process failed renewals and recovery through authenticated billing workers | Local provider, Mailpit, Edge and SQL verified staged retries, one verified mailbox notice, stable grace and paid or canceled reconciliation |
+| P9 | Enforce post-grace workspace read-only operation | Edge, signed local provider events and SQL verified denied posting, files and tasks, preserved private reads and authorized export, and immediate payment recovery |
+| P4 | Add a scoped custom role editor with trusted attributes | Edge and SQL verified directory, room and managed file permissions, policy precedence, live revocation and concurrent revision handling |
+| P9 | Open actor-bound hosted subscription portal flows | Edge, SQL and local Stripe contracts verified payment, plan, invoice and tax flows plus cancellation, reactivation and foreign-provider denial |
+| P10 | Manage eight native policy areas with preview and version rollback | Edge and SQL verified real owner controls, previews without side effects, native enforcement and exact historical restoration |
+| P9 | Apply versioned promotion codes in hosted checkout | Edge, local Stripe and SQL verified fixed and percentage terms, bounded redemption, no stacking, signed expiry, paid settlement and reconciliation |
+| P5 | Upload and receive browser-encrypted group attachments | Edge and SQL verified two approved browsers, outsider and signed-link denial, content authentication, native quota and atomic publication |
+| P5 | Transfer encrypted group history to an approved browser | Edge and SQL verified native step-up, source signature, actual receiver decryption and scope and replay protection |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 207 verified features and 32 pending. The next checkpoint is due at 217 verified features.
+This local checkpoint covers 217 verified features and 22 pending. The next checkpoint is due at 227 verified features.
 
 ## Remaining work by dependency
 

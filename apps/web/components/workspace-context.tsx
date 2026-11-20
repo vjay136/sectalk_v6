@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { db, onReconnect } from '../lib/data'
+import { WorkspacePaymentStatus } from './workspace-payment-status'
 
 type WorkspacePolicy={workspace_type:string;template:'standard'|'restricted';room_kinds:string[];bulk_admit:boolean;details:{label:string}|null;
   compliance:{label:string;invite_hours:number;require_domains:boolean}|null}
@@ -84,9 +85,9 @@ export function WorkspaceSwitcher({onSwitch}:{onSwitch?:()=>void}={}){
     <button type="button" className="secondary" onClick={()=>void reload()}>Retry workspaces</button></div>
   if(!workspaces)return <p role="status">Loading workspaces…</p>
   if(!workspaces.length)return null
-  return <label>Active workspace<select name="workspace" value={active?.id||''} onChange={event=>{
+  return <><label>Active workspace<select name="workspace" value={active?.id||''} onChange={event=>{
     select(event.target.value);onSwitch?.()
   }}>
     {workspaces.map(space=><option key={space.id} value={space.id}>{space.name}</option>)}
-  </select></label>
+  </select></label>{active&&<WorkspacePaymentStatus key={active.id} id={active.id} owner={active.role==='owner'}/>}</>
 }

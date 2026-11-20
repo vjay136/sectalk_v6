@@ -3,12 +3,14 @@ import { withOperationalMetrics } from '../../../../lib/operational-metrics-serv
 import type Stripe from 'stripe'
 import { billingWriter, stripe, stripeLiveMode, webhookSecret } from '../../../../lib/stripe-server'
 import { stripeBillingUuid, stripeSubscriptionSnapshot } from '../../../../lib/stripe-reconciliation'
+import { couponCheckoutSnapshot } from '../../../../lib/stripe-coupon'
+import { stripeRenewalSnapshot } from '../../../../lib/stripe-renewal'
 import { readBoundedBody } from '../../../../lib/request-body'
 
 export const runtime = 'nodejs'
 const headers = {'Cache-Control': 'no-store'}
 const reply = (status: number) => new Response(null, {status, headers})
-const id = /^(?:evt|sub|cs|seti)_[a-zA-Z0-9_]{1,100}$/
+const id = /^(?:evt|sub|cs|seti|in)_[a-zA-Z0-9_]{1,100}$/
 
 async function handlePost(request: Request) {
   if (!stripe || !webhookSecret || !billingWriter) return reply(503)
@@ -27,11 +29,15 @@ async function handlePost(request: Request) {
   const data = event.data?.object
   if (!data || typeof data !== 'object' || event.account
     || (typeof event.livemode === 'boolean' && event.livemode !== stripeLiveMode)) return reply(400)
-  let kind: 'subscription' | 'subscription_deleted' | 'trial'
+  let kind: 'subscription' | 'subscription_deleted' | 'trial' | 'invoice_renewal' | 'coupon_checkout'
   let reservation: string | undefined
   let trial: Stripe.Checkout.Session | undefined
   switch (event.type) {
     case 'checkout.session.completed': {
+      if (event.data.object.mode==='subscription' && event.data.object.metadata?.sectalk_coupon_hold) {
+        kind='coupon_checkout'
+        break
+      }
       trial = event.data.object
       reservation = trial.metadata?.sectalk_workspace_trial
       if (trial.mode !== 'setup' || trial.status !== 'complete' || typeof trial.setup_intent !== 'string'
@@ -40,6 +46,19 @@ async function handlePost(request: Request) {
       kind = 'trial'
       break
     }
+    case 'checkout.session.expired':
+    case 'checkout.session.async_payment_succeeded':
+      if (!event.data.object.metadata?.sectalk_coupon_hold) return reply(204)
+      kind='coupon_checkout'
+      break
+    case 'invoice.payment_failed':
+    case 'invoice.paid':
+    case 'invoice.payment_succeeded':
+    case 'invoice.voided':
+    case 'invoice.marked_uncollectible':
+    case 'invoice.updated':
+      kind = 'invoice_renewal'
+      break
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.paused':
@@ -53,7 +72,7 @@ async function handlePost(request: Request) {
   }
   const resource = data && 'id' in data ? data.id : null
   if (!event.id?.startsWith('evt_') || !id.test(event.id) || !resource || !id.test(resource)
-    || !(kind === 'trial' ? resource.startsWith('cs_') : resource.startsWith('sub_'))
+    || !(resource.startsWith(kind === 'trial' || kind === 'coupon_checkout' ? 'cs_' : kind === 'invoice_renewal' ? 'in_' : 'sub_'))
     || !Number.isSafeInteger(event.created) || event.created <= 0 || event.created > Date.now() / 1000 + 300) return reply(400)
 
   const claim = await billingWriter.rpc('st_v7_stripe_claim', {p_event: event.id,
@@ -83,6 +102,31 @@ async function handlePost(request: Request) {
       }
       const result = await finish('apply', {reservation})
       return reply(!result.error && result.data === true ? 204 : 503)
+    }
+    if (kind === 'coupon_checkout') {
+      const current=await stripe.checkout.sessions.retrieve(resource,{expand:['line_items']})
+      if(current.id!==resource) throw new Error('Checkout identity changed')
+      const snapshot=couponCheckoutSnapshot(current)
+      const result=snapshot ? await finish('apply',snapshot) : await finish('ignore')
+      if (!result.error && result.data===true) return reply(204)
+      await finish('retry')
+      return reply(503)
+    }
+    if (kind === 'invoice_renewal') {
+      const invoice = await stripe.invoices.retrieve(resource)
+      if (invoice.id !== resource) throw new Error('Invoice identity changed')
+      const renewal = stripeRenewalSnapshot(invoice)
+      let providerSubscription = null
+      if (renewal) {
+        const current = await stripe.subscriptions.retrieve(renewal.subscription)
+        const snapshot = stripeSubscriptionSnapshot(current)
+        if (snapshot?.customer === renewal.customer && snapshot.subscription === renewal.subscription) providerSubscription = snapshot
+      }
+      const result = renewal ? await finish('apply',{...renewal, provider_subscription:providerSubscription,
+        new_failure:event.type==='invoice.payment_failed'}) : await finish('ignore')
+      if (!result.error && result.data === true) return reply(204)
+      await finish('retry')
+      return reply(503)
     }
     const subscription = await stripe.subscriptions.retrieve(resource)
     if (subscription.id !== resource) throw new Error('Subscription identity changed')

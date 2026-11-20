@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
 import { StaffMfa } from './staff-mfa'
 import { ThreatPlaybooks } from './threat-playbooks'
+import { SocResponseActions } from './soc-response-actions'
 
 type Signal = 'detection' | 'attachment_inspection' | 'malware'
 type Access = { status: 'none' } | { status: 'mfa' } | { status: 'verified'; scopes: Signal[] }
@@ -184,6 +185,7 @@ function Queue({ scopes,onAccessChanged }: { scopes: Signal[]; onAccessChanged: 
     {message && <p role="status">{message}</p>}
     {error && <p role="alert" className="error">{error}</p>}
     <ThreatPlaybooks signals={visible ?? []} refreshQueue={load}/>
+    <SocResponseActions/>
   </section>
 }
 

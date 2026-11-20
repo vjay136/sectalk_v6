@@ -19,7 +19,9 @@ export async function GET(request: Request) {
   if (result.error) return result.error.code === '42501' ? forbidden() : unavailable()
   try {
     if (!batch) {
-      const channels = siemConnectors().filter(row => row.workspace === workspace).map(row => row.channel)
+      const payment = await viewer.client.rpc('st_v7_workspace_payment_state', {p_workspace:workspace})
+      const channels = payment.error || payment.data?.mode === 'read_only' ? [] :
+        siemConnectors().filter(row => row.workspace === workspace).map(row => row.channel)
       return Response.json({batches: result.data, channels}, {headers})
     }
     if (!result.data) return new Response(null, {status: 404, headers})
@@ -52,6 +54,7 @@ export async function POST(request: Request) {
   const result = await viewer.client.rpc('st_v7_siem_batch', {p_workspace: workspace, p_period: period, p_channel: channel})
   if (result.error) {
     if (result.error.code === '42501') return forbidden()
+    if (result.error.code === 'PT423') return new Response(null,{status:423,headers})
     if (['22007', '22008', '22023'].includes(result.error.code)) return invalid()
     return unavailable()
   }

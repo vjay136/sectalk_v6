@@ -1,13 +1,15 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ArrowRight, CreditCard } from 'lucide-react'
+import { CreditCard } from 'lucide-react'
 import { type BillingCurrency, type Cadence, type PaidPlan, type Plan, type PlanEntitlements, type PlanVersion, formatBillingAmount, isBillingCurrency, isPaidPlan, plans } from '../lib/billing'
 import { db } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import {useSensitiveAction} from './sensitive-action'
+import type {PortalPurpose} from '../lib/stripe-portal'
 
-type Catalog = { plans: PlanVersion[]; checkoutAvailable: boolean }
+type Renewal = {state:'clear'|'grace'|'expired'; grace_until?:string; retry_at?:string|null}
+type Catalog = { plans: PlanVersion[]; checkoutAvailable: boolean; portalConfigured: boolean }
 type Subscription = {
   plan: Plan; status: string; period_end: string | null; cancel_at_period_end: boolean; customer_id: string | null
   catalog_version: number; billing_currency: string | null; billing_cadence: Cadence | null; billing_amount: number | null
@@ -20,10 +22,12 @@ const labels: Record<string, string> = {
 export function Billing({ user }: { user: string }) {
   const {authorize,confirmation}=useSensitiveAction()
   const [catalog, setCatalog] = useState<Catalog | null>(null)
+  const [renewal,setRenewal] = useState<Renewal | null>(null)
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [subscriptionTitle, setSubscriptionTitle] = useState<string | null>(null)
   const [entitlements, setEntitlements] = useState<PlanEntitlements | null>(null)
   const [cadence, setCadence] = useState<Cadence>('monthly')
+  const [coupon,setCoupon] = useState('')
   const [currency, setCurrency] = useState<BillingCurrency>('USD')
   const [view, setView] = useState<'subscription'|'plans'>('subscription')
   const [workspaceBilling, setWorkspaceBilling] = useState<'delegated' | 'owner' | null>(null)
@@ -35,6 +39,7 @@ export function Billing({ user }: { user: string }) {
     const result = new URLSearchParams(window.location.search).get('billing')
     if (result === 'success') setNotice('Checkout returned. Your plan updates after Stripe confirms the subscription.')
     if (result === 'cancel') setNotice('Checkout was canceled.')
+    if (result === 'portal-return') setNotice('Stripe changes appear after the billing provider confirms them.')
     const controller = new AbortController()
     fetch('/api/billing/catalog', { signal: controller.signal }).then(async res => {
       if (!res.ok) throw new Error('Catalog unavailable')
@@ -55,19 +60,21 @@ export function Billing({ user }: { user: string }) {
         .eq('user_id', user).maybeSingle(),
       db!.rpc('st_v6_my_plan_title'),
       db!.rpc('st_v7_my_entitlements'),
-    ]).then(([subscription, title, limits]) => {
+      db!.rpc('st_v7_renewal_status'),
+    ]).then(([subscription, title, limits, payment]) => {
       if (controller.signal.aborted) return
       if (subscription.error || title.error || limits.error) setError('Could not load your subscription.')
       if (!subscription.error) setSubscription(subscription.data as Subscription | null)
       if (!title.error) setSubscriptionTitle(title.data)
       if (!limits.error) setEntitlements(limits.data as PlanEntitlements | null)
+      if (!payment.error) setRenewal(payment.data as Renewal | null)
     })
     reload()
     const poll = window.setInterval(reload, 10000)
     return () => { controller.abort(); window.clearInterval(poll) }
   }, [user])
 
-  async function start(action: 'checkout' | 'portal', plan?: PaidPlan, version?: number) {
+  async function start(action: 'checkout' | 'portal', plan?: PaidPlan, version?: number, purpose?:PortalPurpose) {
     if (busy) return
     setBusy(true)
     setError('')
@@ -76,7 +83,7 @@ export function Billing({ user }: { user: string }) {
       const response = await fetch('/api/billing/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token },
-        body: JSON.stringify({ action, plan, cadence, currency, version }),
+        body: JSON.stringify({ action, plan, cadence, currency, version, purpose, ...(action=== 'checkout' && coupon.trim() ? {coupon:coupon.trim()} : {}) }),
       })
       const payload = await response.json()
       if (!response.ok || !payload.url) throw new Error(payload.error || 'The billing request failed.')
@@ -111,8 +118,26 @@ export function Billing({ user }: { user: string }) {
           <p>{formatBillingAmount(subscription.billing_amount, subscription.billing_currency)} per {subscription.billing_cadence === 'annual' ? 'year' : 'month'}</p>}
         {subscription?.period_end && <p>Period ends <time dateTime={subscription.period_end}>{new Date(subscription.period_end).toLocaleDateString()}</time></p>}
         {entitlements && <PlanLimits limits={entitlements} />}</div>
-      {subscription?.customer_id && <button className="secondary" disabled={busy} onClick={() => void authorize('billing',()=>start('portal'))}>Manage billing <ArrowRight size={15}/></button>}
+      {subscription?.customer_id && catalog?.portalConfigured && <details>
+        <summary>Manage billing</summary>
+        <div className="actions">{([
+          ['overview','Open Stripe billing portal'],['payment_method','Update payment methods'],['plan','Change plan'],
+          ['invoices','View Stripe invoices'],['tax_ids','Manage tax IDs'],
+          ...(subscription.cancel_at_period_end ? [['reactivate','Keep subscription active']] :
+            ['active','trialing','past_due'].includes(subscription.status) ? [['cancel','Schedule cancellation']] : []),
+        ] as [PortalPurpose,string][]).map(([purpose,label])=><button key={purpose} type="button" className="secondary"
+          disabled={busy} onClick={()=>void authorize('billing',()=>start('portal',undefined,undefined,purpose))}>{label}</button>)}</div>
+      </details>}
+      {subscription?.customer_id && catalog && !catalog.portalConfigured && <p>The Stripe billing portal is awaiting configuration.</p>}
     </div>}
+    {view==='subscription' && renewal && renewal.state!=='clear' && <section className="panel release-panel" aria-label="Renewal payment">
+      <h2>Renewal payment needs attention</h2>
+      {renewal.grace_until && <p>{renewal.state==='expired' ? 'Grace period ended ' : 'Grace period ends '}
+        <time dateTime={renewal.grace_until}>{new Date(renewal.grace_until).toLocaleString()}</time>.</p>}
+      {renewal.retry_at ? <p>Stripe currently schedules another attempt for{' '}
+        <time dateTime={renewal.retry_at}>{new Date(renewal.retry_at).toLocaleString()}</time>.</p>
+        : <p>Stripe has not reported another scheduled attempt.</p>}
+    </section>}
     {notice && <p role="status" className="release-info">{notice}</p>}
     {error && <p role="alert" className="error">{error}</p>}
     {view==='plans'&&<>{!catalog && !error && <p role="status">Loading available plans…</p>}
@@ -120,6 +145,9 @@ export function Billing({ user }: { user: string }) {
     {currencies.length > 0 && <label>Currency <select value={currency} onChange={event => {
       if (isBillingCurrency(event.target.value)) setCurrency(event.target.value)
     }}>{currencies.map(code => <option key={code}>{code}</option>)}</select></label>}
+    {catalog?.checkoutAvailable && currentPlan==='free' && <label>Coupon code (optional)
+      <input value={coupon} maxLength={40} autoComplete="off" onChange={event=>setCoupon(event.target.value)}/>
+    </label>}
     <div className="tabs release-tabs billing-interval" aria-label="Billing interval">
       <button aria-pressed={cadence === 'monthly'} className={cadence === 'monthly' ? 'active' : ''} onClick={() => setCadence('monthly')}>Monthly</button>
       <button aria-pressed={cadence === 'annual'} className={cadence === 'annual' ? 'active' : ''} onClick={() => setCadence('annual')}>Annual</button>
