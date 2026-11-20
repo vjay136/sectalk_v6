@@ -41,6 +41,10 @@
 | P10 | Add portable PostgreSQL backup and restore verification | Disposable recovery drill passed. Managed PITR, private Storage, Auth and cutover rehearsal are pending. |
 | P10 | Add in-product help and a keyboard shortcut sheet | Fresh-account browser onboarding, empty Inbox, keyboard and mobile help checks |
 | P10 | Add a public status page and installable PWA with an offline shell | Local HTTP probes and `tests/pwa.e2e.mjs` |
+| P5 | Add workspace emoji policy and reaction limits to room messages and threads | Room reactions SQL and two-browser policy, cap and Realtime checks |
+| P5 | Schedule profile status and mute, snooze or silence global and direct alerts | Quiet-hours SQL and two-browser settings and presence checks. Room-level notification settings remain open. |
+| P5 | Add meeting media controls, chat, roster, private pin and host spotlight | Meeting collaboration SQL and two authenticated browser sessions with local LiveKit |
+| P10 | Add audited feature rollouts and an emergency stop | Feature flag SQL and authenticator step-up browser checks for Release controls. The first flags cover tasks and recurring meetings. |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.

@@ -7,7 +7,7 @@ import { SectionTabs } from './section-tabs'
 
 const pageSize=96
 
-export default function ChatEmoji({ onPick }: { onPick: (value:string) => void }) {
+export default function ChatEmoji({onPick, allowCustom = true}: {onPick: (value:string) => void; allowCustom?: boolean}) {
   const [tab,setTab]=useState<'native'|'custom'>('native')
   const [query,setQuery]=useState('')
   const [page,setPage]=useState(0)
@@ -17,8 +17,8 @@ export default function ChatEmoji({ onPick }: { onPick: (value:string) => void }
       words.every(word => (item.label.toLowerCase()+' '+item.terms).includes(word)))
   },[query,tab])
   return <div className="emoji-picker">
-    <SectionTabs label="Emoji collections" value={tab} options={ [['native','Emoji'],['custom','SecTalk combinations']] }
-      onChange={value=>{setTab(value);setPage(0)}}/>
+    {allowCustom&&<SectionTabs label="Emoji collections" value={tab} options={ [['native','Emoji'],['custom','SecTalk combinations']] }
+      onChange={value=>{setTab(value);setPage(0)}}/>}
     <label>Search emoji<input type="search" maxLength={100} value={query} onChange={event=>{setQuery(event.target.value);setPage(0)}}/></label>
     <p className="muted">{matches.length.toLocaleString()} available</p>
     {matches.length === 0 && <p>No matching emoji.</p>}

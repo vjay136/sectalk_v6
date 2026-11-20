@@ -5,6 +5,7 @@ import { CalendarDays, ListChecks } from 'lucide-react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { WorkspaceSwitcher, useWorkspaceContext } from './workspace-context'
+import { useFeature } from '../lib/use-feature'
 
 export type TaskScope={kind:'chat'|'room';id:string}
 type Status='todo'|'in_progress'|'blocked'|'done'|'cancelled'
@@ -56,6 +57,8 @@ function TaskOverview(props:ScopedTaskProps){
 }
 
 function ScopedTaskList({user,scope,source,people={},moderator=false,canCreate=false,onSourceUsed,workspace}:ScopedTaskProps&{workspace?:string}){
+  const {active:activeWorkspace}=useWorkspaceContext()
+  const creationAvailable=useFeature('task_creation',scope?.kind==='room'?activeWorkspace?.id||null:null,canCreate)
   const [tasks,setTasks]=useState<Task[]|null>(null)
   const [relations,setRelations]=useState<Person[]>([])
   const [view,setView]=useState<'list'|'board'|'calendar'>('list')
@@ -132,7 +135,8 @@ function ScopedTaskList({user,scope,source,people={},moderator=false,canCreate=f
     <div className="content-title"><ListChecks size={20}/><h2>{scope?'Tasks':workspace?'Workspace room tasks':'Direct chat tasks'}</h2></div>
     <SectionTabs label="Task views" value={view} onChange={setView} options={[['list','List'],['board','Board'],['calendar','Calendar']]}/>
     <SectionTabs label="Task filters" value={filter} onChange={setFilter} options={[['all','All tasks'],['assigned','Assigned to me'],['watching','Watching']]}/>
-    {canCreate&&<details open={createOpen} onToggle={event=>setCreateOpen(event.currentTarget.open)}>
+    {canCreate&&creationAvailable===false&&<p role="status">Task creation is unavailable.</p>}
+    {canCreate&&creationAvailable&&<details open={createOpen} onToggle={event=>setCreateOpen(event.currentTarget.open)}>
       <summary>{source?'Create task from message':'Create a task'}</summary>
       <form className="release-form" onSubmit={create}>
         {source&&<p>The source is visible to participants who can still access the message.</p>}

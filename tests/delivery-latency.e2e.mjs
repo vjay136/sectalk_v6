@@ -39,13 +39,16 @@ const {user}=data(await admin.auth.admin.createUser({email,password,email_confir
 data(await client.auth.signInWithPassword({email,password}))
 data(await client.rpc('st_save_profile',{p_handle:handle,p_name:'Delivery Metrics Tester'}))
 assert.match(user.id,/^[0-9a-f-]{36}$/)
-const sql="insert into sectalk_private.staff(user_id) values('"+user.id+"');"
+const sql="insert into sectalk_private.staff(user_id) values('"+user.id+"');\n"+
+  "insert into sectalk_private.st_v6_flag_operators(account_id) values('"+user.id+"');"
 const seed=spawnSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],
   {input:sql,encoding:'utf8',windowsHide:true})
 assert.equal(seed.status,0,seed.stderr)
 assert.equal((await client.rpc('st_v6_delivery_latency',{p_window:'24h'})).error?.code,'42501')
 assert.equal((await client.rpc('st_v6_usage_metrics',{p_window:'7d'})).error?.code,'42501')
+assert.equal(data(await client.rpc('st_v6_can_manage_flags')),false)
 const browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER})
+let releaseRuleChanged=false
 try{
   const page=await browser.newPage()
   await page.goto(app.href)
@@ -54,7 +57,9 @@ try{
   await page.locator('button.submit-auth').click()
   await page.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Safety',exact:true}).click()
   const metrics=page.getByRole('button',{name:'Delivery metrics',exact:true})
+  const release=page.getByRole('button',{name:'Release controls',exact:true})
   assert.equal(await metrics.count(),0)
+  assert.equal(await release.count(),0)
   await page.getByRole('button',{name:'Staff console',exact:true}).click()
   await page.getByRole('button',{name:'Set up authenticator',exact:true}).click()
   const secret=(await page.locator('.mfa-setup code').textContent()).trim()
@@ -79,5 +84,36 @@ try{
   assert.deepEqual(Object.keys(aggregate).sort(),['metrics','through'])
   assert.ok(Object.values(aggregate.metrics).every(count=>count>=10&&count%10===0))
   await page.getByRole('region',{name:'Product usage',exact:true}).getByText('Active accounts',{exact:true}).waitFor()
-  console.log('Passed authenticator step-up and aggregate-only delivery metrics in the local app.')
-}finally{await browser.close()}
+  await release.click()
+  const controls=page.getByRole('region',{name:'Release controls',exact:true})
+  const rollout=controls.getByLabel('Rollout percentage',{exact:true})
+  const stop=controls.getByLabel('Emergency stop for all scopes',{exact:true})
+  const save=controls.getByRole('button',{name:'Save release rule',exact:true})
+  const evaluate=async()=>data(await client.rpc('st_v6_feature_available',{p_feature:'task_creation'}))
+  assert.equal(await evaluate(),true)
+  releaseRuleChanged=true
+  await rollout.fill('0')
+  await save.click()
+  await controls.getByText('0% enabled',{exact:true}).waitFor()
+  assert.equal(await evaluate(),false)
+  await rollout.fill('100')
+  await stop.check()
+  await save.click()
+  await controls.getByText('Emergency stop',{exact:true}).waitFor()
+  assert.equal(await evaluate(),false)
+  await stop.uncheck()
+  await save.click()
+  await controls.getByText('Emergency stop',{exact:true}).waitFor({state:'detached'})
+  assert.equal(await evaluate(),true)
+  releaseRuleChanged=false
+  console.log('Passed authenticator step-up, staff analytics, staged feature rollout and the emergency stop.')
+}finally{
+  await browser.close()
+  if(releaseRuleChanged){
+    const restored=spawnSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],{
+      input:"update sectalk_private.st_v6_flag_rules set enabled=true, rollout=100, killed=false where feature='task_creation' and scope='global';",
+      encoding:'utf8',windowsHide:true,
+    })
+    assert.equal(restored.status,0,restored.stderr)
+  }
+}

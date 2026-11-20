@@ -6,9 +6,11 @@ import { CalendarDays, Video } from 'lucide-react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { saveDownload } from '../lib/chat-files'
 import { meetingCalendar, meetingLink } from '../lib/meeting-calendar'
+import { useFeature } from '../lib/use-feature'
 import { SectionTabs } from './section-tabs'
 import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
 import { MeetingEngagement } from './meeting-engagement'
+import { MeetingCollaboration } from './meeting-collaboration'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
 type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null }
@@ -56,6 +58,7 @@ function WorkspaceMeetings({ user, requested, workspace }: { user:string; reques
   const [frequency,setFrequency]=useState('once')
   const pendingMeeting = useRef<{ input:string; id:string } | null>(null)
   const workspaceId=workspace.id
+  const recurrence=useFeature('recurring_meetings',workspaceId,view==='schedule')
   const reload = useCallback(async () => {
     const { data,error } = await db!.from('st_v3_meetings').select('*').eq('workspace_id',workspaceId).order('starts_at',{ascending:false}).limit(100)
     if (error) setError('Could not load meetings.')
@@ -85,6 +88,7 @@ function WorkspaceMeetings({ user, requested, workspace }: { user:string; reques
     try {
       const common={p_workspace:workspaceId,p_title:data.get('title')}
       const repeats=!instant&&frequency!=='once'
+      if(repeats&&!recurrence)throw new Error('Recurring meetings are unavailable.')
       const input=instant?{...common,p_minutes:Number(data.get('duration'))}:{
         ...common,p_agenda:data.get('agenda'),p_start:new Date(String(data.get('start'))).toISOString(),
         p_end:new Date(String(data.get('end'))).toISOString(),
@@ -122,7 +126,8 @@ function WorkspaceMeetings({ user, requested, workspace }: { user:string; reques
           <label>Agenda<textarea name="agenda" rows={2} maxLength={2000}/></label>
           <div className="release-flex"><label>Starts at<input type="datetime-local" name="start" required/></label><label>Ends at<input type="datetime-local" name="end" required/></label></div>
           <div className="release-flex"><label>Repeat<select value={frequency} disabled={busy} onChange={event=>setFrequency(event.target.value)}>
-            <option value="once">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option>
+            <option value="once">Does not repeat</option><option value="daily" disabled={!recurrence}>Daily</option>
+            <option value="weekly" disabled={!recurrence}>Weekly</option>
           </select></label>{frequency!=='once'&&<label>Occurrences<input name="count" type="number" min="2" max="12" defaultValue="4" required/></label>}</div>
         </>}
         <button className="primary" disabled={busy}>{instant?<Video size={16}/>:<CalendarDays size={16}/>} {instant?'Start meeting':'Schedule meeting'}</button>
@@ -151,6 +156,7 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
   const [error,setError]=useState('')
   const [busy,setBusy]=useState(false)
   const [media,setMedia]=useState<{url:string;token:string}|null>(null)
+  const [focus,setFocus]=useState<string|null>(null)
   const [lobbyNotice,setLobbyNotice]=useState('')
   const [calendarNotice,setCalendarNotice]=useState('')
   const [manualLink,setManualLink]=useState('')
@@ -242,8 +248,11 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
       {self==='admitted' && meeting.status==='live' && !media && <button className="primary" disabled={busy||!mediaReady} onClick={()=>void connect()}>{mediaReady?'Join audio and video':'Live media unavailable'}</button>}
       {(self==='admitted'||self==='waiting') && <button className="secondary" disabled={busy} onClick={()=>{setMedia(null);void action('st_v3_leave',{})}}>Leave</button>}
     </div>}
-    {media && self==='admitted' && !ended && <MeetingMedia {...media} leave={refreshMedia}/>}
-    {self==='admitted'&&meeting.status==='live'&&!ended&&<MeetingEngagement meeting={meeting.id} user={user}/>}
+    {media && self==='admitted' && !ended && <MeetingMedia {...media} focus={focus} leave={refreshMedia}/>}
+    {self==='admitted'&&meeting.status==='live'&&!ended&&<>
+      <MeetingCollaboration meeting={meeting.id} user={user} host={host} setFocus={setFocus}/>
+      <MeetingEngagement meeting={meeting.id} user={user}/>
+    </>}
     {host && <section className="release-section"><h2>Waiting room and attendance</h2>
       {bulkAdmit&&meeting.status==='live'&&!ended&&people.some(person=>person.status==='waiting')&&
         <button className="primary" type="button" disabled={busy} onClick={()=>void action('st_v6_admit_all',{})}>Admit all eligible attendees</button>}

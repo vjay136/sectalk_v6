@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { ScopedTasks } from './scoped-tasks'
+import { RoomPostReactions, RoomReactionSettings, useRoomReactionCounts, useWorkspaceReactionPolicy, type RoomReactionPolicy } from './room-reactions'
 
 type Kind='public'|'private'|'admin'|'announcement'|'broadcast'
 type Role='owner'|'moderator'|'member'|'guest'|'read_only'
@@ -33,6 +34,7 @@ async function call(name:string,input:Record<string,unknown>) {
 }
 
 export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,allowedRoomKinds}:DirectoryProps) {
+  const reactionPolicy=useWorkspaceReactionPolicy(space)
   const [rooms,setRooms]=useState<Room[]|null>(null)
   const [selected,setSelected]=useState('')
   const [filter,setFilter]=useState<'active'|'archived'>('active')
@@ -78,6 +80,8 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
     {error&&<p role="alert" className="error">{error}</p>}
     {notice&&<p role="status">{notice}</p>}
     {!rooms&&!error&&<p role="status">Loading rooms…</p>}
+    {reactionPolicy.error&&<p role="alert" className="error">{reactionPolicy.error}</p>}
+    {manager&&reactionPolicy.policy&&<RoomReactionSettings key={space} workspace={space} policy={reactionPolicy.policy} onSaved={reactionPolicy.refresh}/>}
     {manager&&<details open={creating} onToggle={event=>setCreating(event.currentTarget.open)}><summary>Create a room</summary>
       <form className="release-form" onSubmit={event=>{
         event.preventDefault()
@@ -123,12 +127,13 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
     {visible?.map(room=><button className={selected===room.id?'primary':'secondary'} type="button" key={room.id}
       aria-pressed={selected===room.id} onClick={()=>setSelected(room.id)}>{room.name} <small>{kinds[room.kind]}</small></button>)}
     {current&&<RoomPanel key={current.id} room={current} user={user} profiles={profiles}
-      workspaceAdminIds={workspaceAdminIds} refreshDirectory={refresh}/>}
+      workspaceAdminIds={workspaceAdminIds} refreshDirectory={refresh} reactionPolicy={reactionPolicy.policy}/>}
   </section>
 }
 
-function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
+function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reactionPolicy}: {
   room:Room;user:string;profiles:Record<string,Profile>;refreshDirectory:()=>Promise<void>;workspaceAdminIds:string[]
+  reactionPolicy:RoomReactionPolicy|null
 }) {
   const [role,setRole]=useState<Role|null|undefined>(undefined)
   const [entries,setEntries]=useState<Entry[]>([])
@@ -235,6 +240,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
   const name=(id:string|null)=>id?profiles[id]?.name||'Workspace member':''
   const actualView=(!staff&&(view==='settings'||view==='audit'))||(role==='guest'&&view==='people')?'messages':view
   const parent=threadRoot||posts.find(post=>post.id===thread)
+  const visiblePosts=actualView==='messages'?posts:actualView==='threads'?(parent?[parent,...replies]:replies):actualView==='pins'?pins:[]
+  const reactions=useRoomReactionCounts(role?room.id:null,visiblePosts.filter(post=>!post.removed_at).map(post=>post.id))
 
   function openThread(id:string){
     activeThread.current=id;setReplies([]);setThreadRoot(null);setThread(id);setView('threads')
@@ -270,6 +277,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
         {post.kind==='announcement'&&<span className="pill">Announcement</span>}
         {post.edited_at&&!post.removed_at&&<span className="pill">Edited</span>}</div>
       <p className={post.removed_at?'meeting-agenda revoked-message':'meeting-agenda'}>{post.body}</p>
+      {!post.removed_at&&<RoomPostReactions room={room.id} post={post.id} policy={reactionPolicy}
+        reactions={reactions.items[post.id]} canAdd={Boolean(canPost)} canRemove={canModify} onChange={reactions.refresh}/>}
       {editingPost===post.id&&canEdit?<form className="release-form" onSubmit={event=>{
         event.preventDefault()
         void updatePost(post,'edit',new FormData(event.currentTarget).get('editedBody'))
@@ -313,6 +322,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds}: {
         ...(role!=='guest'?[['people','Members'] as const]:[]),
         ...(staff?[['settings','Settings'] as const,['audit','Audit'] as const]:[]),
       ]}/>
+      {reactions.error&&<p role="alert" className="error">{reactions.error}</p>}
       {actualView==='messages'&&(posts.length?posts.map(post=>renderPost(post,true)):<p>No messages yet.</p>)}
       {actualView==='threads'&&<>
         {threadStates.some(item=>item.following)&&<div className="release-section"><h3>Followed threads</h3>

@@ -29,6 +29,7 @@ import { downloadChatFile, extensions, sendChatFile, supportedFile, type ChatFil
 import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
 import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
+import { QuietHoursSettings, useEffectiveAvailability, useQuietIncoming } from './quiet-hours'
 
 const ChatEmoji=dynamic(()=>import('./chat-emoji'))
 const Friends=dynamic(()=>import('./friends').then(module=>module.Friends))
@@ -80,12 +81,15 @@ export function Inbox({ user }: { user: string }) {
   const call = useCalling(user, setNotice, hints)
   useEffect(() => { activeChat.current = tab === 'inbox' ? selected : null }, [tab, selected])
   const refreshInboxStatus = useCallback(async (changedChat?: string) => {
-    const { data, error } = await db!.rpc('st_v2_inbox_status')
+    const [{ data, error }, quiet] = await Promise.all([
+      db!.rpc('st_v2_inbox_status'),
+      changedChat ? db!.rpc('st_v6_quiet_active', { p_chat: changedChat }) : null,
+    ])
     if (error) return
     setInboxStatus(Object.fromEntries((data as InboxStatus[]).map(row => [row.chat_id,row])))
     if (changedChat) {
       const row = (data as InboxStatus[]).find(item => item.chat_id === changedChat)
-      if (row?.unread && !row.muted && row.latest_id && row.latest_at && activeChat.current !== changedChat
+      if (quiet?.data === false && row?.unread && !row.muted && row.latest_id && row.latest_at && activeChat.current !== changedChat
         && Date.now() - Date.parse(row.latest_at) < 12000 && announced.current.get(changedChat) !== row.latest_id) {
         announced.current.set(changedChat,row.latest_id)
         setNotice('New direct message in your inbox.')
@@ -135,7 +139,8 @@ export function Inbox({ user }: { user: string }) {
         }
       })
       .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
-      .on('broadcast', { event: 'presence' }, () => void refresh())
+      .on('broadcast', { event: 'presence' }, () => { hints.dispatchEvent(new Event('presence')); void refresh() })
+      .on('broadcast', { event: 'availability' }, () => hints.dispatchEvent(new Event('availability')))
       .on('broadcast', { event: 'workspace_memberships' }, () => void reloadWorkspaces())
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))
@@ -196,7 +201,7 @@ export function Inbox({ user }: { user: string }) {
   const chat = chats.find(item => item.id === selected)
   const peer = chat ? profiles[peerId(chat, user)] : undefined
   const peerPresence = peer ? presence[peer.id] : undefined
-  const peerState = peerPresence && Date.parse(peerPresence.expires_at)>Date.now() && peerPresence.state!=='offline' ? peerPresence.state : null
+  const rawPeerState = peerPresence && Date.parse(peerPresence.expires_at)>Date.now() && peerPresence.state!=='offline' ? peerPresence.state : null
   const peerPresenceId=peerPresence?.user_id
   const peerExpiresAt=peerPresence?.expires_at
   useEffect(()=>{
@@ -218,6 +223,11 @@ export function Inbox({ user }: { user: string }) {
   const acceptedChat=chat?.status==='accepted'&&!blocked?chat.id:null
   const myExtras=useProfileExtras(profile?.id)
   const peerExtras=useProfileExtras(acceptedChat?peer?.id:undefined)
+  const effectiveAvailability=useEffectiveAvailability(acceptedChat && tab==='inbox' ? peer?.id : undefined,hints)
+  const peerState=rawPeerState && effectiveAvailability?.busy ? 'busy' : rawPeerState
+  const statusMessage=effectiveAvailability?.status
+  const incoming=call.call?.status==='ringing' && call.call.callee===user ? call.call : null
+  const quietIncoming=useQuietIncoming(incoming,hints)
   useEffect(()=>{
     if(!acceptedChat) return
     let active=true
@@ -393,7 +403,8 @@ export function Inbox({ user }: { user: string }) {
         </select></label>
         <label className="task-check"><input type="checkbox" checked={myExtras.details?.share_last_seen||false} disabled={working}
           onChange={event=>void run('st_v5_set_last_seen',{p_enabled:event.target.checked},()=>void myExtras.refresh())}/> Share last seen</label>
-        <p>Accepted contacts can see your last activity for up to seven days when both availability and last seen are shared.</p></div>}
+        <p>Accepted contacts can see your last activity for up to seven days when both availability and last seen are shared.</p>
+        <QuietHoursSettings chat={null} hints={hints}/></div>}
       </section> :
       tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}/>:
       tab==='saved'?<SavedMessages openChat={select}/>:
@@ -415,7 +426,7 @@ export function Inbox({ user }: { user: string }) {
       chat ? <section className="thread">
         <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={peerExtras.photo}/>
           <div><h2>{peer?.name || 'Contact'}</h2><p aria-label="Contact availability">{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : chat.status==='accepted' ? ['Offline',lastSeenLabel].filter(Boolean).join(' · ') : 'Contact request'}</p>
-            {peerExtras.details?.status_message&&<p className="thread-profile-status" title={peerExtras.details.status_message}>{peerExtras.details.status_message}</p>}</div>
+            {statusMessage&&<p className="thread-profile-status" title={statusMessage}>{statusMessage}</p>}</div>
           <div className="thread-actions">
             {chat.status === 'accepted' && !blocked && <>
               <button className="icon" aria-pressed={chatTasks} aria-label="Chat tasks" title="Chat tasks" onClick={()=>{
@@ -456,7 +467,7 @@ export function Inbox({ user }: { user: string }) {
     </Dialog>}
     {paletteOpen&&<CommandPalette commands={commands} onClose={()=>setPaletteOpen(false)} onSearch={showSearch}/>}
     {report && <ReportDialog chat={report.chat} message={report.message} file={report.file} close={() => setReport(null)} inform={setNotice} />}
-    {call.call && <CallPanel key={call.call.id} state={call} self={user} name={profiles[callerId]?.name || 'Contact'}
+    {call.call && !quietIncoming && <CallPanel key={call.call.id} state={call} self={user} name={profiles[callerId]?.name || 'Contact'}
       openChat={select} reportContact={chatId => setReport({chat:chatId,message:null})} />}
   </main>
 }
@@ -586,6 +597,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const [reactions, setReactions] = useState<Reaction[]>([])
   const [pin, setPin] = useState<Message | null>(null)
   const [showSearch, setShowSearch] = useState(false)
+  const [quietSettings, setQuietSettings] = useState(false)
   const [results, setResults] = useState<DirectMessage[] | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
   const [removing,setRemoving]=useState<{message:Message;action:'hide'|'revoke'}|null>(null)
@@ -834,7 +846,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     const { error } = await db!.rpc(name, input)
     if (error) { inform(formatError(error, 'Could not update the conversation.')); return false }
     await Promise.all([load(), loadActivity()])
-    if (name === 'st_v2_mute') hints.dispatchEvent(new Event('read_local'))
+    if (name === 'st_v6_set_quiet_mute') hints.dispatchEvent(new Event('read_local'))
     return true
   }
 
@@ -934,13 +946,17 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   return <>
     <div className="thread-toolbar">
       <button type="button" className="secondary" aria-expanded={showSearch} onClick={() => { setShowSearch(!showSearch); setResults(null) }}><Search size={15}/> Search messages</button>
-      <button type="button" className="secondary" aria-pressed={Boolean(activity?.muted)}
-        onClick={() => void update('st_v2_mute', { p_chat: chat.id, p_muted: !activity?.muted })}>
+      <button type="button" className="secondary" aria-pressed={Boolean(activity?.muted)} disabled={blocked||!activity}
+        onClick={() => void update('st_v6_set_quiet_mute', { p_chat: chat.id, p_muted: !activity?.muted })}>
         {activity?.muted ? <BellOff size={15}/> : <Bell size={15}/>} {activity?.muted ? 'Muted' : 'Mute'}
       </button>
+      <button type="button" className="secondary" disabled={blocked} onClick={()=>setQuietSettings(true)}>Chat quiet hours</button>
       <button type="button" className="secondary" disabled={blocked||!activity}
         onClick={()=>setHistorySettings(true)}>Edit history settings</button>
     </div>
+    {quietSettings && !blocked && <Dialog title="Chat quiet hours" close={()=>{setQuietSettings(false);void loadActivity()}}>
+      <QuietHoursSettings chat={chat.id} hints={hints}/>
+    </Dialog>}
     {showSearch && <form className="thread-toolbar" onSubmit={async event => {
       event.preventDefault()
       const query = String(new FormData(event.currentTarget).get('query')).trim()

@@ -7,7 +7,7 @@
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
 | Clean source snapshot | `npm ci`, registry verification, unit tests and production build passed on commit `5fe30cd`. The Windows npm launcher reported Node 26 for dependency installation despite Node 24 being first on the test shell's path. |
 | Unit tests | 14 passed, including file type and ticket checks, calendar export, readiness, safety heuristics, vault, emoji data and disclosure configuration |
-| Supabase database integration | All 28 rollback suites passed, including workspace and room policies, message ordering and edit privacy, media ownership, meeting engagement and aggregate analytics |
+| Supabase database integration | All 32 rollback suites passed, including room reactions, quiet hours, meeting collaboration and feature flag authorization |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -44,9 +44,13 @@
 | Message delivery latency | SQL verified p50, p95 and p99 calculations, small-cohort suppression and MFA gating. Browser used a real TOTP challenge in isolated Supabase to open the metrics view. |
 | Message edit privacy | SQL and two browsers verified the edit window, per-author sharing, raw history denial, edited markers and removal of open revision history after redaction or a privacy change. |
 | Product usage | SQL verified rounded aggregate counts and suppression for a single contributor. The browser reached the aggregate-only view after authenticator step-up. |
+| Room reaction policy | Two accounts tested a live policy change, reaction on a thread reply, the reaction cap and removal after the policy was disabled. SQL verified tenant isolation and reaction access after deletion. |
+| Scheduled presence and direct alerts | Two accounts tested scheduled status, Busy and Online transitions, direct chat muting and snoozing, and incoming call alert suppression. SQL verified time zones, overnight boundaries and schedule privacy. Room-level notification settings remain open. |
+| Meeting collaboration | Two authenticated browsers used a local LiveKit server and synthetic devices to verify audio and video tracks, mute and camera changes, live roster and chat, private pin and host spotlight. SQL and browser checks covered waiting and departed participants. |
+| Staged feature release | SQL verified stable rollout cohorts, account and workspace precedence, audited changes, MFA and role checks, and enforced emergency stop for both capabilities. A browser performed authenticator step-up and exercised rollout changes and the emergency stop. |
 | Local database security advisor | No warning or error reported for the isolated candidate at test time. |
 | PWA | A fresh persistent Chromium profile reported zero installability errors. A mobile viewport, icon size, public-only cache, offline navigation and reconnect passed. |
-| Updated candidate | `npm run build` passed after the rooms, search, status, PWA and thread changes. |
+| Updated candidate | `npm run build` passed with room reaction policy, quiet hours, meeting collaboration and staged feature releases. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |
 | Production npm dependency advisory check | 0 reported advisories at test time |

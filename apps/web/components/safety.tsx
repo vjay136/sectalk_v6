@@ -8,6 +8,7 @@ import { SectionTabs } from './section-tabs'
 import { downloadChatFile, type ChatFile } from '../lib/chat-files'
 import { DeliveryLatency } from './delivery-latency'
 import { UsageMetrics } from './usage-metrics'
+import { ReleaseControls } from './release-controls'
 
 type Category = keyof typeof categories
 type Report = { id: string; category: Category; status: string; created_at: string }
@@ -60,7 +61,8 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 export function Safety({ staff, refresh }: { staff: string; refresh: () => Promise<void> }) {
   const [reports, setReports] = useState<Report[]>([])
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release'>('mine')
+  const [flagOperator,setFlagOperator]=useState(false)
   const [selected,setSelected]=useState<Report|null>(null)
   const [timeline,setTimeline]=useState<TimelineItem[]|null>(null)
   const [notices,setNotices]=useState<Notice[]>([])
@@ -92,15 +94,24 @@ export function Safety({ staff, refresh }: { staff: string; refresh: () => Promi
     return ()=>{live=false;window.clearInterval(timer)}
   },[selected])
   const staffAccess=staff==='mfa'||staff==='verified'
-  const visibleView=((view==='latency'||view==='usage')&&staff!=='verified')||(view==='queue'&&!staffAccess)?'mine':view
+  useEffect(()=>{
+    if(staff!=='verified'){setFlagOperator(false);return}
+    let active=true
+    void db!.rpc('st_v6_can_manage_flags').then(result=>{if(active)setFlagOperator(!result.error&&result.data===true)})
+    return()=>{active=false}
+  },[staff])
+  const releaseAccess=staff==='verified'&&flagOperator
+  const visibleView=((view==='latency'||view==='usage')&&staff!=='verified')||(view==='queue'&&!staffAccess)
+    ||(view==='release'&&!releaseAccess)?'mine':view
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
     <SectionTabs label="Safety center sections" value={visibleView} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
       ['mine','My reports'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
       ...(staff==='verified'?[['latency','Delivery metrics'] as const,['usage','Usage metrics'] as const]:[]),
+      ...(releaseAccess?[['release','Release controls'] as const]:[]),
     ]}/>
-    {visibleView==='latency'?<DeliveryLatency/>:visibleView==='usage'?<UsageMetrics/>:
+    {visibleView==='latency'?<DeliveryLatency/>:visibleView==='usage'?<UsageMetrics/>:visibleView==='release'?<ReleaseControls/>:
       visibleView==='queue' ? (staff === 'verified' ? <QueuePanel /> : <StaffMfa refresh={refresh}/>) :
       visibleView==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
         {error&&<p role="alert" className="error">{error}</p>}
