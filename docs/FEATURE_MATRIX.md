@@ -1,0 +1,245 @@
+# SecTalk feature matrix
+
+Status is conservative. Rows require verification against the complete registry entry before they become DONE. A dash indicates that the release contract for that field is still open.
+
+| ID | Name | Roles | Screen | API | Events | Tests | Status | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| AUTH-01 | Signup: email+password (argon2id), breached-password check (k-anonymity), email verification | Public signup | Signup and confirmation | Supabase Auth | Auth email | tests/auth-mail.e2e.mjs | IN_PROGRESS | Local delivery harness exists. Hosted mail and breached-password screening are pending. |
+| AUTH-02 | Login with risk-based step-up and generic error messages (no user enumeration) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-03 | TOTP MFA enrollment/verification + one-time recovery codes (hashed) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-04 | Passkeys (WebAuthn): register, login, rename, remove, passwordless-only mode | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-05 | SSO via OIDC and SAML (Enterprise): domain verification, JIT provisioning, enforce-SSO option | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-06 | SCIM 2.0 user/group provisioning and deprovisioning (Enterprise) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-07 | Session management: list/revoke sessions, idle + absolute timeouts, refresh-token rotation with reuse detection | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-08 | Device registry + trust levels (unknown, known, trusted, managed, blocked) + E2EE device key bundle | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-09 | Zero-trust: per-request authorization, step-up auth for sensitive actions (billing, role change, export, key ops) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-10 | Session risk scoring (new device, impossible travel, ASN/Tor/VPN reputation, velocity, failed attempts) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-11 | Account recovery (recovery key, trusted-device approval, admin-assisted recovery with delay + notifications) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-12 | Password reset, email change, MFA reset with cooling-off period and alerts to all devices | Account owner | Recovery | Supabase Auth | Auth email | tests/auth-mail.e2e.mjs | IN_PROGRESS | Local recovery exists. Email-change and MFA-reset lifecycle remains open. |
+| AUTH-13 | Invitations/onboarding (email/link invites, expiry, single-use, domain restrictions, seat check) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-14 | Guest access (scoped to rooms/meetings, expiring, restricted capabilities) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-15 | Managed accounts for minors/students with guardian/teacher oversight | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-16 | Login anomaly notifications and "this wasn't me" lockdown flow | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AUTH-17 | Remote device revoke/lock/wipe-local-keys | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-01 | Tenant creation by type with onboarding wizard and default policy template | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-02 | Multi-org membership and org switcher (strict context separation) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| ORG-03 | Member management: invite, suspend, restore, remove, role change, bulk CSV import | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| ORG-04 | Custom roles + permission editor (with ABAC conditions) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-05 | Groups/teams/departments | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-06 | Org settings: branding, verified domains, default retention, data region | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-07 | Versioned policy engine UI with simulation (dry-run impact preview) and rollback | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-08 | Data residency region selection (Enterprise) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-09 | Org data export and tenant offboarding/deletion (crypto-shredding of tenant key) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-10 | Family dashboard (guardian controls, member devices, safe-sharing defaults) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-11 | School controls (classes, teacher/student roles, external-contact restrictions, supervised rooms) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-12 | Healthcare profile (PHI-safe defaults, break-glass access with justification + alert) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-13 | Legal hold (scoped by user/room/date; overrides retention and deletion) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ORG-14 | Compliance profile templates (compliance-ready presets: healthcare, education, finance, GDPR-style) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-01 | 1:1 direct messages | Signed-in contacts | Inbox | st_send | Supabase account inbox hint | tests/chat-storage.e2e.mjs | IN_PROGRESS | Prior local browser evidence exists. This release needs a clean rerun. |
+| MSG-02 | Group chats (size limits by plan/policy; add/remove members with key rotation) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-03 | E2EE mode (per-conversation; per-device keys; sender keys for groups; rotate on membership change) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-04 | Managed-encryption mode (server envelope encryption; searchable; compliance-exportable); mode set by policy at conversation creation, immutable afterwards, clearly labeled in UI | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-05 | Delivery states: queued, sent, delivered, read, failed (+retry action) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-06 | Read receipts (policy-controlled per org/room/user) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-07 | Typing indicators (rate-limited, policy-controlled) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-08 | Edit with time window, edit history (policy), "edited" marker | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-09 | Delete: for me / for everyone / admin redaction; tombstones; audit-safe retention | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-10 | Reply quoting with redaction support | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-11 | Forwarding (policy-controlled; forwarded label; blocked in restricted rooms) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-12 | Pinning (permission-controlled) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-13 | Draft sync across devices (encrypted) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-14 | Offline queue + resend with idempotency keys | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-15 | Ordering, dedupe, gap detection and gap fill (per-conversation sequence numbers) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-16 | Disappearing messages (timers; enforced client+server; policy min/max) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-17 | Rich text (sanitized markdown subset), safe link previews (server fetch with SSRF guard in managed mode; client-generated in E2EE mode, toggleable) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-18 | Multi-device sync and new-device history policy (E2EE: history transfer only by approved device) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-19 | Report/flag message (to moderators/SOC; includes user-consented plaintext disclosure for E2EE) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| MSG-20 | Saved/starred messages | Chat participants | Inbox and Saved | st_v6_saved_messages | Private account state | tests/v6-database.sql | IN_PROGRESS | Implementation in this branch. |
+| MSG-21 | Scheduled send | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| MSG-22 | Voice notes (record, encrypt, waveform, transcript opt-in) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| THR-01 | Threads: create from message, replies, counts, follow/unfollow | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| THR-02 | AI thread summaries (opt-in, policy-gated, safe) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| THR-03 | Reactions (emoji set policy, per-message limits) | Chat participants | Inbox | st_v2_react | Supabase account activity hint | tests/chat-storage.e2e.mjs | IN_PROGRESS | Catalog and limits exist. Per-tenant emoji policy remains open. |
+| THR-04 | Mentions: @user, @group, @channel, @here with permission checks and notification priority | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| THR-05 | Thread integrity after delete/redaction/edit (no drift, tombstone parents) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| ROOM-01 | Room types: public-in-tenant, private, admin-only (metadata hidden), announcement-only, broadcast | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ROOM-02 | Roles: owner, moderator, member, guest, read-only | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ROOM-03 | Join/invite/request-to-join/approval; membership authoritative server-side | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ROOM-04 | Per-room permission overrides (post, react, upload, mention-all, start-call) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ROOM-05 | Announcements and pinned content | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| ROOM-06 | Moderation: mute, timeout, remove, ban, slow-mode, lock room | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ROOM-07 | Room tabs: Messages, Threads, Pins, Files, Tasks, Members, Calls, Settings, Audit (audit visible only with permission) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ROOM-08 | Room-level audit trail | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ROOM-09 | Archive/restore/delete (retention- and legal-hold-aware) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ROOM-10 | In-tenant room directory respecting visibility rules | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| ROOM-11 | Room templates (class, incident, family, project) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PRES-01 | Online/away/busy/offline with rate-limited heartbeats | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| PRES-02 | Custom status + schedule/DND integration | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| PRES-03 | Presence privacy controls (user + org policy; invisible mode where policy allows) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| NOTIF-01 | In-app notification center (read/unread, grouping) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| NOTIF-02 | Web push (VAPID), privacy-preserving payloads (no plaintext for E2EE) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| NOTIF-03 | Email notifications and digests | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| NOTIF-04 | Per-category preferences (DM, mention, thread, task, call, security, billing, admin) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| NOTIF-05 | Mute, snooze, DND schedule per conversation/global | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| NOTIF-06 | Priority rules; critical security alerts bypass non-critical filters where policy permits | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| NOTIF-07 | Admin notification policies (mandatory categories, quiet-hour limits) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| NOTIF-08 | Missed-call and mention digests | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| NOTIF-09 | Queue-based delivery with retry, dedupe, DLQ, per-channel fallback | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| NOTIF-10 | Notification audit/delivery status for admin-sent notices | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-01 | Resumable chunked upload (interruption-safe, checksum-verified, partial cleanup) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-02 | Client-side encryption for E2EE conversations (key wrapped in message) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-03 | File type allow/deny policy (MIME sniffing + extension + magic bytes) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| FILE-04 | Size/storage limits by plan + policy | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| FILE-05 | Malware scanning (ClamAV-class + hash reputation) with quarantine and release workflow | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-06 | Safe preview (images re-encoded, PDFs rendered in sandbox/server-side raster, text sanitized); never execute active content | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-07 | Download via short-lived signed URL with per-request authorization and access log | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-08 | Expiring share links (password, max downloads, revoke, audit) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-09 | Delete + retention + soft delete + purge job | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-10 | Access logs (view/download/share) visible to owner/admin per policy | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-11 | Duplicate detection by content hash (tenant-scoped only; never cross-tenant dedupe) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-12 | Files library tab with filters, sort, bulk actions | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-13 | Legal hold on files | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-14 | AI file inspection integration (macro/script/phishing-doc heuristics) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-15 | Storage classes: attachments, recordings, avatars, exports (separate buckets/prefixes, lifecycle rules) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| TASK-01 | Create task from message (immutable source snapshot + live reference) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| TASK-02 | Standalone task creation in room/DM scope | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| TASK-03 | Assignment (multi-assignee), watchers | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| TASK-04 | Status workflow (todo, in-progress, blocked, done, cancelled) with validated transitions | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| TASK-05 | Due dates, reminders, overdue state | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| TASK-06 | Priority + labels | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| TASK-07 | List, board (kanban), calendar views | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| TASK-08 | Completion events + notifications | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| TASK-09 | Task audit trail | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| TASK-10 | Integrity when source message is deleted/redacted | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SRCH-01 | Permission-safe keyword search (messages, files, tasks, rooms, people) in managed mode via Postgres FTS (tsvector + trigram), ACL filtered in-query | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SRCH-02 | Filters: room, sender, date range, type, status, has-file, mentions-me | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SRCH-03 | Queue-driven indexing pipeline (idempotent; reindex; backfill) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SRCH-04 | E2EE: local encrypted client-side index (never uploaded in plaintext); server returns metadata-only results | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SRCH-05 | Permission-safe snippets with highlight; redacted content never appears | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SRCH-06 | Deletion/redaction/legal-hold propagation to the index | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SRCH-07 | Global command palette (Cmd/Ctrl+K): navigate, search, actions | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SRCH-08 | Saved searches | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SRCH-09 | Separate audit-log search for authorized admins only | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-01 | 1:1 voice calls | Accepted contacts | Calls | st_place_call | Supabase private signaling | tests/database.sql | IN_PROGRESS | Call signaling fixture exists. Cross-network media gate pending. |
+| CALL-02 | 1:1 video calls | Accepted contacts | Calls | st_place_call | Supabase private signaling | tests/database.sql | IN_PROGRESS | Call signaling fixture exists. Cross-network media gate pending. |
+| CALL-03 | Group calls (mesh ≤4, SFU above; automatic topology switch) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-04 | Scheduled meetings with ICS/calendar invite, recurrence, join links | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| CALL-05 | Instant meetings | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-06 | Lobby/waiting room (policy-enforced; admit/deny/admit-all) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| CALL-07 | Host controls: mute/mute-all, remove, lock meeting, promote co-host, end for all, disable chat/screen-share | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| CALL-08 | Screen sharing (window/tab/screen, audio where supported, permission-loss handling, one presenter policy) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| CALL-09 | Pre-join: device selection, mic/cam test, network test, background blur toggle | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-10 | In-call controls: mute, camera, in-call chat, participants panel, pin/spotlight | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| CALL-11 | Raise hand + reactions | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-12 | Network quality indicators + adaptive bitrate + graceful audio-only fallback | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-13 | Reconnect: ICE restart, TURN fallback, signaling resume, session recovery | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| CALL-14 | Recording (policy-gated, explicit consent banner to all, server-side egress to storage, access-controlled, failure-safe) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-15 | Live captions and post-call transcription (consent, language options, speaker labels) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-16 | AI meeting summary + action items (opt-in, policy-gated, safe, editable) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-17 | Call history, missed calls, call-back | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| CALL-18 | Incoming call UX (ringing, accept/decline/busy, multi-device ring with first-accept-wins and cancelled-elsewhere) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| CALL-19 | E2EE calls (SFrame/insertable streams) with verification code display | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-20 | QoS telemetry collection (privacy-preserving) feeding analytics | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-21 | Guest join via link (policy, lobby, captcha, expiring) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| CALL-22 | Ephemeral TURN/STUN credential issuance (short TTL, per-session) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| CALL-23 | Network diagnostics page (STUN/TURN reachability, UDP/TCP/TLS 443 relay test, bandwidth estimate) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-01 | Message risk scoring (0–100 + confidence + reasons) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-02 | Scam/phishing classification (taxonomy in Section 11) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| AI-03 | URL inspection (normalization, redirect-chain resolution in sandboxed fetcher, homoglyph/punycode, reputation, newly-registered-domain, brand impersonation) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| AI-04 | File inspection (type mismatch, macros, scripts, archives, embedded links, hash reputation) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-05 | Threat taxonomy + severity model | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| AI-06 | Threshold-driven policy actions (info hint, warn banner, defang links, blur/hold, quarantine, escalate) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-07 | Explainable, non-overclaiming user warning UI ("might be…", reasons, dismiss/report, never states certainty) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| AI-08 | Sender behavior reputation (burst messaging, mass-invite, new-account-linking, prior flags) with time decay | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-09 | Abuse review queue with human-in-the-loop decisions | Staff with MFA | Safety | st_v5_case, st_v5_moderate | Audit row | tests/v5-database.sql | IN_PROGRESS | Account-level review exists. Tenant-scoped queue remains open. |
+| AI-10 | False-positive reporting + feedback loop to rules/thresholds (never auto-trains on E2EE content) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-11 | Safe AI summaries with guardrails (prompt-injection isolation, schema-validated output, redaction of secrets/PII before model) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-12 | Model registry: versions, shadow mode, offline evaluation harness, rollback, drift metrics | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-13 | E2EE-compatible: on-device heuristics + user-initiated report; no server plaintext access without explicit user consent | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-14 | Tenant AI settings (enable/disable, thresholds within safe bounds, data-sharing consent, retention of AI artifacts) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| AI-15 | Impersonation detection (display-name spoofing, executive/VIP impersonation lists, lookalike accounts) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SEC-01 | RBAC with permission catalog (Section 7.3) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SEC-02 | ABAC policy engine (attributes: device trust, risk score, network, time, data classification, tenant type) with explain() output | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SEC-03 | Tenant isolation: RLS + query helpers + isolation test harness | Authenticated member | Cross-cutting | RLS and scoped RPCs | None | tests/v2-database.sql and tests/v5-database.sql | IN_PROGRESS | Database fixtures exist. API, cache and infrastructure gates remain open. |
+| SEC-04 | Key management: per-tenant KEKs, envelope DEKs, rotation, BYOK (Enterprise), crypto-shredding | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SEC-05 | E2EE key bundles, device verification (safety numbers/QR), key-change warnings | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SEC-06 | Tamper-evident audit log (hash chain + periodic anchoring + verifier job) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SEC-07 | Rate limiting (sliding window/token bucket; tenant+user+IP+device; risk-adaptive) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SEC-08 | Abuse prevention (spam heuristics, invite abuse, proof-of-work/captcha on risk, account velocity) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SEC-09 | Security headers, strict CSP with nonces, CSRF, CORS allowlist, cookie hardening (__Host-, HttpOnly, SameSite) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SEC-10 | Secure sharing controls (watermarks optional, no-forward, expiring, view-only) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SEC-11 | Secrets hygiene: log redaction, secret scanning, no secrets client-side | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SEC-12 | Input validation, output encoding, SSRF protection, upload hardening, webhook signature verification | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SEC-13 | Break-glass / JIT privileged access with approval, time-box, justification, customer notification | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SEC-14 | security.txt, vulnerability disclosure policy, SECURITY.md | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SEC-15 | Data classification labels (public/internal/confidential/restricted) enforced by policy | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SEC-16 | DLP rules (PII/PHI/card/credential patterns) with warn/block/redact actions | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| BILL-01 | Plan catalog (Free, Pro, Team, Enterprise) as versioned data, multi-currency, grandfathering | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| BILL-02 | Checkout via Stripe and Razorpay (hosted/secure elements; no card data touches our servers) | Account owner | Billing | POST /api/billing/action | Stripe checkout | — | IN_PROGRESS | Stripe adapter exists. Razorpay and provider verification are pending. |
+| BILL-03 | Trials (Pro 14d, Team 14d; one per tenant; card-optional config) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| BILL-04 | Coupons/promo codes (percent/fixed, duration, redemption limits, plan scope, stacking rules) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| BILL-05 | Tax: GST (India: GSTIN capture, CGST/SGST/IGST logic), VAT/sales-tax via tax adapter, tax-inclusive/exclusive display | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| BILL-06 | Invoices and receipts (PDF, sequential numbering, tax breakdown, download) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| BILL-07 | Renewals + dunning (retry schedule, emails, grace period) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| BILL-08 | Upgrade/downgrade with proration; scheduled downgrade at period end; atomic + audited | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| BILL-09 | Seat-based billing (add/remove seats, true-up, seat caps, auto-seat on invite with admin approval) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| BILL-10 | Usage metering (recording minutes, transcription minutes, storage GB, AI scans overage) with idempotent usage events | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| BILL-11 | Entitlements engine (feature gates, limits) consumed by policy/UI/API; cached with version keys | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| BILL-12 | Idempotent, signature-verified payment webhooks with replay protection and reconciliation job | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| BILL-13 | Billing portal: payment methods, plan, invoices, tax IDs, cancel/reactivate | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| BILL-14 | Enterprise contracts: custom pricing, PO/manual invoicing, annual commits, order forms | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| BILL-15 | Grace period and degraded read-only mode on non-payment (no data loss; export always allowed) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| BILL-16 | Refunds/credits/adjustments (billing_admin + step-up auth + audit) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-01 | Overview dashboard (health, seats, alerts, adoption) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-02 | Users: list/search/filter, profile, roles, suspend, force logout, reset MFA | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-03 | Devices: inventory, trust level, revoke, wipe keys, managed-device flag | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-04 | Sessions: active sessions, risk, revoke | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-05 | Rooms/Channels management: visibility, owners, archive, membership audit | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-06 | Policies: messaging, files, calls, AI, retention, sharing, DLP, external access (versioned, simulated) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-07 | Audit log viewer: filters, tamper-verify status, export (signed) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-08 | Retention and legal hold management | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-09 | Compliance exports / eDiscovery (scoped, approval-gated, logged, hashed bundles) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-10 | Integrations: API keys, outbound webhooks (signed, retry, delivery log), SSO/SCIM setup | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-11 | Branding, verified domains, email templates | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-12 | Billing tab (plan, seats, invoices, payment) — billing_admin only | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-13 | Tenant feature flags (within entitlements) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ADM-14 | Org analytics (usage, adoption, call quality, security posture) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-01 | Security Center overview (open incidents, risk trend, queue depth, MTTA/MTTR) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-02 | Threat queue (AI-flagged items, filters by severity/confidence/type, bulk triage) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-03 | Abuse queue (user reports, spam, harassment) with SLA timers | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SOC-04 | Threat map (geo/ASN of suspicious logins and threat events; privacy-safe aggregation) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-05 | Session risk console (high-risk sessions, impossible travel, step-up/terminate actions) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-06 | Incident management (create, severity, status, assignees, timeline, linked entities, postmortem) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-07 | Evidence vault (immutable snapshots, SHA-256, chain of custody, access log, legal-hold link) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-08 | Escalation workflows (L1→L2→org admin→platform), SLA/ack timers, on-call routing | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SOC-09 | SOC actions: quarantine message/file, suspend user, force logout, revoke device, block URL/domain, lock room — each with reason, approval rules for destructive actions, and audit | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| SOC-10 | Detection rule management (create/test/enable/shadow rules, versioned) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-11 | SOC reporting (daily/weekly, exportable PDF/CSV) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-12 | Case notes and collaboration (mentions, attachments to evidence) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-13 | SIEM export (webhook, syslog/CEF, S3 batch) with signed payloads | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| SOC-14 | Playbooks (declarative, human-approved automations) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLT-01 | Tenant operations (view metadata only; no content access without break-glass) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLT-02 | Global feature flags and staged rollouts | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLT-03 | System health, queue depth, DLQ browser/replay, SLO dashboard | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLT-04 | Global abuse blocklists (domains, hashes, IP ranges) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLT-05 | Break-glass approvals and review | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ANL-01 | Operational metrics (latency, errors, saturation) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ANL-02 | Call quality analytics (join success, time-to-connect, TURN-relay %, ICE-restart rate, MOS proxy) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ANL-03 | Threat trend analytics | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ANL-04 | Message delivery latency (p50/p95/p99) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ANL-05 | Product usage metrics (privacy-preserving, aggregate; never message content) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ANL-06 | Real-time dashboards (streaming aggregates) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| ANL-07 | Scheduled reports (email/export) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLAT-01 | Feature flag system (global/tenant/user, percentage rollout, kill switches) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLAT-02 | Observability (OTel traces, metrics, structured logs with redaction, error tracking) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLAT-03 | Queue framework (idempotent consumers, ordering keys, retries, DLQ, replay tooling) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLAT-04 | Cache layer policy (keys namespaced by tenant+version; TTLs; no decrypted content) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLAT-05 | Public REST API + API keys + signed outbound webhooks (Enterprise/Team) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLAT-06 | i18n framework (en + one RTL locale scaffold working; ICU messages) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLAT-07 | Accessibility (WCAG 2.2 AA, keyboard-complete, screen-reader tested) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| PLAT-08 | PWA + responsive layouts + offline shell | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| PLAT-09 | Health/readiness/status endpoints + public status page | Public | API health and readiness | GET /api/health and GET /api/ready | None | tests/readiness.test.mjs | IN_PROGRESS | Readiness endpoint in this branch. Public status page is pending. |
+| PLAT-10 | Backup/restore/DR scripts with restore-verification job | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| PLAT-11 | User settings: Profile, Security, Devices, Sessions, Notifications, Privacy, Appearance (light/dark/high-contrast/reduced-motion), Billing, Data export & account deletion | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| PLAT-12 | Onboarding, empty states, in-product help, keyboard shortcuts sheet | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
+| PLAT-13 | Marketing site: landing, pricing, security/trust page, legal (Terms, Privacy, DPA template), docs, status | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
