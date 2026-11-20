@@ -17,6 +17,7 @@ const key=process.env.SECTALK_STORAGE_TEST_PUBLIC_KEY
 const service=process.env.SECTALK_STORAGE_TEST_SERVICE_KEY
 const admin=createClient(origin,service,{auth:{persistSession:false,autoRefreshToken:false}})
 const bridge=createServer((incoming,outgoing)=>{
+  if (/^\/range\/[A-F0-9]{5}$/.test(incoming.url??'')) return outgoing.writeHead(200,{'Content-Type':'text/plain'}).end('A'.repeat(35)+':1\r\n')
   if (!['/auth/v1/signup','/auth/v1/resend'].includes((incoming.url??'').split('?')[0])) return outgoing.writeHead(404).end()
   const address=new URL(incoming.url.slice('/auth/v1'.length),provider)
   const upstream=relay(address,{method:incoming.method,headers:{...incoming.headers,host:address.host}},response=>{
@@ -28,12 +29,13 @@ const bridge=createServer((incoming,outgoing)=>{
 })
 await new Promise((ready,fail)=>bridge.once('error',fail).listen(0,'127.0.0.1',ready))
 const child=spawn(process.execPath,[resolve('node_modules/next/dist/bin/next'),'dev','--hostname','127.0.0.1','--port','3489'],{
-  cwd:resolve('supabase/.temp/v4-auth-qa/device-commands-app'),stdio:'inherit',
+  cwd:resolve(process.env.SECTALK_ADAPTIVE_SIGNUP_TEST_APP_DIR||'supabase/.temp/v4-auth-qa/device-commands-app'),stdio:'inherit',
   env:{...process.env,NEXT_PUBLIC_SUPABASE_URL:origin,NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:key,
     SECTALK_APP_URL:app,SECTALK_SIGNUP_ADMISSION_SERVICE_KEY:service,
-    SECTALK_AUTH_SIGNUP_UPSTREAM:'http://127.0.0.1:'+bridge.address().port},
+    SECTALK_AUTH_SIGNUP_UPSTREAM:'http://127.0.0.1:'+bridge.address().port,
+    SECTALK_TEST_PASSWORD_RANGE_ORIGIN:'http://127.0.0.1:'+bridge.address().port},
 })
-const suffix=randomUUID().replace(/[0-9-]/g,'')+ 'qa'
+const suffix=randomUUID().replace(/-/g,'').replace(/[0-9]/g,n=>String.fromCharCode(103+Number(n)))
 const ordinary='human_'+suffix+'@example.org'
 const elevated='invited_'+suffix+'@example.org'
 const raw='direct_'+suffix+'@example.org'

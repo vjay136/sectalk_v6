@@ -3,6 +3,7 @@ import {couponCheckoutSnapshot} from '../../../../lib/stripe-coupon'
 import {stripeRenewalSnapshot} from '../../../../lib/stripe-renewal'
 import {stripeSubscriptionSnapshot} from '../../../../lib/stripe-reconciliation'
 import {notificationDrainAuthorized} from '../../../../lib/notification-email-server'
+import {closeWorkspaceSeatSubscriptions} from '../../../../lib/stripe-workspace-seats'
 
 export const runtime = 'nodejs'
 export const maxDuration = 40
@@ -50,6 +51,6 @@ export async function POST(request: Request) {
     if (session.id===lease.provider_session && snapshot?.hold===lease.id)
       await store.rpc('st_v7_coupon_probe_finish',{p_session:session.id,p_payload:snapshot})
   }))
-  const [outcomes] = await Promise.all([subscriptions,renewals,discounts])
+  const [outcomes] = await Promise.all([subscriptions,renewals,discounts,closeWorkspaceSeatSubscriptions()])
   return Response.json({processed: outcomes.length, synchronized: outcomes.filter(Boolean).length}, {headers})
 }

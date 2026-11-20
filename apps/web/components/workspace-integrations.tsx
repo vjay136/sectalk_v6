@@ -5,14 +5,29 @@ import { db, formatError } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { StaffMfa } from './staff-mfa'
 import { useFeature } from '../lib/use-feature'
+import { WorkspaceScim } from './workspace-scim'
+import { WorkspaceSsoSettings } from './workspace-sso-settings'
 
+type CredentialTab = 'keys' | 'webhooks'
+type IntegrationTab = CredentialTab | 'sso' | 'scim'
 type Status = 'none' | 'upgrade' | 'mfa' | 'verified'
 type Key = { id: string; label: string; display_prefix: string; scopes: string[]; expires_at: string; revoked_at: string | null }
 type Endpoint = { id: string; label: string; destination: string; topics: string[]; revoked_at: string | null
   deliveries: { id: string; type: string; created_at: string; state: string; attempts: number; status: number | null }[] }
 
-export function WorkspaceIntegrations({workspace}: {workspace: string}) {
-  const [tab, setTab] = useState<'keys' | 'webhooks'>('keys')
+export function WorkspaceIntegrations({workspace, onManageDomains}: {workspace: string; onManageDomains: () => void}) {
+  const [tab, setTab] = useState<IntegrationTab>('keys')
+  return <section aria-label="Workspace integrations">
+    <h2>Integrations</h2>
+    <SectionTabs label="Integration sections" value={tab} onChange={setTab}
+      options={ [['keys','API keys'], ['webhooks','Outbound webhooks'], ['sso','Single sign-on'], ['scim','SCIM']] }/>
+    {tab === 'sso' ? <WorkspaceSsoSettings workspace={workspace} onManageDomains={onManageDomains}/> :
+      tab === 'scim' ? <WorkspaceScim workspace={workspace} onManageDomains={onManageDomains}/> :
+        <WorkspaceIntegrationCredentials key={tab} workspace={workspace} tab={tab}/>}
+  </section>
+}
+
+function WorkspaceIntegrationCredentials({workspace, tab}: {workspace: string; tab: CredentialTab}) {
   const [status, setStatus] = useState<Status | null>(null)
   const [keys, setKeys] = useState<Key[]>([])
   const [webhooks, setWebhooks] = useState<Endpoint[]>([])
@@ -91,16 +106,13 @@ export function WorkspaceIntegrations({workspace}: {workspace: string}) {
   }
 
   if (status === 'mfa') return <StaffMfa refresh={refresh} explanation="Verify your authenticator to manage workspace credentials."/>
-  return <section aria-label="Workspace integrations">
-    <h2>Integrations</h2>
+  return <>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {!status && !error && <p role="status">Checking integration access…</p>}
     {status === 'none' && <p>Integration access is unavailable.</p>}
     {status === 'upgrade' && <p>Workspace APIs and webhooks are available with Team and Enterprise.</p>}
     {status === 'verified' && <>
-      <SectionTabs label="Integration sections" value={tab} onChange={value => { setTab(value); setRevealed(''); setRevoke(null) }}
-        options={ [['keys','API keys'], ['webhooks','Outbound webhooks']] }/>
       {revealed && <div className="release-board-item">
         <p>Copy this credential now. The app shows it once.</p>
         <code style={{ overflowWrap: 'anywhere' }}>{revealed}</code>
@@ -155,5 +167,5 @@ export function WorkspaceIntegrations({workspace}: {workspace: string}) {
           <button type="button" className="secondary" disabled={busy} onClick={() => setRevoke(null)}>Cancel</button></div>
       </div>}
     </>}
-  </section>
+  </>
 }

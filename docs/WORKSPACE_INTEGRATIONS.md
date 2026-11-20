@@ -1,6 +1,8 @@
 # Workspace integrations
 
-Team and Enterprise owners open **Workspaces → Integrations** and verify their authenticator. API keys and webhook secrets appear once after creation. Owners can revoke credentials from the same screen. A change of owner, loss of plan eligibility, or account restriction stops access.
+Owners open **Workspaces → Integrations** and verify their authenticator. Team and Enterprise workspaces have **API keys** and **Outbound webhooks**. API keys and webhook secrets appear once after creation. Owners can revoke credentials from the same screen. A change of owner, loss of plan eligibility, or account restriction stops access.
+
+Enterprise workspaces also have [Single sign-on](workspace-sso.md) and [SCIM](workspace-scim.md). Start domain verification under **Organization settings**.
 
 ## REST API
 

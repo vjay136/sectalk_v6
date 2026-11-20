@@ -201,11 +201,21 @@
 | P9 | Apply versioned promotion codes in hosted checkout | Edge, local Stripe and SQL verified fixed and percentage terms, bounded redemption, no stacking, signed expiry, paid settlement and reconciliation |
 | P5 | Upload and receive browser-encrypted group attachments | Edge and SQL verified two approved browsers, outsider and signed-link denial, content authentication, native quota and atomic publication |
 | P5 | Transfer encrypted group history to an approved browser | Edge and SQL verified native step-up, source signature, actual receiver decryption and scope and replay protection |
+| P9 | Preview and apply Stripe subscription plan changes | Edge, SQL and local Stripe contracts verified proration, paid settlement, schedule retries and recovery without duplicate changes |
+| P9 | Purchase and manage paid workspace seats | Edge, SQL and local Stripe contracts verified invitation approvals, paid true-up, signed renewal, capacity and recurring closure |
+| P3 | Screen new signup passwords and store salted Argon2id verifiers | Edge, native Auth and Mailpit verified padded prefix-only screening, direct native bypass denial, confirmation, password sign-in and recovery OTP |
+| P4 | Provision Enterprise directory membership with SCIM | Edge, Mailpit and SQL verified preprovisioning, separate exact verified-identity claim, groups, controlled credential rotation and immediate deprovisioning |
+| P9 | Make authorized workspace invoice adjustments | Edge, SQL and local Stripe verified refunds, credits and reductions, exact limits, native step-up, auditable retries and signed completion |
+| P10 | Consolidate API keys, webhooks, SSO and SCIM under Integrations | Edge and native APIs verified four scoped subtabs, delivery logs, native SAML and SCIM, and denial for ordinary administrators and outsiders |
+| P9 | Route supported INR offers through hosted Razorpay checkout | Edge, SQL and signed provider contracts verified exclusive provider selection and paid activation only after an exact captured payment |
+| P9 | Accept and reconcile custom Enterprise orders | Edge and SQL verified annual quotes, purchase orders, owner acceptance, downloadable manual invoices, payment reconciliation and restricted commercial access |
+| P4 | Provide personal settings, download and deletion controls | Edge and SQL verified appearance, motion, personal settings and search export, scoped dependency status, cancellation and eligible Auth and session deletion |
+| P9 | Calculate and display taxes for eligible billing offers | Edge and SQL verified GSTIN and place-of-supply, inclusive and exclusive pricing, Stripe-backed tax and exact finalized invoice totals |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-This local checkpoint covers 217 verified features and 22 pending. The next checkpoint is due at 227 verified features.
+This local checkpoint covers 227 verified features and 12 pending. The next checkpoint is due at 237 verified features.
 
 ## Remaining work by dependency
 

@@ -22,7 +22,7 @@ export const roles={
 
 export const permissions={
   'account.sign_in':'Native credential proof and optional gateway rate admission.',
-  'account.sign_up':'Native signup with optional configured anonymous admission and proof.',
+  'account.sign_up':'Application admission and one-time proof, then native Auth and mail confirmation.',
   'account.device.manage':'Native device session and verified proof of key possession.',
   'account.device.command':'Recipient device proof or one-use command acknowledgment.',
   'account.notification.manage':'Authenticated recipient and current preferences.',
@@ -70,7 +70,7 @@ export const permissions={
   'billing.workspace.delegate':'Workspace owner with fresh billing proof; eligible members only.',
   'billing.checkout':'Own subscription, current identity and fresh native proof.',
   'billing.trial':'Current workspace owner. Starting a trial requires fresh native proof and the tenant’s unused eligibility.',
-  'billing.invoice.refund':'Pending. No refund mutation is authorized by this catalog.',
+  'billing.invoice.refund':'Explicit workspace billing authority, owned invoice scope and fresh native proof.',
   'soc.queue.read':'Verified authorized platform moderation staff.',
   'soc.action.quarantine':'Pending. Automatic scanner quarantine has its own policy.',
   'soc.siem.export':'Enterprise workspace owner with fresh native MFA.',
@@ -83,10 +83,6 @@ export const permissions={
 }
 
 export const pendingPermissionRoles={
-  'billing.invoice.refund':{
-    roles:['owner','billing_admin'],
-    surface:'No invoice refund action is available. The refund workflow is pending.',
-  },
   'soc.action.quarantine':{
     roles:['soc_lead'],
     surface:'No standalone SOC quarantine action is available. Existing upload scanner quarantine uses a separate service policy.',
@@ -108,12 +104,14 @@ account('account/devices/reputation-link','POST','account.device.manage','getUse
 publicly('audit/export','GET','Ed25519 public verification key only.')
 account('audit/export','POST','audit.log.export','getUser','rpc:st_v7_sensitive_action_status','rpc:st_v6_record_audit_export')
 credential('auth/sign-in','account.sign_in','admit','signInWithPassword')
-credential('auth/sign-up','account.sign_up','rpc:st_v7_signup_admission','signUp','resend')
+credential('auth/sign-up','account.sign_up','rpc:st_v7_signup_admission','rpc:st_v8_consume_password_signup_permit','createUser','resend')
+credential('auth/workspace-sso','account.sign_in','rpc:st_v7_workspace_sso_begin','rpc:st_v7_workspace_sso_claim','rpc:st_v7_workspace_sso_finish')
 account('billing/action','POST','billing.checkout','billingIdentity','rpc:st_v7_sensitive_action_status')
 account('billing/invoices','GET','billing.invoice.read','billingIdentity','rpc:st_v7_current_session_valid','rpc:st_v7_billing_admin_view','readInvoiceTicket','rpc:st_v7_pin_stripe_invoice')
 account('billing/workspace','GET','billing.workspace.read','billingIdentity','rpc:st_v7_billing_admin_view','rpc:st_v7_billing_admin_provider_scope')
+account('billing/workspace','POST','billing.checkout,billing.invoice.refund','billingIdentity','workspaceSeatAction','invoiceAdjustmentAction')
 publicly('billing/catalog','GET','Published pricing only.')
-signed('billing/webhook','POST','Stripe raw body signature and durable receipt.','constructEvent','rpc:st_v7_stripe_claim','rpc:st_v7_stripe_finish')
+signed('billing/webhook','POST','Stripe or Razorpay raw body signature and durable receipt.','constructEvent','rpc:st_v7_stripe_claim','rpc:st_v7_stripe_finish','razorpayWebhook')
 signed('billing/reconcile','POST','Private Stripe reconciliation worker bearer.','notificationDrainAuthorized','rpc:st_v7_stripe_reconcile_claim','rpc:st_v7_stripe_reconcile_finish','rpc:st_v7_renewal_probe_claim','rpc:st_v7_renewal_probe_finish')
 signed('billing/renewal-mail','POST','Private transactional renewal mail worker bearer.','notificationDrainAuthorized','rpc:st_v7_renewal_mail_claim','rpc:st_v7_renewal_mail_confirm','rpc:st_v7_renewal_mail_finish')
 account('compliance-exports/[caseId]','GET,POST','compliance.export.download','operationalReportViewer','rpc:st_v7_begin_compliance_operation')
@@ -178,6 +176,7 @@ account('siem','POST','soc.siem.export','operationalReportViewer','rpc:st_v7_sie
 signed('siem/drain','POST','Private SIEM worker bearer.','notificationDrainAuthorized','rpc:st_v7_siem_claim','rpc:st_v7_siem_finish')
 publicly('status','GET','Read-only status.')
 capability('v1/[resource]','GET','workspace.read_api','apiKeyHash','rpc:st_v6_integration_read')
+capability('scim/v2/[...resource]','GET,POST,PATCH,PUT,DELETE','integration.key.manage','createHash','rpc:st_v8_scim_request')
 account('voice-notes','GET','file.download','getUser','rpc:st_v6_voice_note_command')
 account('voice-notes','POST','file.upload','getUser','rpc:st_v6_voice_note_command')
 signed('workspace-files/maintenance','POST','Private cleanup bearer.','timingSafeEqual')

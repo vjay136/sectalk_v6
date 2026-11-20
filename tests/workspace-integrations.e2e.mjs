@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createClient } from '@supabase/supabase-js'
+import { fixtureAuthenticator } from './workspace-admin-fixture.mjs'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const dbUrl = new URL(process.env.SECTALK_STORAGE_TEST_URL)
@@ -64,7 +65,7 @@ async function user(label, plan) {
   const name = 'API workspace ' + label + ' ' + suffix
   const workspace = data(await client.rpc('st_v2_create_workspace', { p_name: name }))
   workspaces.push(workspace)
-  return { email, client, session, workspace, name }
+  return { id: user.id, email, client, session, workspace, name }
 }
 async function room(person, name, visibility) {
   const id = randomUUID()
@@ -78,7 +79,8 @@ const drain = () => fetch(new URL('/api/integrations/webhooks/drain', app), { me
 const api = (resource, key) => fetch(new URL('/api/v1/' + resource, app), { headers: key ? { Authorization: 'Bearer ' + key } : {} })
 
 try {
-  const [owner, outsider] = await Promise.all([user('team', 'business'), user('free')])
+  const [owner, outsider, delegate] = await Promise.all([user('team', 'business'), user('free'), user('delegate')])
+  sql(`insert into public.st_v2_members(workspace_id,user_id,role) values('${owner.workspace}','${delegate.id}','admin');`)
   const privateRoom = await room(owner, 'Sensitive fixture', 'private')
   const foreignRoom = await room(outsider, 'Foreign fixture', 'public')
   const ownRoom = await room(owner, 'Discoverable fixture', 'public')
@@ -86,6 +88,33 @@ try {
   assert.equal((await outsider.client.rpc('st_v6_integration_access', { p_workspace: outsider.workspace })).data, 'upgrade')
   assert.equal((await outsider.client.rpc('st_v6_integration_key_list', { p_workspace: owner.workspace })).error?.code, '42501')
   assert.equal((await api('workspace')).status, 401)
+  async function assertDenied(actor, token) {
+    const workspace = { p_workspace: owner.workspace }
+    for (const rpc of ['st_v7_workspace_sso_settings','st_v8_scim_settings']) {
+      assert.equal(data(await actor.client.rpc(rpc,workspace)).access,'none')
+    }
+    for (const category of ['keys','webhooks']) {
+      const denied = await fetch(new URL('/api/integrations/'+category,app),{
+        method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+        body:JSON.stringify({workspace:owner.workspace,action:'revoke',key:randomUUID(),endpoint:randomUUID()}),
+      })
+      assert.equal(denied.status,403)
+    }
+  }
+  await assertDenied(outsider,outsider.session.access_token)
+
+  const adminPage = await browser.newPage()
+  await adminPage.goto(new URL('/#account',app).href,{waitUntil:'domcontentloaded'})
+  await adminPage.getByLabel('Email address',{exact:true}).fill(delegate.email)
+  await adminPage.getByLabel('Password',{exact:true}).fill(password)
+  await adminPage.locator('button.submit-auth').click()
+  await button(adminPage.getByRole('navigation',{name:'SecTalk features'}),'Workspaces').click()
+  await adminPage.getByRole('combobox',{name:/Active workspace/}).selectOption(owner.workspace)
+  await adminPage.getByRole('heading',{name:owner.name,exact:true}).waitFor()
+  assert.equal(await button(adminPage,'Integrations').count(),0)
+  await fixtureAuthenticator(delegate.client)
+  const assuredAdmin = data(await delegate.client.auth.getSession()).session
+  await assertDenied(delegate,assuredAdmin.access_token)
 
   const page = await browser.newPage()
   await page.goto(new URL('/#account', app).href, { waitUntil: 'domcontentloaded', timeout: 90000 })
@@ -99,6 +128,13 @@ try {
   await page.getByLabel('Authenticator code').fill(code((await page.locator('.mfa-setup code').textContent()).trim()))
   await button(page, 'Verify access').click()
   const area = page.getByRole('region', { name: 'Workspace integrations' })
+  await area.getByLabel('Label', { exact: true }).waitFor()
+  await button(area,'Single sign-on').click()
+  await area.getByText('Enterprise SSO requires an Enterprise workspace.',{exact:true}).waitFor()
+  await button(area,'SCIM').click()
+  await area.getByText('An Enterprise workspace is required to issue a provisioning token.',{exact:true}).waitFor()
+  assert.equal(await button(area,'Create provisioning token').count(),0)
+  await button(area,'API keys').click()
   await area.getByLabel('Label', { exact: true }).fill('Automation fixture')
   await area.getByLabel('Read discoverable rooms').check()
   const generated = page.waitForResponse(response => response.url().endsWith('/api/integrations/keys') && response.status() === 201)

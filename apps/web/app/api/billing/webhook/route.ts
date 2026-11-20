@@ -5,6 +5,9 @@ import { billingWriter, stripe, stripeLiveMode, webhookSecret } from '../../../.
 import { stripeBillingUuid, stripeSubscriptionSnapshot } from '../../../../lib/stripe-reconciliation'
 import { couponCheckoutSnapshot } from '../../../../lib/stripe-coupon'
 import { stripeRenewalSnapshot } from '../../../../lib/stripe-renewal'
+import { renewWorkspaceSeats } from '../../../../lib/stripe-workspace-seats'
+import { reconcileInvoiceAdjustmentEvent } from '../../../../lib/stripe-invoice-adjustments'
+import { razorpayWebhook } from '../../../../lib/razorpay-billing'
 import { readBoundedBody } from '../../../../lib/request-body'
 
 export const runtime = 'nodejs'
@@ -13,6 +16,11 @@ const reply = (status: number) => new Response(null, {status, headers})
 const id = /^(?:evt|sub|cs|seti|in)_[a-zA-Z0-9_]{1,100}$/
 
 async function handlePost(request: Request) {
+  const razorpaySignature=request.headers.get('X-Razorpay-Signature')
+  if (razorpaySignature!==null) {
+    if (request.headers.has('Stripe-Signature')) return reply(400)
+    return razorpayWebhook(request,razorpaySignature)
+  }
   if (!stripe || !webhookSecret || !billingWriter) return reply(503)
   const signature = request.headers.get('Stripe-Signature')
   if (!signature) return reply(400)
@@ -29,6 +37,8 @@ async function handlePost(request: Request) {
   const data = event.data?.object
   if (!data || typeof data !== 'object' || event.account
     || (typeof event.livemode === 'boolean' && event.livemode !== stripeLiveMode)) return reply(400)
+  const adjustmentStatus=await reconcileInvoiceAdjustmentEvent(event.type,'id' in data?data.id:null)
+  if (adjustmentStatus!==null) return reply(adjustmentStatus)
   let kind: 'subscription' | 'subscription_deleted' | 'trial' | 'invoice_renewal' | 'coupon_checkout'
   let reservation: string | undefined
   let trial: Stripe.Checkout.Session | undefined
@@ -61,6 +71,8 @@ async function handlePost(request: Request) {
       break
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
+    case 'customer.subscription.pending_update_applied':
+    case 'customer.subscription.pending_update_expired':
     case 'customer.subscription.paused':
     case 'customer.subscription.resumed':
       kind = 'subscription'
@@ -119,6 +131,12 @@ async function handlePost(request: Request) {
       let providerSubscription = null
       if (renewal) {
         const current = await stripe.subscriptions.retrieve(renewal.subscription)
+        const seatRenewal=await renewWorkspaceSeats(current,renewal.stage==='paid'&&current.id===renewal.subscription
+          && (typeof current.customer==='string'?current.customer:current.customer.id)===renewal.customer?invoice.id:null)
+        if (seatRenewal!==null) {
+          const result=await finish(seatRenewal?'ignore':'retry')
+          return reply(seatRenewal&&!result.error&&result.data===true?204:503)
+        }
         const snapshot = stripeSubscriptionSnapshot(current)
         if (snapshot?.customer === renewal.customer && snapshot.subscription === renewal.subscription) providerSubscription = snapshot
       }
@@ -130,6 +148,11 @@ async function handlePost(request: Request) {
     }
     const subscription = await stripe.subscriptions.retrieve(resource)
     if (subscription.id !== resource) throw new Error('Subscription identity changed')
+    const seatRenewal=await renewWorkspaceSeats(subscription)
+    if (seatRenewal!==null) {
+      const result=await finish(seatRenewal?'ignore':'retry')
+      return reply(seatRenewal&&!result.error&&result.data===true?204:503)
+    }
     const snapshot = stripeSubscriptionSnapshot(subscription)
     const result = await finish(snapshot ? 'apply' : 'ignore', snapshot ?? undefined)
     if (!result.error && result.data === true) return reply(204)

@@ -41,6 +41,21 @@ export async function GET(request: Request) {
   if (!linked) return ticket || cursor ? fail(404) : Response.json({invoices:[],next:null},{headers})
   const fixed = linked
   const scopeKey = scope ?? 'account'
+  const labels=new Map<string,Promise<string|undefined>>()
+  async function taxLabels(invoice:InvoiceDocument) {
+    for (const tax of invoice.taxes??[]) {
+      const rate=tax.rate
+      if (!rate || !/^txr_[A-Za-z0-9_]{3,96}$/.test(rate)) continue
+      if (!labels.has(rate) && labels.size<12) labels.set(rate,provider.taxRates.retrieve(rate).then(result=>{
+        return result.id===rate&&result.livemode===stripeLiveMode&&/^[A-Za-z][A-Za-z0-9 -]{1,30}$/.test(result.display_name)
+          ?result.display_name:undefined
+      }).catch(()=>undefined))
+    }
+    await Promise.all((invoice.taxes??[]).map(async tax=>{
+      if (tax.rate) tax.label=await labels.get(tax.rate)
+      delete tax.rate
+    }))
+  }
   function refreshed(current: InvoiceBinding | null) {
     return current?.customer === fixed.customer && current.subscription === fixed.subscription
   }
@@ -56,8 +71,9 @@ export async function GET(request: Request) {
       if (cursor || !grant || grant.kind === 'page') return fail(404)
       const returned = await provider.invoices.retrieve(grant.id)
       if (returned.id !== grant.id) return fail(404)
-      const invoice = finalizedInvoice(returned,fixed)
+      const invoice = finalizedInvoice(returned,fixed,scope===null)
       if (!invoice || (grant.kind === 'receipt' && !invoice.paid_at) || !await pin(invoice)) return fail(404)
+      await taxLabels(invoice)
       const pdf = await invoicePdf(invoice,grant.kind === 'receipt')
       if (!refreshed(await binding().catch(()=>null))) return fail(403)
       if (request.headers.get('Accept') === 'application/octet-stream') {
@@ -72,8 +88,12 @@ export async function GET(request: Request) {
     const result = await provider.invoices.list({customer:fixed.customer,subscription:fixed.subscription,limit:20,
       ...(page ? {starting_after:page.id} : {})})
     const pageInvoices = result.data.slice(0,20)
-    const candidates = pageInvoices.map(invoice=>finalizedInvoice(invoice,fixed)).filter(invoice=>invoice!==null)
-    const accepted = await Promise.all(candidates.map(async invoice => await pin(invoice) ? invoice : null))
+    const candidates = pageInvoices.map(invoice=>finalizedInvoice(invoice,fixed,scope===null)).filter(invoice=>invoice!==null)
+    const accepted = await Promise.all(candidates.map(async invoice => {
+      if (!await pin(invoice)) return null
+      await taxLabels(invoice)
+      return invoice
+    }))
     if (!refreshed(await binding().catch(()=>null))) return fail(403)
     const invoices = accepted.filter(invoice=>invoice!==null).map(({id,...fields})=>({...fields,
       invoice_ticket:issueInvoiceTicket(id,'invoice',actor.user.id,scopeKey,fixed,secret),

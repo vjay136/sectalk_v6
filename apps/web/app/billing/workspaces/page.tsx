@@ -3,6 +3,9 @@
 import {useEffect, useState} from 'react'
 import {db} from '../../../lib/data'
 import {useSensitiveAction} from '../../../components/sensitive-action'
+import {WorkspaceSeats} from '../../../components/workspace-seats'
+import {WorkspaceInvoiceAdjustments} from '../../../components/workspace-invoice-adjustments'
+import {WorkspaceEnterpriseOrders} from '../../../components/workspace-enterprise-orders'
 import {formatBillingAmount, isBillingCurrency} from '../../../lib/billing'
 
 type Scope = {id: string; name: string; manages: boolean; delegated: boolean}
@@ -37,8 +40,17 @@ export default function WorkspaceBilling() {
   useEffect(() => {
     if (!db) {setScopes([]); return}
     const controller = new AbortController()
-    void db.rpc('st_v7_billing_admin_view').abortSignal(controller.signal).then(result => {
-      if (!controller.signal.aborted) setScopes(result.error ? [] : result.data)
+    void Promise.all([
+      db.rpc('st_v7_billing_admin_view').abortSignal(controller.signal),
+      db.rpc('st_v8_enterprise_billing_workspaces').abortSignal(controller.signal),
+    ]).then(([billing,commercial]) => {
+      if (controller.signal.aborted) return
+      const merged=new Map<string,Scope>()
+      for(const scope of (billing.data||[]) as Scope[])merged.set(scope.id,scope)
+      for(const scope of (commercial.data||[]) as {id:string;name:string}[]) {
+        if(!merged.has(scope.id))merged.set(scope.id,{...scope,manages:false,delegated:false})
+      }
+      setScopes([...merged.values()].sort((a,b)=>a.name.localeCompare(b.name)))
     })
     return () => controller.abort()
   }, [])
@@ -96,7 +108,7 @@ export default function WorkspaceBilling() {
     <a href="/?billing=workspace">Back to Billing</a>
     <h1>Workspace billing</h1>
     {scopes === null && <p role="status">Loading workspaces…</p>}
-    {scopes?.length === 0 && <p role="status">Sign in as a workspace owner or delegated billing administrator.</p>}
+    {scopes?.length === 0 && <p role="status">Sign in as a workspace owner, billing administrator, or commercial operator.</p>}
     {Boolean(scopes?.length) && <>
       <label htmlFor="billing-scope">Workspace</label>
       <select id="billing-scope" value={workspace} disabled={busy} onChange={event => {
@@ -109,6 +121,9 @@ export default function WorkspaceBilling() {
         {scopes?.map(scope => <option key={scope.id} value={scope.id}>{scope.name}</option>)}
       </select>
     </>}
+    {selected&&(selected.manages||selected.delegated)&&<WorkspaceSeats key={selected.id} workspace={selected.id}/>}
+    {selected&&<WorkspaceEnterpriseOrders key={'enterprise-'+selected.id} workspace={selected.id} name={selected.name}/>}
+    {selected?.delegated&&<WorkspaceInvoiceAdjustments key={'adjustments-'+selected.id} workspace={selected.id}/>}
     {selected?.manages && <section aria-label="Billing administrator access" className="panel release-panel">
       <h2>Billing administrator access</h2>
       <p>A billing administrator can see this workspace’s plan, seats and usage, and a summary of invoices from your linked subscription.</p>

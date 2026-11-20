@@ -1,9 +1,12 @@
 import { withOperationalMetrics } from '../../../../lib/operational-metrics-server'
 import { billingIdentity, billingWriter, catalogPriceId, origin, stripe, stripeLiveMode } from '../../../../lib/stripe-server'
+import { changeBillingPlan } from '../../../../lib/stripe-plan-change'
 import { launchBillingPortal } from '../../../../lib/stripe-portal'
 import { readBoundedText } from '../../../../lib/request-body'
 import { couponCodePattern, matchesCoupon, type CouponQuote } from '../../../../lib/stripe-coupon'
 import { isBillingCurrency, isPaidPlan } from '../../../../lib/billing'
+import { razorpayCheckout } from '../../../../lib/razorpay-billing'
+import { billingTaxAction,billingTaxConfigured,taxCheckoutBinding,taxCustomer } from '../../../../lib/stripe-billing-tax'
 
 async function handlePost(request: Request) {
   const identity = await billingIdentity(request)
@@ -11,15 +14,20 @@ async function handlePost(request: Request) {
   const { user, client } = identity
   const proof=await client.rpc('st_v7_sensitive_action_status',{p_kind:'billing'})
   if (proof.error || proof.data!=='verified') return Response.json({error:'Verify your current sign-in to continue to billing.'},{status:403})
-  if (!stripe || !origin || !billingWriter) return Response.json({ error: 'Payment checkout is unavailable on this deployment.' }, { status: 503 })
   let payload
   try {
     const body=await readBoundedText(request,4096)
     if (body===undefined) return Response.json({error:'Billing request is too large.'},{status:413})
     payload=body?JSON.parse(body):null
   } catch {return Response.json({error:'Invalid billing request.'},{status:400})}
+  if (payload?.action==='razorpay_checkout'&&billingTaxConfigured())
+    return Response.json({error:'This store uses tax-quoted Stripe checkout.'},{status:422})
+  if (payload?.action==='razorpay_checkout'||payload?.action==='razorpay_status') return razorpayCheckout(user.id,payload)
+  if (['tax_profile','tax_preview'].includes(payload?.action)) return billingTaxAction(user.id,payload)
+  if (!stripe || !origin || !billingWriter) return Response.json({ error: 'Payment checkout is unavailable on this deployment.' }, { status: 503 })
   if (payload?.action==='portal') return launchBillingPortal(identity,payload.purpose)
-  const { data: subscription, error } = await client.from('st_v2_subscriptions').select('customer_id,status').eq('user_id', user.id).maybeSingle()
+  if (payload?.action==='plan_change') return changeBillingPlan(identity,payload)
+  const { data: subscription, error } = await client.from('st_v2_subscriptions').select('customer_id,status,subscription_id,period_end').eq('user_id', user.id).maybeSingle()
   if (error) return Response.json({ error: 'Could not load your subscription.' }, { status: 503 })
   try {
     if (payload?.action !== 'checkout' || !isPaidPlan(payload.plan) || (payload.cadence !== 'monthly' && payload.cadence !== 'annual')
@@ -28,7 +36,8 @@ async function handlePost(request: Request) {
     }
     const selected = await catalogPriceId(payload.plan, payload.cadence, payload.currency, payload.version)
     if (!selected) return Response.json({ error: 'This offer has changed or is unavailable. Refresh the plans and try again.' }, { status: 422 })
-    if (subscription && !['canceled','incomplete_expired','unpaid'].includes(subscription.status)) {
+    if (subscription && !['canceled','incomplete_expired','unpaid'].includes(subscription.status) &&
+      !(subscription.subscription_id?.startsWith('rzp_sub_') && Date.parse(subscription.period_end??'')<=Date.now())) {
       return Response.json({ error: 'Manage your existing subscription in the billing portal.' }, { status: 409 })
     }
 
@@ -44,6 +53,11 @@ async function handlePost(request: Request) {
       return Response.json({error:'Enter a valid coupon code.'},{status:400})
     }
     const code=payload.coupon?.trim().toUpperCase() || null
+    const taxEnabled=billingTaxConfigured()
+    if (taxEnabled&&code) return Response.json({error:'Coupons are unavailable with tax-quoted checkout.'},{status:422})
+    const tax=taxEnabled?await taxCheckoutBinding(user.id,payload.taxQuote,selected.id):null
+    if (taxEnabled&&(!tax||tax.estimate.base!==providerPrice.unit_amount||tax.estimate.behavior!==providerPrice.tax_behavior))
+      return Response.json({error:'Review your tax estimate before continuing to checkout.'},{status:409})
     let terms:CouponQuote|null=null
     if(code!==null) {
       if(!couponCodePattern.test(code)) return Response.json({error:'Enter a valid coupon code.'},{status:400})
@@ -57,16 +71,22 @@ async function handlePost(request: Request) {
       p_account:user.id,p_price:selected.id,p_code:code,p_revision:terms?.revision??null,p_plan:payload.plan,p_currency:payload.currency,
     })
     if (reserveError || !lease?.id) return Response.json({ error: 'An open checkout already exists for another plan. Try again after it expires.' }, { status: 409 })
+    const confirmedTax=tax?await taxCheckoutBinding(user.id,tax.id,selected.id,lease.id):null
+    if (tax&&!confirmedTax) return Response.json({error:'Your tax profile changed or this checkout is already reserved.'},{status:409})
+    const customer=confirmedTax?await taxCustomer(confirmedTax,user.email,subscription?.customer_id,lease.id):subscription?.customer_id
     const session = lease.session ? await stripe.checkout.sessions.retrieve(lease.session) : await stripe.checkout.sessions.create({
       mode: 'subscription',
       currency: payload.currency.toLowerCase(),
       adaptive_pricing: { enabled: false },
       client_reference_id: user.id,
-      ...(subscription?.customer_id ? { customer: subscription.customer_id } : { customer_email: user.email }),
-      line_items: [{ price: selected.id, quantity: 1 }],
+      ...(customer ? { customer } : { customer_email: user.email }),
+      line_items: [{ price: selected.id, quantity: 1, ...(tax?.estimate.mode==='gst'?{tax_rates:tax.estimate.rates}:{}) }],
+      ...(tax?.estimate.mode==='automatic'?{automatic_tax:{enabled:true},tax_id_collection:{enabled:true},
+        billing_address_collection:'required',customer_update:{address:'auto',name:'auto'}} as const:{}),
+      ...(tax?.estimate.mode==='gst'?{customer_update:{address:'never',name:'never'}} as const:{}),
       ...(terms ? {discounts:[{coupon:terms.coupon}],payment_method_types:['card'],
         metadata:{sectalk_coupon_hold:lease.id,sectalk_coupon:terms.coupon}} : {allow_promotion_codes:false}),
-      subscription_data: { metadata: { sectalk_user: user.id } },
+      subscription_data: { metadata: { sectalk_user: user.id, ...(tax?{sectalk_tax_quote:tax.id}:{}) } },
       success_url: origin + '/?billing=success',
       cancel_url: origin + '/?billing=cancel',
       expires_at: lease.expires_epoch,

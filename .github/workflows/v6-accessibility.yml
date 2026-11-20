@@ -1,0 +1,63 @@
+name: SecTalk v6 accessibility
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/release-v6.0.0]
+  pull_request:
+    branches: [codex/release-v6.0.0]
+
+permissions:
+  contents: read
+
+jobs:
+  accessible-workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 3.2.0
+      - run: npm ci
+      - name: Install isolated browser tools
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/sectalk-accessibility" --no-save --ignore-scripts --no-audit --no-fund playwright-core@1.65.1 axe-core@4.14.1
+          node "$RUNNER_TEMP/sectalk-accessibility/node_modules/playwright-core/cli.js" install --with-deps chromium
+      - name: Start the disposable Supabase stack
+        run: |
+          set -euo pipefail
+          supabase init
+          supabase start -x imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor >/dev/null
+          local_status="$(supabase status -o json)"
+          api_origin="$(jq -er '.API_URL' <<< "$local_status")"
+          anon_key="$(jq -er '.ANON_KEY' <<< "$local_status")"
+          service_key="$(jq -er '.SERVICE_ROLE_KEY' <<< "$local_status")"
+          test "$api_origin" = 'http://127.0.0.1:54321'
+          printf '::add-mask::%s\n' "$anon_key" "$service_key"
+          {
+            printf 'NEXT_PUBLIC_SUPABASE_URL=%s\nSECTALK_STORAGE_TEST_URL=%s\n' "$api_origin" "$api_origin"
+            printf 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=%s\nSECTALK_STORAGE_TEST_PUBLIC_KEY=%s\n' "$anon_key" "$anon_key"
+            printf 'SECTALK_STORAGE_TEST_SERVICE_KEY=%s\n' "$service_key"
+          } >> "$GITHUB_ENV"
+      - name: Build and check real keyboard and accessibility workflows
+        env:
+          SECTALK_APP_URL: http://127.0.0.1:3484
+          SECTALK_STORAGE_TEST_APP: http://127.0.0.1:3484
+        run: |
+          set -euo pipefail
+          export SECTALK_PLAYWRIGHT_MODULE="$RUNNER_TEMP/sectalk-accessibility/node_modules/playwright-core/index.mjs"
+          export SECTALK_AXE_SCRIPT="$RUNNER_TEMP/sectalk-accessibility/node_modules/axe-core/axe.min.js"
+          npm run build
+          npm run start -w @sectalk/web -- --hostname 127.0.0.1 --port 3484 >"$RUNNER_TEMP/sectalk-accessibility-server.log" 2>&1 &
+          app_process=$!
+          trap 'kill "$app_process" 2>/dev/null || true' EXIT
+          curl --retry 20 --retry-connrefused --retry-delay 1 --fail --silent --show-error "$SECTALK_APP_URL/api/health" >/dev/null
+          node tests/accessibility.e2e.mjs

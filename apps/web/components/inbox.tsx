@@ -41,6 +41,8 @@ import { SavedMessages, setSavedMessage } from './saved-messages'
 import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
 import { AccountMfa } from './account-mfa'
 import { DeviceSessions } from './device-sessions'
+import { AccountAppearance, useAccountAppearance } from './account-appearance'
+import { AccountData } from './account-data'
 import { DeviceRegistry } from './device-registry'
 import { DraftStatus, notifyDraftChange, useSyncedDraft } from './synced-draft'
 import { pendingWorkspaceInvite } from '../lib/workspace-invite'
@@ -60,6 +62,7 @@ type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'|'invisi
 type PresenceSettings = { required: boolean; sharing: boolean }
 
 export function Inbox({ user }: { user: string }) {
+  const accountAppearance = useAccountAppearance(user)
   const { t } = useLocale()
   const {reload:reloadWorkspaces,select:selectWorkspace}=useWorkspaceContext()
   const [profile, setProfile] = useState<Profile | null | undefined>()
@@ -80,7 +83,7 @@ export function Inbox({ user }: { user: string }) {
   const [paletteSearch,setPaletteSearch]=useState({query:'',sequence:0})
   const [chatTasks,setChatTasks]=useState(false)
   const [sourceTask,setSourceTask]=useState<string|null>(null)
-  const [profileTab, setProfileTab] = useState<'account' | 'security' | 'sessions' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help'>('account')
+  const [profileTab, setProfileTab] = useState<'account' | 'security' | 'sessions' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help' | 'appearance' | 'privacy'>('account')
   const [managedBlock,setManagedBlock]=useState<Chat|null>(null)
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
@@ -495,12 +498,18 @@ export function Inbox({ user }: { user: string }) {
       <div className="list-footer"><Avatar name={profile.name} photo={myExtras.photo}/><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
     </aside>
     {tab === 'profile' ? <section className="content-page"><h1>{t('profile')}</h1>
-      <SectionTabs label={t('profileSections')} value={profileTab} onChange={setProfileTab} options={ [['account',t('account')],['security',t('accountSecurity')],['sessions','Devices and sessions'],['availability',t('availability')],['discovery',t('discovery')],['activity',t('activityReports')],['blocked',t('blockedContacts')],['help',t('help')]] }/>
+      <SectionTabs label={t('profileSections')} value={profileTab} onChange={setProfileTab} options={ [['account',t('account')],['security',t('accountSecurity')],['sessions','Devices and sessions'],['availability',t('availability')],['discovery',t('discovery')],['activity',t('activityReports')],['blocked',t('blockedContacts')],['appearance','Appearance'],['privacy','Privacy and data'],['help',t('help')]] }/>
+      <nav className="release-flex" aria-label="Related account settings">
+        <button className="text-button" type="button" onClick={() => setTab('notifications')}>Open notification settings</button>
+        <button className="text-button" type="button" onClick={() => setTab('billing')}>Open billing settings</button>
+      </nav>
       {profileTab === 'account' ? <><div className="profile-handle"><code>@{profile.handle}</code><button className="secondary" onClick={async () => {
         try { await navigator.clipboard.writeText(profile.handle); setNotice('Handle copied.') }
         catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
       }}><Copy size={15} /> Copy handle</button></div>
       <ProfileForm profile={profile} onSave={refresh} /><ProfileAppearance user={user} profile={myExtras}/></> :
+      profileTab==='appearance'?<AccountAppearance settings={accountAppearance}/>:
+      profileTab==='privacy'?<AccountData key={user} user={user}/>:
       profileTab==='security'?<AccountMfa hints={hints}/>:
       profileTab==='sessions'?<><DeviceSessions hints={hints}/><DeviceRegistry hints={hints}/></>:
       profileTab==='discovery'?<DiscoverySettings user={user}/>:

@@ -7,3 +7,11 @@ A delegated billing administrator can open **Billing → Workspace billing** to 
 SecTalk returns recent invoice summaries and subscription payment status for the exact Stripe customer and subscription linked to the owner. The owner's subscription can cover several workspaces, and the grant screen explains that its invoice summaries come from that subscription. The app checks both Stripe identifiers on the request and response. Card details, billing addresses, contact details and hosted invoice URLs stay outside the delegated dashboard.
 
 Stripe currently creates account-wide customer portal sessions. Those sessions remain in the account owner's existing self-service flow. A workspace billing grant does not create a portal session, change a subscription or payment method, issue a refund, or expose another subscription's invoices. Hosted Stripe data and configuration require deployment verification.
+
+## Enterprise contracts
+
+Open **Billing → Workspace billing → Enterprise contracts**. A separately provisioned commercial operator can quote one year of committed seats and custom pricing for an already entitled Enterprise workspace. Provision or revoke the operator for a specific workspace in the private `st_v8_enterprise_billing_operators` table through the deployment's trusted commercial administration process. Workspace ownership and delegated billing access do not confer this permission.
+
+The workspace owner supplies a purchase order reference and accepts the exact quote. An authorized commercial operator can then issue the manual invoice with a due date and record a full offline payment with a reconciliation reference. The scope and recent billing proof are checked on retrieval and on each action. The native ledger records each transition. A repeated identical action preserves the original record, and a workspace cannot accept overlapping commitments.
+
+Download the order form or issued manual invoice from the scoped panel. These documents are local text files using the agreed order totals. This workflow records manual amounts and reconciliation. Tax documents, external delivery, electronic signature, payment collection, and changes to existing entitlements use separate processes.

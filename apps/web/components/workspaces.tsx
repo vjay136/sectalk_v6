@@ -19,6 +19,7 @@ import { FamilyDashboard } from './family-dashboard'
 import { SchoolClasses } from './school-classes'
 import { WorkspaceCustomRoles } from './workspace-custom-roles'
 import { WorkspacePolicies } from './workspace-policies'
+import { PendingDirectoryMembership } from './pending-directory-membership'
 import { WorkspaceAdminOverview } from './workspace-admin-overview'
 import { WorkspaceFiles } from './workspace-files'
 import { WorkspaceIntegrations } from './workspace-integrations'
@@ -145,6 +146,7 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
 
   const {title, description, icon:Icon}=workspaceViews[view]
   return <section className="content-page">
+    {view==='workspaces'&&<PendingDirectoryMembership key={user}/>}
     <header className="content-title"><div className="card-icon"><Icon size={22}/></div><div><h1>{title}</h1><p>{description}</p></div></header>
     {error && <p role="alert" className="error">{error}</p>}
     {view==='workspaces'&&<PendingWorkspaceInvite onJoined={reloadWorkspaces}/>}
@@ -258,7 +260,7 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
     </div>}
     {view==='workspaces' && tab==='board' && <Board space={space.id} manager={manager} />}
     {view==='workspaces' && tab==='files' && <WorkspaceFiles workspace={space.id} owner={role==='owner'} />}
-    {view==='workspaces' && visibleTab==='integrations' && <WorkspaceIntegrations key={space.id} workspace={space.id}/>}
+    {view==='workspaces' && visibleTab==='integrations' && <WorkspaceIntegrations key={space.id} workspace={space.id} onManageDomains={()=>setTab('organization')}/>}
     {view==='workspaces' && visibleTab==='file-egress' && <WorkspaceFileEgress key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='policies' && <WorkspacePolicies key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='custom-roles' && <WorkspaceCustomRoles key={space.id} workspace={space.id} members={managedMembers}/>}

@@ -115,12 +115,14 @@ export default function BillingDocuments() {
         <dt>Total</dt><dd>{amount(invoice.total,invoice.currency)}</dd>
         <dt>Amount paid</dt><dd>{amount(invoice.amount_paid,invoice.currency)}</dd>
         <dt>Amount due</dt><dd>{amount(invoice.amount_due,invoice.currency)}</dd>
+        {invoice.company&&<><dt>Legal name</dt><dd>{invoice.company}</dd></>}
+        {invoice.gstin&&<><dt>GSTIN</dt><dd>{invoice.gstin}</dd></>}
       </dl>
       <details>
         <summary>Tax breakdown</summary>
         {invoice.taxes===null ? <p>Stripe did not supply a tax breakdown.</p> :
           invoice.taxes.length===0 ? <p>Stripe reported no tax lines.</p> :
-          <ul>{invoice.taxes.map((tax,index)=><li key={index}>{amount(tax.amount,invoice.currency)} · {tax.behavior} · {tax.reason}
+          <ul>{invoice.taxes.map((tax,index)=><li key={index}>{tax.label&&tax.label+' · '}{amount(tax.amount,invoice.currency)} · {tax.behavior} · {tax.reason}
             {tax.taxable===null ? '' : ' · Taxable amount '+amount(tax.taxable,invoice.currency)}</li>)}</ul>}
       </details>
       <div className="actions">

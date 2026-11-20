@@ -12,6 +12,7 @@ import {pendingWorkspaceInvite} from '../lib/workspace-invite'
 import {solveSignupProof} from '../lib/signup-proof'
 import type { PlainMessageKey } from '../lib/locale'
 import { LanguageSelect, useLocale } from './locale-provider'
+import { WorkspaceSsoSignIn } from './workspace-sso-sign-in'
 
 export function Brand({ compact = false }: { compact?: boolean }) {
   return <div className={'brand' + (compact ? ' compact-brand' : '')}>
@@ -36,6 +37,8 @@ function authMessage(error: { code?: string; status?: number }, step: Step): Pla
   if (step === 'sign-in') return 'invalidSignIn'
   if (error.code === 'over_email_send_rate_limit') return 'emailRateLimit'
   if (error.code === 'weak_password') return 'weakPassword'
+  if (error.code === 'breached_password') return 'breachedPassword'
+  if (error.code === 'password_check_unavailable') return 'passwordCheckUnavailable'
   if (step === 'recover') return 'invalidRecoveryCode'
   if (step === 'new-password') return error.code === 'same_password' ? 'samePassword' : 'passwordUpdateFailed'
   return 'verificationSendFailed'
@@ -148,7 +151,8 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
           }
           if (!response.ok) {
             setSignupChallenge('')
-            throw {status:response.status}
+            const payload=await response.json().catch(()=>null)
+            throw {status:response.status,code:payload?.error}
           }
           go('confirm')
           break
@@ -285,6 +289,7 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
             {t('alreadyVerified')} <button className="text-button" type="button" disabled={busy} onClick={() => go('forgot')}>{t('resetPasswordLink')}</button>.
           </p>}
         </form>
+        {current==='sign-in'&&<WorkspaceSsoSignIn/>}
         <div className="auth-footnote"><Fingerprint size={16} /> {current === 'sign-up' || checkEmail ? t('verificationFootnote') : t('contactsFootnote')}</div>
       </section>
     </section>

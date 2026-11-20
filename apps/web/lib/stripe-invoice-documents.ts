@@ -6,11 +6,12 @@ import {PDFDocument, StandardFonts, rgb} from 'pdf-lib'
 export const invoiceId = /^in_[a-zA-Z0-9_]{1,100}$/
 export const invoiceNumber = /^[A-Z0-9][A-Z0-9-]{0,31}-[0-9]{1,12}$/
 export type InvoiceBinding = {customer: string; subscription: string}
-type TaxLine = {amount: number; taxable: number | null; behavior: string; reason: string}
+type TaxLine = {amount: number; taxable: number | null; behavior: string; reason: string; rate?:string; label?:string}
 export type InvoiceDocument = {
   id: string; number: string; issued_at: string; paid_at: string | null; status: string; currency: string;
   subtotal: number; subtotal_excluding_tax: number | null; total: number; total_excluding_tax: number | null;
   amount_due: number; amount_paid: number; taxes: TaxLine[] | null
+  company?:string; gstin?:string
 }
 type Kind = 'invoice' | 'receipt' | 'page'
 type Ticket = {id: string; kind: Kind; expires: number}
@@ -27,7 +28,7 @@ function providerLabel(value: string) {
   return /^[a-z_]{1,45}$/.test(value) ? value.replaceAll('_', ' ') : 'Unspecified'
 }
 
-export function finalizedInvoice(invoice: Stripe.Invoice, binding: InvoiceBinding): InvoiceDocument | null {
+export function finalizedInvoice(invoice: Stripe.Invoice, binding: InvoiceBinding, includeTaxIdentity=false): InvoiceDocument | null {
   if (!invoiceId.test(invoice.id) || !invoice.number || !invoiceNumber.test(invoice.number)
     || !invoice.status || invoice.status === 'draft' || invoice.livemode !== stripeLiveMode
     || stripeReference(invoice.customer) !== binding.customer
@@ -44,7 +45,16 @@ export function finalizedInvoice(invoice: Stripe.Invoice, binding: InvoiceBindin
     subtotal: invoice.subtotal, subtotal_excluding_tax: invoice.subtotal_excluding_tax, total: invoice.total,
     total_excluding_tax: invoice.total_excluding_tax, amount_due: invoice.amount_due, amount_paid: invoice.amount_paid,
     taxes: taxes?.map(line => ({amount: line.amount, taxable: line.taxable_amount,
-      behavior: providerLabel(line.tax_behavior), reason: providerLabel(line.taxability_reason)})) ?? null}
+      behavior: providerLabel(line.tax_behavior), reason: providerLabel(line.taxability_reason),
+      rate:line.tax_rate_details?.tax_rate})) ?? null,
+    ...(includeTaxIdentity?taxIdentity(invoice):{})}
+}
+
+function taxIdentity(invoice:Stripe.Invoice) {
+  const gstin=invoice.customer_tax_ids?.find(tax=>tax.type==='in_gst')?.value
+  if (typeof gstin!=='string'||!/^[0-9A-Z]{15}$/.test(gstin)) return {}
+  const company=invoice.customer_name?.slice(0,100).replace(/[\p{Cc}\p{Cf}]/gu,'').trim()
+  return {company:company||undefined,gstin}
 }
 
 function signature(payload: string, actor: string, scope: string, binding: InvoiceBinding, secret: string) {
@@ -107,6 +117,16 @@ export async function invoicePdf(invoice: InvoiceDocument, receipt: boolean) {
   line('Invoice status: ' + providerLabel(invoice.status))
   if (invoice.paid_at) line('Payment recorded: ' + invoice.paid_at.slice(0,10) + ' UTC')
   line('Subtotal: ' + money(invoice.subtotal))
+  if (invoice.company) {
+    const company='Legal name: '+invoice.company
+    try {
+      regular.encodeText(company)
+      line(regular.widthOfTextAtSize(company,11)<=516?company:'Legal name: See the finalized provider invoice.')
+    } catch {
+      line('Legal name: See the finalized provider invoice.')
+    }
+  }
+  if (invoice.gstin) line('GSTIN: '+invoice.gstin)
   if (invoice.subtotal_excluding_tax !== null) line('Subtotal excluding tax: ' + money(invoice.subtotal_excluding_tax))
   if (invoice.total_excluding_tax !== null) line('Total excluding tax: ' + money(invoice.total_excluding_tax))
   line('Total: ' + money(invoice.total), true)
@@ -117,7 +137,7 @@ export async function invoicePdf(invoice: InvoiceDocument, receipt: boolean) {
   if (invoice.taxes === null) line('No tax breakdown available from Stripe.')
   else if (!invoice.taxes.length) line('Stripe reported no tax lines.')
   else for (const [index, tax] of invoice.taxes.entries()) {
-    line('Tax ' + (index + 1) + ': ' + money(tax.amount) + ' (' + tax.behavior + ')')
+    line((tax.label??'Tax '+(index+1)) + ': ' + money(tax.amount) + ' (' + tax.behavior + ')')
     line('   ' + tax.reason + (tax.taxable === null ? '' : ' - taxable amount ' + money(tax.taxable)))
   }
   y -= 9

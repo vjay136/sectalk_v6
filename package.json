@@ -6,7 +6,7 @@
     "apps/web"
   ],
   "engines": {
-    "node": "22.x || 24.x"
+    "node": "^24.7.0 || 26.x"
   },
   "scripts": {
     "dev": "npm run dev -w @sectalk/web",

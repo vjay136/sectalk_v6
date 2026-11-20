@@ -1,6 +1,8 @@
 // Requires the local web app, Supabase Auth, Mailpit, and the Playwright browser test library.
 import assert from 'node:assert/strict'
-import { randomBytes } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import { createHash, randomBytes } from 'node:crypto'
+import { createServer } from 'node:http'
 import { setTimeout } from 'node:timers/promises'
 
 const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
@@ -8,10 +10,26 @@ const app = process.env.SECTALK_AUTH_TEST_APP || 'http://127.0.0.1:3484'
 const mail = process.env.SECTALK_AUTH_TEST_MAIL || 'http://127.0.0.1:55324'
 for (const address of [app, mail]) assert.equal(new URL(address).hostname, '127.0.0.1')
 
-const email = 'sectalk-qa-' + randomBytes(8).toString('hex') + '@example.org'
+const qaEmail = tag => `sectalk-${tag}-${randomBytes(10).toString('hex').replace(/[0-9]/g,n=>String.fromCharCode(103+Number(n)))}@example.org`
+const email = qaEmail('mail')
 const original = randomBytes(24).toString('base64url') + '!g5'
 const changed = randomBytes(24).toString('base64url') + '!h6'
 const browser = await chromium.launch({ executablePath: process.env.SECTALK_TEST_BROWSER })
+const fixturePort = process.env.SECTALK_AUTH_TEST_RANGE_PORT
+const passwordDigest = value => createHash('sha1').update(value).digest('hex').toUpperCase()
+let breached
+do breached = randomBytes(24).toString('base64url') + '!w7'
+while (passwordDigest(breached).slice(0,5) === passwordDigest(original).slice(0,5))
+const requests = []
+let providerUnavailable = false
+const range = fixturePort && createServer((request, response) => {
+  requests.push({path:request.url, method:request.method, padding:request.headers['add-padding']})
+  if (providerUnavailable) return response.writeHead(503).end()
+  const membership = request.url === '/range/' + passwordDigest(breached).slice(0,5)
+  const suffix = passwordDigest(membership ? breached : original).slice(5)
+  const realSuffix = suffix === 'A'.repeat(35) ? 'B'.repeat(35) : 'A'.repeat(35)
+  return response.writeHead(200, {'Content-Type':'text/plain'}).end(`${realSuffix}:5\r\n${suffix}:${membership ? 1 : 0}\r\n`)
+})
 
 async function delivered(subjectPart) {
   for (let attempt = 0; attempt < 30; attempt++) {
@@ -38,16 +56,48 @@ async function signIn(page, password, expected) {
 }
 
 try {
+  if (range) await new Promise((resolve,reject)=>{
+    range.once('error',reject)
+    range.listen(Number(fixturePort),'127.0.0.1',resolve)
+  })
   const page = await browser.newPage()
   await page.goto(app + '/#account')
   const disclosure=page.getByRole('link',{name:'Security disclosures',exact:true})
   assert.equal(await disclosure.getAttribute('href'),'/security')
   await page.getByRole('button', { name: 'Create account', exact: true }).click()
+  if (range) {
+    const rejectedAddresses=[]
+    const submit = async (password,status,notice) => {
+      const rejectedAddress=qaEmail('screening')
+      rejectedAddresses.push(rejectedAddress)
+      await page.getByLabel('Email address',{exact:true}).fill(rejectedAddress)
+      await page.getByLabel('Password', {exact:true}).fill(password)
+      await page.getByLabel('Confirm password', {exact:true}).fill(password)
+      const response=page.waitForResponse(result=>result.url().endsWith('/api/auth/sign-up'))
+      await page.locator('button.submit-auth').click()
+      assert.equal((await response).status(),status)
+      await page.getByText(notice,{exact:true}).waitFor()
+    }
+    await submit(breached,422,'This password appeared in a data breach. Choose a different password.')
+    providerUnavailable=true
+    await submit(original,503,'The password check is temporarily unavailable. Try signing up again shortly.')
+    providerUnavailable=false
+    for(const address of rejectedAddresses){
+      const result=await fetch(mail+'/api/v1/search?query='+encodeURIComponent('to:'+address))
+      assert.equal((await result.json()).messages?.length??0,0,'Rejected signups must not send a confirmation email')
+    }
+  }
   await page.getByLabel('Email address', { exact: true }).fill(email)
   await page.getByLabel('Password', { exact: true }).fill(original)
   await page.getByLabel('Confirm password', { exact: true }).fill(original)
   await page.locator('button.submit-auth').click()
   await page.getByRole('heading', { name: 'Check your email' }).waitFor()
+  if (range) {
+    assert.deepEqual(requests,[breached,original,original].map(password=>({
+      method:'GET',path:'/range/'+passwordDigest(password).slice(0,5),padding:'true',
+    })))
+    console.log('Passed browser signup screening, padded prefix privacy, false padding match, and provider outage handling.')
+  }
 
   const signup = await delivered('verify email')
   const link = signup.HTML.match(/href="([^"]*\/auth\/confirm#[^"]+)"/)?.[1]
@@ -65,6 +115,14 @@ try {
   await page.getByRole('heading', { name: 'Your email is verified' }).waitFor()
   await page.getByRole('link', { name: 'Go to SecTalk sign in' }).click()
   await signIn(page, original, 200)
+  const native=process.env.SECTALK_AUTH_TEST_ARGON_DB
+  if(native){
+    assert.match(native,/^supabase_db_(?:v4-auth-qa|v6-c\d+-qa)$/)
+    const format=execFileSync('docker',['exec','-i',native,'psql','-qAXt','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],{
+      input:`select encrypted_password like '$argon2id$%' from auth.users where email='${email}';`,encoding:'utf8',windowsHide:true,
+    }).trim()
+    assert.equal(format,'t','The native stored verifier stays Argon2id through confirmation and password sign-in')
+  }
   await page.getByLabel('Display name', {exact:true}).fill('Auth mail QA')
   await page.getByLabel('Handle', {exact:true}).fill('authqa_' + randomBytes(6).toString('hex'))
   await page.getByRole('button', {name:'Save profile',exact:true}).click()
@@ -103,4 +161,5 @@ try {
   console.log('Passed local signup, passive link preview, replay rejection, immediate recovery OTP, and another device receiving the password alert.')
 } finally {
   await browser.close()
+  if (range?.listening) await new Promise(resolve=>range.close(resolve))
 }

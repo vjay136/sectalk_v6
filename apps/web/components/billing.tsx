@@ -5,14 +5,18 @@ import { CreditCard } from 'lucide-react'
 import { type BillingCurrency, type Cadence, type PaidPlan, type Plan, type PlanEntitlements, type PlanVersion, formatBillingAmount, isBillingCurrency, isPaidPlan, plans } from '../lib/billing'
 import { db } from '../lib/data'
 import { SectionTabs } from './section-tabs'
+import { BillingPlanChange } from './billing-plan-change'
+import { BillingTaxCheckout } from './billing-tax-checkout'
 import {useSensitiveAction} from './sensitive-action'
 import type {PortalPurpose} from '../lib/stripe-portal'
 
 type Renewal = {state:'clear'|'grace'|'expired'; grace_until?:string; retry_at?:string|null}
-type Catalog = { plans: PlanVersion[]; checkoutAvailable: boolean; portalConfigured: boolean }
+type Catalog = { plans: PlanVersion[]; checkoutAvailable: boolean; portalConfigured: boolean;
+  razorpayOffers:{plan:Plan;version:number;cadence:Cadence}[];taxConfigured:boolean }
 type Subscription = {
   plan: Plan; status: string; period_end: string | null; cancel_at_period_end: boolean; customer_id: string | null
   catalog_version: number; billing_currency: string | null; billing_cadence: Cadence | null; billing_amount: number | null
+  subscription_id:string|null
 }
 const labels: Record<string, string> = {
   active: 'Active', trialing: 'Trialing', past_due: 'Payment past due', canceled: 'Canceled', unpaid: 'Unpaid',
@@ -34,10 +38,11 @@ export function Billing({ user }: { user: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [taxPlan,setTaxPlan]=useState<{plan:PaidPlan;version:number}|null>(null)
 
   useEffect(() => {
     const result = new URLSearchParams(window.location.search).get('billing')
-    if (result === 'success') setNotice('Checkout returned. Your plan updates after Stripe confirms the subscription.')
+    if (result === 'success') setNotice('Checkout returned. Your plan updates after the payment provider confirms the subscription.')
     if (result === 'cancel') setNotice('Checkout was canceled.')
     if (result === 'portal-return') setNotice('Stripe changes appear after the billing provider confirms them.')
     const controller = new AbortController()
@@ -56,7 +61,7 @@ export function Billing({ user }: { user: string }) {
       }
     })
     const reload = () => void Promise.all([
-      db!.from('st_v2_subscriptions').select('plan,status,period_end,cancel_at_period_end,customer_id,catalog_version,billing_currency,billing_cadence,billing_amount')
+      db!.from('st_v2_subscriptions').select('plan,status,period_end,cancel_at_period_end,customer_id,catalog_version,billing_currency,billing_cadence,billing_amount,subscription_id')
         .eq('user_id', user).maybeSingle(),
       db!.rpc('st_v6_my_plan_title'),
       db!.rpc('st_v7_my_entitlements'),
@@ -74,7 +79,7 @@ export function Billing({ user }: { user: string }) {
     return () => { controller.abort(); window.clearInterval(poll) }
   }, [user])
 
-  async function start(action: 'checkout' | 'portal', plan?: PaidPlan, version?: number, purpose?:PortalPurpose) {
+  async function start(action: 'checkout' | 'portal' | 'razorpay_checkout', plan?: PaidPlan, version?: number, purpose?:PortalPurpose,taxQuote?:string) {
     if (busy) return
     setBusy(true)
     setError('')
@@ -83,7 +88,8 @@ export function Billing({ user }: { user: string }) {
       const response = await fetch('/api/billing/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token },
-        body: JSON.stringify({ action, plan, cadence, currency, version, purpose, ...(action=== 'checkout' && coupon.trim() ? {coupon:coupon.trim()} : {}) }),
+        body: JSON.stringify({ action, plan, cadence, currency, version, purpose,taxQuote,
+          ...(action=== 'checkout' && !taxQuote && coupon.trim() ? {coupon:coupon.trim()} : {}) }),
       })
       const payload = await response.json()
       if (!response.ok || !payload.url) throw new Error(payload.error || 'The billing request failed.')
@@ -113,6 +119,7 @@ export function Billing({ user }: { user: string }) {
     {view==='subscription'&&<div className="panel release-panel billing-summary">
       <div><span className="pill">Current plan</span><h2>{(currentPlan === 'free' ? null : subscriptionTitle) ?? activeVersion?.title ?? plans.find(plan => plan.id === currentPlan)?.name ?? 'Free'}</h2>
         {status && <p>{status}{subscription?.cancel_at_period_end ? ' · Ends at the end of this billing period' : ''}</p>}
+        {subscription?.subscription_id?.startsWith('rzp_sub_') && <p>Payment provider: Razorpay</p>}
         {currentPlan !== 'free' && subscription && <p>Terms version {subscription.catalog_version}{grandfathered ? ' · Grandfathered' : ''}</p>}
         {currentPlan !== 'free' && subscription?.billing_amount != null && subscription.billing_currency &&
           <p>{formatBillingAmount(subscription.billing_amount, subscription.billing_currency)} per {subscription.billing_cadence === 'annual' ? 'year' : 'month'}</p>}
@@ -130,6 +137,8 @@ export function Billing({ user }: { user: string }) {
       </details>}
       {subscription?.customer_id && catalog && !catalog.portalConfigured && <p>The Stripe billing portal is awaiting configuration.</p>}
     </div>}
+    {view==='subscription' && subscription?.status==='active' && isPaidPlan(currentPlan) && catalog?.checkoutAvailable &&
+      <BillingPlanChange offers={catalog.plans} currentPlan={currentPlan} authorize={authorize}/> }
     {view==='subscription' && renewal && renewal.state!=='clear' && <section className="panel release-panel" aria-label="Renewal payment">
       <h2>Renewal payment needs attention</h2>
       {renewal.grace_until && <p>{renewal.state==='expired' ? 'Grace period ended ' : 'Grace period ends '}
@@ -141,28 +150,37 @@ export function Billing({ user }: { user: string }) {
     {notice && <p role="status" className="release-info">{notice}</p>}
     {error && <p role="alert" className="error">{error}</p>}
     {view==='plans'&&<>{!catalog && !error && <p role="status">Loading available plans…</p>}
-    {catalog && !catalog.checkoutAvailable && <p className="release-info">Paid checkout is awaiting payment-provider configuration.</p>}
+    {catalog && !catalog.checkoutAvailable && !catalog.razorpayOffers.length && <p className="release-info">Paid checkout is awaiting payment-provider configuration.</p>}
     {currencies.length > 0 && <label>Currency <select value={currency} onChange={event => {
       if (isBillingCurrency(event.target.value)) setCurrency(event.target.value)
     }}>{currencies.map(code => <option key={code}>{code}</option>)}</select></label>}
-    {catalog?.checkoutAvailable && currentPlan==='free' && <label>Coupon code (optional)
+    {catalog?.checkoutAvailable && !catalog.taxConfigured && currentPlan==='free' && <label>Coupon code (optional)
       <input value={coupon} maxLength={40} autoComplete="off" onChange={event=>setCoupon(event.target.value)}/>
     </label>}
     <div className="tabs release-tabs billing-interval" aria-label="Billing interval">
       <button aria-pressed={cadence === 'monthly'} className={cadence === 'monthly' ? 'active' : ''} onClick={() => setCadence('monthly')}>Monthly</button>
       <button aria-pressed={cadence === 'annual'} className={cadence === 'annual' ? 'active' : ''} onClick={() => setCadence('annual')}>Annual</button>
     </div>
+    {taxPlan&&catalog?.taxConfigured&&<BillingTaxCheckout key={[taxPlan.plan,cadence,currency].join('-')}
+      offer={{...taxPlan,cadence,currency}} authorize={authorize}
+      start={quote=>start('checkout',taxPlan.plan,taxPlan.version,undefined,quote)} cancel={()=>setTaxPlan(null)}/>}
     <div className="billing-grid">
       {catalog?.plans.map(plan => {
         const id = plan.plan
         const limits = plan.entitlements
         const price = plan.prices.find(option => option.cadence === cadence && option.currency === currency)
         const available = Boolean(price && catalog.checkoutAvailable)
+        const razorpay=currency==='INR'&&catalog.razorpayOffers.some(offer=>offer.plan===id&&offer.version===plan.version&&offer.cadence===cadence)
         return <article key={id} className={'panel release-panel billing-card' + (currentPlan === id ? ' billing-current' : '')}>
           <h2>{plan.title}</h2><p>{plan.description}</p>
           {price?.amount != null && <p>{formatBillingAmount(price.amount, price.currency)} per {cadence === 'annual' ? 'year' : 'month'}</p>}
           {limits && <PlanLimits limits={limits} />}
-          {isPaidPlan(id) && <button disabled={busy || !available || currentPlan !== 'free'} className="primary" onClick={() => void authorize('billing',()=>start('checkout', id, plan.version))}>{currentPlan === id ? 'Current plan' : available ? 'Continue to checkout' : 'Checkout unavailable'}</button>}
+          {isPaidPlan(id) && (!razorpay || available || currentPlan===id) && <button disabled={busy || !available || currentPlan !== 'free'} className="primary"
+            onClick={() => catalog.taxConfigured?setTaxPlan({plan:id,version:plan.version}):void authorize('billing',()=>start('checkout', id, plan.version))}>
+            {currentPlan === id ? 'Current plan' : available ? catalog.taxConfigured?'Review tax and checkout':'Continue to checkout' : 'Checkout unavailable'}
+          </button>}
+          {isPaidPlan(id) && razorpay && currentPlan==='free' && <button type="button" disabled={busy} className="secondary"
+            onClick={()=>void authorize('billing',()=>start('razorpay_checkout',id,plan.version))}>Continue with Razorpay</button>}
           {id === 'enterprise' && <span className="pill">Contract billing</span>}
         </article>
       })}

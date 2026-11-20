@@ -249,7 +249,7 @@ export function GroupChat({user,contacts,openDeviceSettings,hints}:{user:string;
       </form>}
       {view && <><EncryptedGroupSearch key={view.group.id + ':' + view.group.epoch + ':' + view.device + ':' +
           messages.filter(message => message.quarantined).map(message => message.id).join(',')}
-        owner={user} group={view.group.id} device={view.device} /><ol aria-label="Group messages">{messages.map(message => {
+        owner={user} group={view.group.id} device={view.device} /><div role="log" aria-label="Group messages"><ol>{messages.map(message => {
         const received = message.actor !== user && message.text !== null
         const warning = received && message.text ? encryptedMessageWarning(message.text) : null
         return <li key={message.id}><strong>{nameFor(message.actor)}</strong>
@@ -259,7 +259,7 @@ export function GroupChat({user,contacts,openDeviceSettings,hints}:{user:string;
           {warning && <p className="warning">{warning} Checked on this device.</p>}
           {received && message.text && <GroupMessageReport group={view.group.id} message={message.id} text={message.text} />}
         </li>
-      })}</ol>
+      })}</ol></div>
       <MessageFormatting account={user} mode="encrypted"/>
       <form onSubmit={event => { event.preventDefault(); void send() }}><label>Group message
         <textarea value={draft} maxLength={4000} disabled={!ready || busy} onChange={event => setDraft(event.target.value)} />

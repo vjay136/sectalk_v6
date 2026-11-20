@@ -461,6 +461,53 @@ body { background: var(--bg); }
 
 .risk-hint { color: var(--muted); }
 
+/* Account display modes affect the signed-in shell and its dialogs. */
+:root[data-user-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f7fb; --surface: #fff; --raised: #e9f0f7; --line: #62738a;
+  --ink: #101f34; --muted: #42546b; --accent: #004e79; --accent-soft: #dceffc;
+  --peach: #673500; --danger: #891d2b;
+  --theme-control: #fff; --theme-accent-ink: #fff; --theme-on-danger: #fff; --theme-checked: #d2e8f9;
+}
+:root[data-user-theme="high-contrast"] {
+  color-scheme: dark;
+  --bg: #000; --surface: #000; --raised: #141414; --line: #fff;
+  --ink: #fff; --muted: #f0f0f0; --accent: #ffed5a; --accent-soft: #282408;
+  --peach: #ffdd75; --danger: #ffb6bd;
+  --theme-control: #000; --theme-accent-ink: #000; --theme-on-danger: #100000; --theme-checked: #383124;
+}
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) :is(
+  .rail,.inbox-list,.thread-header,.composer,.release-create,.release-board-item,.message-menu-panel,.toast,.call-panel,blockquote) {
+  background: var(--surface); color: var(--ink); border-color: var(--line);
+}
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) :is(.own .bubble,.release-post.release-own,
+  .thread-actions > .icon,.call-history-controls .icon,.reaction-row button[aria-pressed=true],.inline-warning) {
+  background: var(--theme-checked); color: var(--ink);
+}
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) :is(input,textarea,select) {
+  color: var(--ink); background: var(--theme-control); accent-color: var(--accent);
+}
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) .composer textarea { background: transparent; }
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) ::placeholder { color: var(--muted); }
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) :is(.thread-header p,.own .message-meta,.state-reviewing) { color: var(--muted); }
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) :is(.state-open,.warning,.risk-warning) { color: var(--peach); }
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) .risk-hint { color: var(--muted); }
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) :is(.primary,.primary:hover:enabled,a.primary:hover,.brand-icon,.rail-logo,.tiny-logo) {
+  background: var(--accent); color: var(--theme-accent-ink);
+}
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) :is(.danger,.danger:hover:enabled) {
+  background: var(--danger); color: var(--theme-on-danger); border-color: var(--line);
+}
+:root:is([data-user-theme="light"],[data-user-theme="high-contrast"]) .welcome-thread { background: var(--bg); }
+:root[data-user-theme="high-contrast"] :focus-visible { outline-width: 3px; }
+:root[data-user-motion="reduce"] { scroll-behavior: auto !important; }
+:root[data-user-motion="reduce"] *, :root[data-user-motion="reduce"] *::before, :root[data-user-motion="reduce"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: .01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: .01ms !important;
+}
+
 .rich-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .rich-message a, .rich-message-link { color: inherit; text-decoration: underline; text-underline-offset: .15em; }
 .rich-message code { background: var(--raised); color: var(--ink); border-radius: .25em; padding-inline: .2em; }
