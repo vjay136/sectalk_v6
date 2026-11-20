@@ -131,6 +131,10 @@ try {
   await captions(b.page,live,hostLine).waitFor({timeout:45000})
   await captions(a.page,live,guestLine).waitFor({timeout:45000})
   assert.ok(a.uploads.includes(204) && b.uploads.includes(204))
+  const used = data(await host.client.rpc('st_v7_workspace_usage', {p_workspace:workspace}))
+  assert.ok(used.transcription_samples >= 2 * 500)
+  assert.equal(used.recording_ms, 0)
+  assert.equal((await guest.client.rpc('st_v7_workspace_usage', {p_workspace:workspace})).error?.code, '42501')
   assert.equal((await request(outsider,'view')).status,403)
   assert.equal((await fetch(unauthorizedUrl,{method:'PUT',headers:{Authorization:'Bearer '+host.token,
     'Content-Type':'application/octet-stream','X-Microphone-Track':guestMic.sid},body:sample.subarray(44)})).status,403)

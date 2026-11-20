@@ -28,6 +28,7 @@ import { CaseCollaboration, CaseCollaborationAlerts } from './case-collaboration
 import { CaseEscalation, CaseEscalationAssignments } from './case-escalation'
 import { CaseBehaviorPanel } from './case-behavior-panel'
 import { MyRoomReports, RoomReportQueue } from './room-reports'
+import { ChannelReportQueue, MyChannelReports } from './channel-reports'
 import { StaffMfa } from './staff-mfa'
 import { EmergencyNotices } from './emergency-notices'
 import { UrlInspection } from './url-inspection'
@@ -268,11 +269,11 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
         ? <TenantOperations onAccessChanged={refreshTenantStatus}/>
         : <StaffMfa refresh={async () => { await refreshTenantStatus(); await refresh() }}
           explanation="An authenticator code is required to view workspace metadata."/>) :
-      visibleView==='workspace-reports' ? (roomReviewAccess==='verified' ? <RoomReportQueue scope="workspace"/> :
+      visibleView==='workspace-reports' ? (roomReviewAccess==='verified' ? <><RoomReportQueue scope="workspace"/><ChannelReportQueue scope="workspace"/></> :
         <StaffMfa refresh={loadRoomReviewAccess} explanation="Enter a current authenticator code to review eligible workspace reports."/>) :
       visibleView==='queue' ? (staff === 'verified' ? <><QueuePanel linkIncident={incidentAccess ? reportId => {
         setIncidentReport(reportId);setView('incidents')
-      } : undefined} /><RoomReportQueue scope="platform"/></> : <StaffMfa refresh={refresh}/>) :
+      } : undefined} /><RoomReportQueue scope="platform"/><ChannelReportQueue scope="platform"/></> : <StaffMfa refresh={refresh}/>) :
       visibleView==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
         {error&&<p role="alert" className="error">{error}</p>}
         {!notices.length&&<p>No account restriction notices.</p>}
@@ -299,6 +300,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
           <span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/>
         </button>)}
         <MyRoomReports/>
+        <MyChannelReports hints={hints}/>
       </div>}
   </section>
 }

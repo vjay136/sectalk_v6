@@ -12,6 +12,8 @@ Requires Node.js 22 or 24 and npm.
 4. Set `SECTALK_APP_URL` to your local app origin for local testing or the public HTTPS origin for a deployment. In Supabase Auth, enable email signup and **Confirm email**, configure custom SMTP, set Site URL to the same origin, and allow its exact `/auth/confirm` URL. Under **Email Templates**, paste [confirmation.html](supabase/templates/confirmation.html) into **Confirm signup** and [recovery.html](supabase/templates/recovery.html) into **Reset password**. The signup link opens `/auth/confirm` for email verification and displays the sign-in URL. The reset email provides a numeric code.
 5. Run `npm run dev` and visit `http://localhost:3000`.
 
+For a single SQL file, run `node scripts/build-supabase-schema.mjs sectalk-schema.sql` from the release checkout and install it in a fresh Supabase project. The command reports the migration count and SHA-256. Configure Auth, SMTP, templates and other provider credentials in their respective dashboards.
+
 The browser uses the Supabase publishable key and the signed-in user's JWT. Neither Vercel nor the browser requires a Supabase secret key. A replacement Supabase project needs its own schema migration, OTP template, SMTP settings and environment variables. Database state and login sessions stay with the old project. Revoke the previously shared Supabase secret key or delete the disposable project when it is no longer needed.
 
 Existing accounts created with passwordless sign-in can use **Forgot password** to set their first password. The Magic Link template applies to passwordless sign-in only. Supabase hosts auth templates independently from Vercel and the database migration.

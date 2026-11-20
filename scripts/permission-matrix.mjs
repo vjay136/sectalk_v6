@@ -6,15 +6,15 @@ export const roles={
   owner:'Workspace owner; scoped roster, governance, and independently reviewed exports.',
   admin:'Workspace administrator; subordinate member access management and compliance requests.',
   security_admin:'Pending as a distinct delegated workspace role.',
-  billing_admin:'Pending as a distinct delegated workspace role.',
+  billing_admin:'Explicitly delegated workspace billing read access. Workspace owners manage grants after recent verification.',
   compliance_officer:'Pending as a distinct role. Existing compliance exports use separate workspace administrator and owner decisions.',
   soc_lead:'Pending as a distinct global role. Existing case escalation and operation grants remain scoped.',
   soc_analyst:'Pending as a distinct global role. Existing platform staff access does not confer all analyst permissions.',
   moderator:'Scoped to a room. Target hierarchy and room policy apply.',
   member:'Current workspace or room membership with per-record policy checks.',
   guest:'Only the authorized room or meeting under the corresponding guest grant.',
-  managed_member:'Pending. No managed-minor authority inferred from a profile.',
-  'guardian/teacher':'Pending. No oversight authority issued.',
+  managed_member:'Verified Family or School participant with a live, separately accepted scope.',
+  'guardian/teacher':'Explicit, workspace-scoped oversight. Device health and contact controls require current consent.',
   platform_operator:'Assignment specific. Account operators and independent reviewers get different actions.',
   platform_security:'Assignment specific. Native verified staff and explicit queue, case, or evidence authority are checked separately.',
   read_only:'Existing room membership variant. It grants permitted reads only.',
@@ -30,6 +30,8 @@ export const permissions={
   'workspace.member.read':'Active workspace owner or admin with fresh native MFA.',
   'workspace.member.invite':'Active workspace manager, recipient/domain policy and available seat.',
   'workspace.read_api':'Scoped, active API key with current tenant entitlement.',
+  'workspace.organization.manage':'Current workspace owner with fresh native assurance for settings, verified domains and invitation templates.',
+  'workspace.managed_account':'Current Family or School membership and separately accepted, revocable oversight authority.',
   'admin.user.role.write':'Workspace owner with fresh native MFA; target hierarchy still applies.',
   'admin.user.suspend':'Verified workspace owner or admin; admins can act on members only.',
   'audit.log.read':'Workspace owner or admin with current scope.',
@@ -38,6 +40,7 @@ export const permissions={
   'compliance.export.review':'Independent workspace owner with fresh native MFA and live evidence scope.',
   'compliance.export.download':'Requester or reviewer within a live approved case capability and access conditions.',
   'messaging.message.send':'Authorized conversation participants or an eligible room member under current posting policy.',
+  'messaging.message.report':'Current message visibility and explicit evidence consent. Private notes stay within Platform review.',
   'messaging.message.delete_any':'Existing room moderation for eligible scoped posts; no global arbitrary message deletion.',
   'room.member.remove':'Room owner or moderator; target hierarchy and live workspace membership still apply.',
   'room.permission.write':'Eligible room owner or moderator with fresh native proof and the permitted target role.',
@@ -62,6 +65,9 @@ export const permissions={
   'integration.webhook.manage':'Eligible workspace owner, fresh native MFA and plan entitlement.',
   'policy.write':'Existing workspace-owner policy path with fresh MFA; delegated security_admin role pending.',
   'policy.rule.evaluate':'Authenticated workspace operator with current scoped rule access.',
+  'billing.invoice.read':'Linked subscription owner or active billing administrator with invoice-bound signed tickets.',
+  'billing.workspace.read':'Active workspace billing administrator; linked subscription payment status and invoices only.',
+  'billing.workspace.delegate':'Workspace owner with fresh billing proof; eligible members only.',
   'billing.checkout':'Own subscription, current identity and fresh native proof.',
   'billing.trial':'Current workspace owner. Starting a trial requires fresh native proof and the tenant’s unused eligibility.',
   'billing.invoice.refund':'Pending. No refund mutation is authorized by this catalog.',
@@ -79,7 +85,7 @@ export const permissions={
 export const pendingPermissionRoles={
   'billing.invoice.refund':{
     roles:['owner','billing_admin'],
-    surface:'No invoice refund action is available. The delegated billing role and refund workflow are pending.',
+    surface:'No invoice refund action is available. The refund workflow is pending.',
   },
   'soc.action.quarantine':{
     roles:['soc_lead'],
@@ -104,8 +110,11 @@ account('audit/export','POST','audit.log.export','getUser','rpc:st_v7_sensitive_
 credential('auth/sign-in','account.sign_in','admit','signInWithPassword')
 credential('auth/sign-up','account.sign_up','rpc:st_v7_signup_admission','signUp','resend')
 account('billing/action','POST','billing.checkout','billingIdentity','rpc:st_v7_sensitive_action_status')
+account('billing/invoices','GET','billing.invoice.read','billingIdentity','rpc:st_v7_current_session_valid','rpc:st_v7_billing_admin_view','readInvoiceTicket','rpc:st_v7_pin_stripe_invoice')
+account('billing/workspace','GET','billing.workspace.read','billingIdentity','rpc:st_v7_billing_admin_view','rpc:st_v7_billing_admin_provider_scope')
 publicly('billing/catalog','GET','Published pricing only.')
-signed('billing/webhook','POST','Stripe webhook signature.','constructEvent')
+signed('billing/webhook','POST','Stripe raw body signature and durable receipt.','constructEvent','rpc:st_v7_stripe_claim','rpc:st_v7_stripe_finish')
+signed('billing/reconcile','POST','Private Stripe reconciliation worker bearer.','notificationDrainAuthorized','rpc:st_v7_stripe_reconcile_claim','rpc:st_v7_stripe_reconcile_finish')
 account('compliance-exports/[caseId]','GET,POST','compliance.export.download','operationalReportViewer','rpc:st_v7_begin_compliance_operation')
 account('evidence-vault','GET,POST','soc.evidence.access','operationalReportViewer','rpc:st_v7_begin_evidence_operation')
 account('exports/[artifact]','GET','audit.log.export,soc.report.export','operationalReportViewer','rpc:st_v7_sensitive_action_status','rpc:st_v6_get_export_object')
@@ -170,7 +179,8 @@ signed('workspace-files/maintenance','POST','Private cleanup bearer.','timingSaf
 account('workspace-files','GET','file.download','authenticateFileRequest','rpc:st_v6_workspace_file_command')
 account('workspace-files','POST','file.upload,file.share_external','authenticateFileRequest','rpc:st_v6_workspace_file_command','rpc:st_v6_record_workspace_file_access')
 account('workspace-files','DELETE','file.delete','authenticateFileRequest','rpc:st_v6_workspace_file_command')
-account('workspaces/invitations','POST','workspace.member.invite','getUser','rpc:st_v6_workspace_link_create')
+account('workspaces/invitations','POST','workspace.member.invite','getUser','rpc:st_v6_workspace_link_create','rpc:st_v7_workspace_email_template')
+account('workspaces/organization','POST','workspace.organization.manage','rpc:st_v7_org_settings','rpc:st_v7_finish_org_domain')
 account('workspaces/rule-registry','POST','policy.rule.evaluate','getUser','rpc:st_v7_workspace_rule_registry')
 account('workspaces/trial','GET','billing.trial','billingIdentity','rpc:st_v7_workspace_trial_status')
 account('workspaces/trial','POST','billing.trial','billingIdentity','rpc:st_v7_sensitive_action_status','rpc:st_v7_start_workspace_trial')
@@ -178,6 +188,10 @@ account('workspaces/trial','POST','billing.trial','billingIdentity','rpc:st_v7_s
 export const entrypoints=entries.sort((a,b)=>a.path.localeCompare(b.path)||a.method.localeCompare(b.method))
 
 export const databaseEntryPoints={
+  'messaging.message.report':'st_v7_submit_channel_report',
+  'workspace.organization.manage':'st_v7_org_settings',
+  'workspace.managed_account':'st_v7_managed_account',
+  'billing.workspace.delegate':'st_v7_billing_admin_manage',
   'workspace.member.read':'st_v7_workspace_people',
   'admin.user.role.write':'st_v2_set_member',
   'admin.user.suspend':'st_v2_set_member',

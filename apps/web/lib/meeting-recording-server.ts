@@ -97,10 +97,18 @@ export function recordingServices() {
       job = await egress.stopEgress(job.egressId)
     }
     if (activeEgress.has(job.status)) return
-    if (row.status === 'stopping' && job.status === EgressStatus.EGRESS_COMPLETE &&
-        job.fileResults.some(file => file.size > 0 && (file.filename === path(row) || file.filename.endsWith('/'+path(row))))) {
-      const completed = await command(row.meeting_id, null, 'complete', row.id, undefined, job.egressId)
-      if (completed) return
+    if (row.status === 'stopping' && job.status === EgressStatus.EGRESS_COMPLETE) {
+      const file = job.fileResults.find(item => item.size > 0n &&
+        (item.filename === path(row) || item.filename.endsWith('/' + path(row))))
+      if (file) {
+        const nanoseconds = file.duration > 0n ? file.duration : file.endedAt - file.startedAt
+        const duration = (nanoseconds + 999999n) / 1000000n
+        if (duration < 1n || duration > 86400000n) throw new Error('Recording duration unavailable')
+        const completed = await storage.rpc('st_v7_complete_metered_recording', {p_meeting: row.meeting_id,
+          p_recording: row.id, p_egress: job.egressId, p_duration_ms: Number(duration)})
+        if (completed.error) throw new Error('Recording state unavailable')
+        if (completed.data) return
+      }
     }
     const discarded = await command(row.meeting_id, null, 'discard', row.id)
     if (discarded?.recording?.status !== 'discard' || discarded.recording.egress_id !== job.egressId) return

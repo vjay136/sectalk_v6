@@ -93,6 +93,11 @@ export function WorkspaceOnboarding({openByDefault,onCreated}:{
             'Private and admin-only':'Private, admin-only and announcement'}</li>
           <li>Meeting admission: {selected.restricted||selectedProfile.individual_admission?'individual':'individual or bulk'}</li>
           <li>Email links require an approved domain and expire in at most {selectedProfile.invite_hours} hours.</li>
+          {selectedProfile.id==='healthcare'&&<>
+            <li>Rooms start confidential and disallow forwarding and guests.</li>
+            <li>Managed posts screen for recognized sensitive patterns. Health-record identifiers are blocked by default.</li>
+            <li>Emergency evidence access requires explicit report sharing, separate owner approval and a time-limited, single-use grant.</li>
+          </>}
         </ul>:<p>Default policy {selected.restricted?'requires private or admin-only rooms and individual meeting admission.':
           'allows all available room types and lets meeting hosts admit eligible attendees together.'}</p>}
       </>}

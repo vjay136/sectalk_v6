@@ -92,8 +92,14 @@ async function handle(request: Request) {
   if (blocked.error) return fileFailure(503, 'The platform file policy could not be checked.')
   if (blocked.data === true) return fileFailure(422, 'The workspace file was blocked by platform policy.')
   const scan = await scanAttachment(bytes, hash, attachmentDocumentFormat(filename))
+  if (scan.verdict === 'malware') await command('malware', null, hash)
+  if (scan.verdict !== 'unavailable') {
+    const metered = await auth.storage.rpc('st_v7_meter_file_scan', {p_scope: 'workspace', p_container: workspace,
+      p_actor: auth.actor, p_file: file, p_digest: hash, p_name: filename})
+    if (metered.error) return fileFailure(503, 'File inspection usage is unavailable.')
+    if (!metered.data) return forbidden()
+  }
   if (scan.verdict === 'malware') {
-    await command('malware', null, hash)
     return fileFailure(422, 'The workspace file was blocked by security scanning.')
   }
   if (scan.unsupported) return fileFailure(415, 'The document structure is outside supported inspection limits.')

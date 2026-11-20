@@ -181,11 +181,21 @@
 | P10 | Run versioned SOC playbooks after separate human approval | Browser and SQL verified an actual queue transition, checklist completion, a distinct reviewer, stale revision denial and replay-safe audit |
 | P5 | Render sanitized Markdown and scoped link previews | Managed and encrypted Edge conversations verified live rendering, safe edits, opt-in checks and no encrypted URL disclosure |
 | P9 | Offer a single 14-day Professional or Business trial per workspace | Browser, signed local provider fixtures and SQL verified both card configurations, owner scope, retries and automatic expiry |
+| P9 | Meter workspace recording, transcription, storage and file inspection usage | LiveKit Egress, Faster Whisper, private Storage, Edge and SQL verified real usage, period totals, retry deduplication and tenant-scoped access |
+| P4 | Manage organization identity and defaults | Edge, a local TXT resolver and SQL verified branding, verified domain lifecycle, enforced hold-aware retention and separately persisted region preference |
+| P9 | Reconcile signed payment events and stored subscriptions | Local provider contracts and SQL verified bounded replay and retry processing, event order, customer scope and scheduled reconciliation |
+| P10 | Manage organization invitation email templates | Edge, real Mailpit delivery and SQL verified native assurance, preview parity, immutable versions, rollback and recipient denial |
+| P4 | Add enforceable Healthcare defaults and exact emergency review | Local Edge and SQL verified confidential controls, managed identifier blocks, genuine operator and owner approval, private alerts and single-use evidence |
+| P9 | Delegate workspace billing reads to an explicit billing administrator | Browser, SQL and local Stripe contracts verified grant and revoke, tenant and owner scopes, paid or trial entitlements and provider redaction |
+| P4 | Establish consented managed accounts in Family and School workspaces | Edge and SQL verified scoped supervisor authority, allowed and denied new contacts, coarse device counts and revocation without content disclosure |
+| P9 | Download finalized invoice and payment receipt copies | Browser, SQL and local Stripe contracts verified exact sequence and tax, authorized PDF bytes, expired ticket denial and live revocation |
+| P4 | Add the Family oversight dashboard and safe-sharing defaults | Edge and SQL verified guardian and participant controls, coarse trusted-device state, link issuance and redemption protection and preserved private access |
+| P10 | Route explicitly consented channel message reports to Safety | Native Edge and SQL verified exact evidence, separate platform and workspace review, severe-report scope and two private live reporter updates |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 197 verified features and 42 pending. The next checkpoint is due at 207 verified features.
+Local Git checkpoints are saved every ten newly verified features. This checkpoint covers 207 verified features and 32 pending. The next checkpoint is due at 217 verified features.
 
 ## Remaining work by dependency
 

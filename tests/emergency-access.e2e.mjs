@@ -13,6 +13,7 @@ const admin = createClient(supabase.origin, process.env.SECTALK_STORAGE_TEST_SER
 const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
 const password = randomUUID() + '1!Q'
 const suffix = randomUUID().slice(0, 8)
+const healthcare = process.env.SECTALK_HEALTHCARE_PROFILE === '1'
 const workspaceName = 'Emergency review ' + suffix
 const source = 'Confidential case fixture ' + suffix
 const browser = await chromium.launch({ executablePath: process.env.SECTALK_TEST_BROWSER })
@@ -74,14 +75,46 @@ async function enroll(page, completion) {
 try {
   const [owner, reporter, operator] = await Promise.all([account('owner'), account('peer'), account('ops')])
   operatorId = operator.id
-  workspace = value(await owner.client.rpc('st_v2_create_workspace', { p_name: workspaceName }))
+  let ownerPage
+  if (healthcare) {
+    ownerPage = await open(owner)
+    await button(nav(ownerPage), 'Workspaces').click()
+    const wizard = ownerPage.getByRole('form', { name: 'Workspace setup' })
+    await wizard.getByLabel('Workspace type').selectOption('business')
+    await button(wizard, 'Continue').click()
+    await wizard.getByLabel('Workspace name').fill(workspaceName)
+    await wizard.getByLabel('Compliance profile').selectOption('healthcare')
+    await button(wizard, 'Continue').click()
+    await wizard.getByText('Rooms start confidential and disallow forwarding and guests.', { exact: true }).waitFor()
+    const created = ownerPage.waitForResponse(response => response.ok() && response.url().endsWith('/rpc/st_v6_create_profiled_workspace'))
+    await button(wizard, 'Create workspace').click()
+    workspace = await (await created).json()
+  } else workspace = value(await owner.client.rpc('st_v2_create_workspace', { p_name: workspaceName }))
   value(await owner.client.rpc('st_v2_invite', { p_workspace: workspace, p_handle: reporter.handle }))
   const invite = value(await reporter.client.from('st_v2_invites').select('id').eq('workspace_id', workspace).single())
   value(await reporter.client.rpc('st_v2_reply_invite', { p_invite: invite.id, p_accept: true }))
   const room = randomUUID()
   const post = randomUUID()
-  value(await owner.client.rpc('st_v6_room_create', { p_id: room, p_workspace: workspace, p_name: 'Emergency fixture room', p_kind: 'public', p_template: 'blank' }))
-  value(await reporter.client.rpc('st_v6_room_membership', { p_room: room, p_action: 'join' }))
+  value(await owner.client.rpc('st_v6_room_create', { p_id: room, p_workspace: workspace, p_name: 'Emergency fixture room', p_kind: healthcare ? 'private' : 'public', p_template: 'blank' }))
+  if (healthcare) {
+    assert.equal((await owner.client.rpc('st_v6_room_membership', {
+      p_room: room, p_action: 'invite', p_target: reporter.id, p_role: 'guest',
+    })).error?.code, '42501')
+    value(await owner.client.rpc('st_v6_room_membership', {
+      p_room: room, p_action: 'invite', p_target: reporter.id, p_role: 'member',
+    }))
+    value(await reporter.client.rpc('st_v6_room_membership', { p_room: room, p_action: 'accept' }))
+    const policy = value(await owner.client.from('st_v6_rooms').select('classification,forwarding_allowed').eq('id', room).single())
+    assert.deepEqual(policy, { classification: 'confidential', forwarding_allowed: false })
+    await button(nav(ownerPage), 'Rooms').click()
+    await ownerPage.getByRole('button', { name: /Emergency fixture room/ }).click()
+    const clinicalRoom = ownerPage.getByRole('region', { name: 'Emergency fixture room', exact: true })
+    const composer = clinicalRoom.getByLabel('Write a room message', { exact: true })
+    await composer.fill('Synthetic patient ID: TEST-404')
+    await button(clinicalRoom, 'Send').click()
+    await clinicalRoom.getByRole('alert').filter({ hasText: 'Workspace policy blocked this message' }).waitFor()
+    assert.deepEqual(value(await reporter.client.from('st_v6_room_posts').select('id').eq('room_id', room)), [])
+  } else value(await reporter.client.rpc('st_v6_room_membership', { p_room: room, p_action: 'join' }))
   value(await owner.client.rpc('st_v6_room_post', { p_room: room, p_id: post, p_body: source }))
   const report = value(await reporter.client.rpc('st_v6_submit_room_report', {
     p_room: room, p_post: post, p_category: 'threat', p_details: 'Private report notes remain private.', p_share: true,
@@ -94,7 +127,8 @@ try {
   })).error?.code, '42501')
   assert.deepEqual(value(await operator.client.from('st_v6_room_posts').select('body').eq('id', post)), [])
 
-  const [opsPage, ownerPage] = await Promise.all([open(operator), open(owner)])
+  const opsPage = await open(operator)
+  ownerPage ??= await open(owner)
   await button(nav(ownerPage), 'Safety').click()
   const readyNotices = ownerPage.waitForResponse(response => response.ok() && response.url().endsWith('/rpc/st_v6_my_emergency_notices'))
   await button(ownerPage, 'Account notices').click()
@@ -104,6 +138,12 @@ try {
   await enroll(opsPage, 'Verify access')
   await button(opsPage, 'Emergency access').click()
   const ops = opsPage.getByRole('region', { name: 'Emergency access', exact: true })
+  if (healthcare) {
+    await ops.getByLabel('Workspace room report ID').fill(report)
+    await ops.getByLabel('Why is emergency access needed?').fill('Emergency report for synthetic MRN: TEST-4400 is required.')
+    await button(ops, 'Request emergency access').click()
+    await ops.getByRole('alert').filter({ hasText: 'Describe the emergency without health record identifiers' }).waitFor()
+  }
   const request = opsPage.waitForResponse(response => response.ok() && response.url().endsWith('/rpc/st_v6_request_break_glass'))
   await ops.getByLabel('Workspace room report ID').fill(report)
   await ops.getByLabel('Why is emergency access needed?').fill('Review an urgent safety escalation from this workspace.')
@@ -165,6 +205,7 @@ try {
   await button(ownerPage, 'Account notices').click()
   await notices.getByText('The approved evidence was accessed.', { exact: true }).waitFor()
   await notices.getByText('The emergency access review was closed.', { exact: true }).waitFor()
+  if (healthcare) console.log('Healthcare onboarding, confidential room, guest denial, managed PHI block and private emergency justification validated.')
   console.log('Passed actual operator TOTP, owner approval, one-time evidence, private live customer notices and review audit.')
 } finally {
   await browser.close()

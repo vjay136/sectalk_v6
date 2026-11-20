@@ -41,10 +41,12 @@ async function actor(label) {
   return {client,session,handle,email}
 }
 
+let completedAt
 async function webhook(fields, signatureCorrect=true) {
-  const created=Math.floor(Date.now()/1000)
+  completedAt ??= Math.floor(Date.now()/1000)
+  const created=completedAt
   const reservation=requestFields.get('client_reference_id')
-  const payload=JSON.stringify({id:'evt_trial_'+slug,type:'checkout.session.completed',created,data:{object:{
+  const payload=JSON.stringify({id:'evt_trial_'+slug+(fields.id?'_mismatch':''),type:'checkout.session.completed',created,data:{object:{
     id:sessionId,mode:'setup',status:'complete',client_reference_id:reservation,
     metadata:{sectalk_workspace_trial:reservation},setup_intent:setupId,...fields,
   }}})
@@ -115,7 +117,7 @@ try {
     assert.equal((await fetch(endpoint,{headers:{Authorization:'Bearer '+owner.session.access_token}}).then(res=>res.json())).state,'pending')
     assert.equal((await webhook({})).status,204)
     assert.equal((await webhook({})).status,204)
-    assert.ok(retrieved>=2)
+    assert.equal(retrieved,2)
   }
   await panel.getByText(required?/Professional trial is active/:/Business \(Team\) trial is active/).waitFor()
   const expiration=await panel.locator('time').getAttribute('datetime')

@@ -13,6 +13,9 @@ import { WorkspaceOnboarding } from './workspace-onboarding'
 import { WorkspaceNotificationPolicy } from './workspace-notification-policy'
 import { PendingWorkspaceInvite, WorkspaceLinkInvites } from './workspace-link-invites'
 import { WorkspaceLegalHolds } from './workspace-legal-holds'
+import { OrganizationBrand, OrganizationSettings } from './organization-settings'
+import { ManagedAccounts } from './managed-accounts'
+import { FamilyDashboard } from './family-dashboard'
 import { WorkspaceAdminOverview } from './workspace-admin-overview'
 import { WorkspaceFiles } from './workspace-files'
 import { WorkspaceIntegrations } from './workspace-integrations'
@@ -25,6 +28,7 @@ import { WorkspaceAISettings } from './workspace-ai-settings'
 import { WorkspaceDlp } from './workspace-dlp'
 import { useDlpPublishWarning } from './dlp-publish-warning'
 import { MessageFormatting, RichMessage } from './rich-message'
+import { ChannelReportDialog } from './channel-reports'
 import {useSensitiveAction} from './sensitive-action'
 
 const ImpersonationWatch = dynamic(() => import('./impersonation-watch').then(module => module.ImpersonationWatch), {
@@ -157,11 +161,13 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
 }
 
 function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;user:string;view:WorkspaceView;initialRoom?:string }) {
-  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'files' | 'activity' | 'impersonation' | 'governance' | 'overview' | 'integrations' | 'features' | 'ai' | 'dlp' | 'compliance-exports' | 'file-egress' | 'trial'>(()=>
+  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'files' | 'activity' | 'impersonation' | 'governance' | 'overview' | 'integrations' | 'features' | 'ai' | 'dlp' | 'compliance-exports' | 'file-egress' | 'trial' | 'organization' | 'family'>(()=>
     typeof window!=='undefined'&&new URLSearchParams(window.location.search).get('trial')==='return'?'trial':'people')
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
+  const {reload: reloadWorkspaceBrand}=useWorkspaceContext()
+  const [liveBrand,setLiveBrand]=useState<'blue'|'teal'|'violet'|'amber'>()
   const [archivedChannels,setArchivedChannels] = useState(false)
   const [members, setMembers] = useState<Member[]>([])
   const [profiles, setProfiles] = useState<Record<string, Profile>>({})
@@ -172,8 +178,10 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
   const activeMembers = members.filter(member => !member.suspended_at)
   const role = activeMembers.find(member => member.user_id === user)?.role
   const manager = role === 'owner' || role === 'admin'
+  const managedMembers=activeMembers.flatMap(member=>member.role==='member'&&profiles[member.user_id]?[profiles[member.user_id]]:[])
+  const memberNames=Object.fromEntries(Object.entries(profiles).map(([id,person])=>[id,person.name]))
   const visibleTab = (!manager && ['activity','impersonation','governance','overview','features','ai','dlp','compliance-exports'].includes(tab)) ||
-    ((tab==='integrations'||tab==='file-egress'||tab==='trial')&&role!=='owner') ? 'people' : tab
+    ((tab==='integrations'||tab==='file-egress'||tab==='trial'||tab==='organization')&&role!=='owner') ? 'people' : tab
   const load = useCallback(async () => {
     const [channelResult, memberResult, presencePolicy] = await Promise.all([
       db!.from('st_v2_channels').select('id,name,owner,visibility,archived').eq('workspace_id', space.id).order('name'),
@@ -208,13 +216,15 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
   const selectedChannel=visibleChannels.find(channel=>channel.id===channelId)||visibleChannels[0]
 
   return <div className="panel release-panel">
+    {view==='workspaces'&&<OrganizationBrand workspace={space.id} name={space.name} accent={liveBrand}/>}
     {view==='workspaces'&&space.policy&&<p className="muted">{space.policy.details?.label||space.policy.workspace_type} · {
       space.policy.compliance?.label||(space.policy.template==='restricted'?'Restricted policy':'Standard policy')}</p>}
     {view==='workspaces' && <SectionTabs label="Workspace sections" value={visibleTab} onChange={setTab} options={[
       ...(manager ? [['overview','Overview'] as const,['features','Features'] as const] : []),
+      ...(role&&space.policy?.workspace_type==='family'?[['family','Family'] as const]:[]),
       ['channels', <><Hash size={15}/> Channels</>], ['board', <><ListChecks size={15}/> Board</>],
       ['people', <><Users size={15}/> People</>], ['teams','Groups & teams'], ['files','Files'],
-      ...(role==='owner' ? [['integrations','Integrations'] as const,['file-egress','File policy'] as const,['trial','Trial'] as const] : []),
+      ...(role==='owner' ? [['integrations','Integrations'] as const,['file-egress','File policy'] as const,['trial','Trial'] as const,['organization','Organization settings'] as const] : []),
       ...(manager ? [['activity','Activity'] as const,['impersonation','Impersonation watch'] as const,
         ['governance','Governance'] as const,['ai','AI settings'] as const,['dlp','Data loss controls'] as const,
         ['compliance-exports','Compliance exports'] as const] : []),
@@ -228,7 +238,7 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
       <SectionTabs label="Channel filters" value={archivedChannels?'archived':'active'}
         onChange={next=>setArchivedChannels(next==='archived')} options={ [['active','Active channels'],['archived','Archived channels']] }/>
       <div className="release-flex">
-        {selectedChannel&&<label>Channel<select value={selectedChannel.id} onChange={event => setChannelId(event.target.value)}>
+        {selectedChannel&&<label>Channel<select aria-label="Channel" value={selectedChannel.id} onChange={event => setChannelId(event.target.value)}>
           {visibleChannels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</select></label>}
         {manager && <details className="release-create"><summary>New channel</summary><QuickForm label="New channel" button="Create channel" send={async fields => {
           const id = await rpc('st_v2_create_channel', { p_workspace: space.id, p_name: fields.get('name') })
@@ -245,6 +255,8 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
     {view==='workspaces' && tab==='files' && <WorkspaceFiles workspace={space.id} owner={role==='owner'} />}
     {view==='workspaces' && visibleTab==='integrations' && <WorkspaceIntegrations key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='file-egress' && <WorkspaceFileEgress key={space.id} workspace={space.id}/>}
+    {view==='workspaces' && visibleTab==='organization' && <OrganizationSettings workspace={space.id}
+      onBrand={accent=>{setLiveBrand(accent);void reloadWorkspaceBrand(space.id)}}/>}
     {view==='workspaces' && visibleTab==='trial' && <WorkspaceTrial key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='ai' && manager && <WorkspaceAISettings key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='dlp' && manager && <WorkspaceDlp key={space.id} workspace={space.id}/>}
@@ -258,7 +270,13 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
     {view==='workspaces' && tab==='teams' && <WorkspaceGroups workspace={space.id} manager={manager} people={activeMembers} profiles={profiles}/>}
     {view==='tasks'&&<TaskList space={space.id} actor={user} manager={manager} members={members} profiles={profiles}/>}
     {view==='calendar'&&<WorkspaceCalendar space={space.id} />}
+    {view==='workspaces' && visibleTab==='family' && role && space.policy?.workspace_type==='family' &&
+      <FamilyDashboard key={space.id+user} workspace={space.id} actor={user} canOffer={manager}
+        members={managedMembers} names={memberNames}/>}
     {view==='workspaces'&&visibleTab==='people' && <div className="release-section">
+      {role && space.policy?.workspace_type==='school' &&
+        <ManagedAccounts key={space.id+user} workspace={space.id} actor={user} kind="school" canOffer={manager}
+          members={managedMembers} names={memberNames}/>}
       {role && <WorkspaceNotificationPolicy workspace={space.id} manager={manager}/>}
       {manager&&<WorkspaceLinkInvites workspace={space.id} profile={space.policy?.compliance}/>}
       {presenceRequired!==null&&<div>
@@ -388,6 +406,8 @@ function ChannelPanel({channel,profiles,activeMembers,user,refresh,onArchiveChan
 function ChannelFeed({ channelId, archived, profiles, user }: { channelId: string; archived:boolean; profiles: Record<string, Profile>; user: string }) {
   const [posts, setPosts] = useState<Post[]>([])
   const [error, setError] = useState('')
+  const [reporting,setReporting]=useState<Post|null>(null)
+  const [reportNotice,setReportNotice]=useState('')
   const [older, setOlder] = useState(false)
   const draftId = useRef<{ id: string; body: string } | null>(null)
   const {publish: publishWithDlp, prompt: dlpPrompt}=useDlpPublishWarning()
@@ -414,13 +434,22 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
   return <>
     {error && <p className="error" role="alert">{error}</p>}
     {dlpPrompt}
+    {reportNotice&&<p role="status">{reportNotice}</p>}
+    {reporting&&<ChannelReportDialog channel={channelId} post={reporting.id} body={reporting.body}
+      close={()=>setReporting(null)} done={()=>{setReporting(null);setReportNotice('Channel report submitted. Track its progress in Safety.')}}/>}
     <details className="release-create"><summary>Channel quiet hours</summary>
       <QuietHoursSettings channel={channelId}/>
     </details>
     <div className="release-channel-feed" role="log" aria-label="Channel messages">
       {older && <button className="secondary" onClick={() => void fetchPosts(posts[0])}>Earlier messages</button>}
       {!posts.length && <p><MessageCircle size={16}/> Start the conversation.</p>}
-      {posts.map(post => <article className={'release-post' + (post.sender === user ? ' release-own' : '')} key={post.id}><header><strong>{profiles[post.sender]?.name || 'Workspace member'}</strong> <time dateTime={post.created_at}>{formatTime(post.created_at)}</time></header><p><RichMessage value={post.body} account={user} mode='managed'/></p></article>)}
+      {posts.map(post => <article className={'release-post' + (post.sender === user ? ' release-own' : '')} key={post.id}>
+        <header><strong>{profiles[post.sender]?.name || 'Workspace member'}</strong> <time dateTime={post.created_at}>{formatTime(post.created_at)}</time></header>
+        <p><RichMessage value={post.body} account={user} mode='managed'/></p>
+        {post.sender!==user&&<details className="release-create"><summary>Channel message actions</summary>
+          <button className="secondary" type="button" onClick={()=>{setReportNotice('');setReporting(post)}}>Report message</button>
+        </details>}
+      </article>)}
     </div>
     <MessageFormatting account={user} mode='managed'/>
     {!archived&&<QuickForm label="Post to channel" button="Send message" send={async fields => {

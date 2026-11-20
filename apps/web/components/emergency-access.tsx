@@ -105,6 +105,7 @@ export function EmergencyAccess({ workspace = null }: { workspace?: string | nul
     {!workspace && <form className="release-form" onSubmit={submit}>
       <label>Workspace room report ID<input name="report" maxLength={36} pattern={uuidPattern} required/></label>
       <label>Why is emergency access needed?<textarea name="reason" minLength={20} maxLength={500} required/></label>
+      <p>Describe the reason without including patient identifiers, credentials, or report evidence.</p>
       <button className="primary" disabled={busy}>Request emergency access</button>
     </form>}
     {notice && <p role="status">{notice}</p>}

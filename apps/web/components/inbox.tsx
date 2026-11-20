@@ -207,6 +207,7 @@ export function Inbox({ user }: { user: string }) {
           if (!error && Array.isArray(data) && data.length) setNotice('You have a new on-call case assignment.')
         })
       })
+      .on('broadcast', { event: 'channel_report_updated' }, () => hints.dispatchEvent(new Event('channel_report_updated')))
       .on('broadcast', { event: 'workspace_room_report' }, () => {
         void db!.rpc('st_v6_room_report_queue', { p_scope: 'workspace' }).then(({ data, error }) => {
           if (!error && Array.isArray(data) && data.length) setNotice('You have a new workspace room report to review.')

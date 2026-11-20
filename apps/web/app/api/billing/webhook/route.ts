@@ -1,66 +1,99 @@
+import { createHash } from 'node:crypto'
 import { withOperationalMetrics } from '../../../../lib/operational-metrics-server'
 import type Stripe from 'stripe'
-import { billingWriter, legacyOfferForPrice, stripe, webhookSecret } from '../../../../lib/stripe-server'
+import { billingWriter, stripe, stripeLiveMode, webhookSecret } from '../../../../lib/stripe-server'
+import { stripeBillingUuid, stripeSubscriptionSnapshot } from '../../../../lib/stripe-reconciliation'
 import { readBoundedBody } from '../../../../lib/request-body'
 
 export const runtime = 'nodejs'
+const headers = {'Cache-Control': 'no-store'}
+const reply = (status: number) => new Response(null, {status, headers})
+const id = /^(?:evt|sub|cs|seti)_[a-zA-Z0-9_]{1,100}$/
 
 async function handlePost(request: Request) {
-  if (!stripe || !webhookSecret || !billingWriter) return new Response('Billing unavailable', { status: 503 })
+  if (!stripe || !webhookSecret || !billingWriter) return reply(503)
   const signature = request.headers.get('Stripe-Signature')
-  if (!signature) return new Response('Missing signature', { status: 400 })
+  if (!signature) return reply(400)
   let event: Stripe.Event
+  let payload: Buffer
   try {
-    const payload = await readBoundedBody(request, 1024 * 1024)
-    if (payload === undefined) return new Response('Webhook payload too large', { status: 413 })
-    if (!payload?.length) return new Response('Missing webhook payload', { status: 400 })
+    const body = await readBoundedBody(request, 1024 * 1024)
+    if (body === undefined) return reply(413)
+    if (!body?.length) return reply(400)
+    payload = body
     event = stripe.webhooks.constructEvent(payload, signature, webhookSecret)
-  } catch {
-    return new Response('Invalid signature', { status: 400 })
-  }
-  if(event.type==='checkout.session.completed'){
-    const session=event.data.object
-    const reservation=session.metadata?.sectalk_workspace_trial
-    if(session.mode!=='setup'||session.status!=='complete'||typeof session.setup_intent!=='string'||
-      !reservation||reservation!==session.client_reference_id||!/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(reservation)){
-      return new Response(null,{status:204})
+  } catch { return reply(400) }
+
+  const data = event.data?.object
+  if (!data || typeof data !== 'object' || event.account
+    || (typeof event.livemode === 'boolean' && event.livemode !== stripeLiveMode)) return reply(400)
+  let kind: 'subscription' | 'subscription_deleted' | 'trial'
+  let reservation: string | undefined
+  let trial: Stripe.Checkout.Session | undefined
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      trial = event.data.object
+      reservation = trial.metadata?.sectalk_workspace_trial
+      if (trial.mode !== 'setup' || trial.status !== 'complete' || typeof trial.setup_intent !== 'string'
+        || !trial.setup_intent.startsWith('seti_') || !id.test(trial.setup_intent)
+        || !reservation || reservation !== trial.client_reference_id || !stripeBillingUuid.test(reservation)) return reply(204)
+      kind = 'trial'
+      break
     }
-    try{
-      const setup=await stripe.setupIntents.retrieve(session.setup_intent)
-      if(setup.status!=='succeeded'||!setup.payment_method||!setup.payment_method_types.includes('card')){
-        return new Response('Card confirmation not complete',{status:422})
-      }
-      const result=await billingWriter.rpc('st_v7_complete_trial_checkout',{
-        p_reservation:reservation,p_provider_session:session.id,p_completed_at:new Date(event.created*1000).toISOString(),
-      })
-      return result.error?new Response('Workspace trial update failed',{status:503}):new Response(null,{status:204})
-    }catch{return new Response('Card confirmation could not be verified',{status:503})}
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated':
+    case 'customer.subscription.paused':
+    case 'customer.subscription.resumed':
+      kind = 'subscription'
+      break
+    case 'customer.subscription.deleted':
+      kind = 'subscription_deleted'
+      break
+    default: return reply(204)
   }
-  if (event.type !== 'customer.subscription.created' && event.type !== 'customer.subscription.updated' && event.type !== 'customer.subscription.deleted') {
-    return new Response(null, { status: 204 })
+  const resource = data && 'id' in data ? data.id : null
+  if (!event.id?.startsWith('evt_') || !id.test(event.id) || !resource || !id.test(resource)
+    || !(kind === 'trial' ? resource.startsWith('cs_') : resource.startsWith('sub_'))
+    || !Number.isSafeInteger(event.created) || event.created <= 0 || event.created > Date.now() / 1000 + 300) return reply(400)
+
+  const claim = await billingWriter.rpc('st_v7_stripe_claim', {p_event: event.id,
+    p_hash: createHash('sha256').update(payload).digest('hex'), p_kind: kind, p_resource: resource,
+    p_event_at: new Date(event.created * 1000).toISOString()})
+  if (claim.error) return reply(503)
+  const state = claim.data?.state
+  if (state === 'done') return reply(204)
+  if (state === 'conflict' || state === 'invalid') return reply(400)
+  if (state !== 'claimed' || typeof claim.data.lease !== 'string') return reply(503)
+  const store = billingWriter
+  async function finish(outcome: 'apply' | 'ignore' | 'retry', values?: object) {
+    const result = await store.rpc('st_v7_stripe_finish', {p_event: event.id, p_lease: claim.data.lease,
+      p_outcome: outcome, p_payload: values ?? null})
+    return result
   }
+
   try {
-    const change = event.data.object
-    const subscription = event.type === 'customer.subscription.deleted' ? change : await stripe.subscriptions.retrieve(change.id)
-    const user = subscription.metadata.sectalk_user
-    if (!user || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(user)) return new Response(null, { status: 204 })
-    const item = subscription.items.data[0]
-    if (!item?.price.id || subscription.items.data.length !== 1 || item.price.unit_amount === null) {
-      return new Response('Unsupported subscription price', { status: 422 })
+    if (trial) {
+      const setup = await stripe.setupIntents.retrieve(trial.setup_intent as string)
+      const setupCustomer = typeof setup.customer === 'string' ? setup.customer : setup.customer?.id
+      const trialCustomer = typeof trial.customer === 'string' ? trial.customer : trial.customer?.id
+      if (setup.status !== 'succeeded' || !setup.payment_method || !setup.payment_method_types.includes('card')
+        || setupCustomer !== trialCustomer) {
+        await finish('retry')
+        return reply(422)
+      }
+      const result = await finish('apply', {reservation})
+      return reply(!result.error && result.data === true ? 204 : 503)
     }
-    const legacy = legacyOfferForPrice(item.price.id)
-    const customer = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
-    const { error } = await billingWriter.rpc('st_v6_sync_catalog_subscription', {
-      p_event: event.id, p_user: user, p_customer: customer, p_subscription: subscription.id,
-      p_provider_price: item.price.id, p_legacy_plan: legacy?.plan ?? null, p_legacy_cadence: legacy?.cadence ?? null,
-      p_status: subscription.status, p_end: new Date(item.current_period_end * 1000).toISOString(),
-      p_cancel: subscription.cancel_at_period_end, p_synced: new Date(event.created * 1000).toISOString(),
-      p_currency: item.price.currency.toUpperCase(), p_amount: item.price.unit_amount,
-    })
-    if (error?.code === '22023') return new Response('Unsupported subscription price', { status: 422 })
-    return error ? new Response('Subscription update failed', { status: 503 }) : new Response(null, { status: 204 })
+    const subscription = await stripe.subscriptions.retrieve(resource)
+    if (subscription.id !== resource) throw new Error('Subscription identity changed')
+    const snapshot = stripeSubscriptionSnapshot(subscription)
+    const result = await finish(snapshot ? 'apply' : 'ignore', snapshot ?? undefined)
+    if (!result.error && result.data === true) return reply(204)
+    await finish('retry')
+    return reply(result.error?.code === '22023' ? 422 : 503)
   } catch {
-    return new Response('Provider synchronization failed', { status: 503 })
+    await finish('retry')
+    return reply(503)
   }
 }
 

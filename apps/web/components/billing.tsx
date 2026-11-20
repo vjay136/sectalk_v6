@@ -26,6 +26,7 @@ export function Billing({ user }: { user: string }) {
   const [cadence, setCadence] = useState<Cadence>('monthly')
   const [currency, setCurrency] = useState<BillingCurrency>('USD')
   const [view, setView] = useState<'subscription'|'plans'>('subscription')
+  const [workspaceBilling, setWorkspaceBilling] = useState<'delegated' | 'owner' | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -43,6 +44,12 @@ export function Billing({ user }: { user: string }) {
       const currencies = options.plans.flatMap(plan => plan.prices.map(price => price.currency))
       if (currencies[0] && !currencies.includes('USD')) setCurrency(currencies[0])
     }).catch(() => { if (!controller.signal.aborted) setError('Could not load the billing catalog.') })
+    void db!.rpc('st_v7_billing_admin_view').abortSignal(controller.signal).then(result => {
+      if (!controller.signal.aborted && !result.error) {
+        const scopes = result.data as {delegated: boolean; manages: boolean}[]
+        setWorkspaceBilling(scopes.some(scope => scope.delegated) ? 'delegated' : scopes.some(scope => scope.manages) ? 'owner' : null)
+      }
+    })
     const reload = () => void Promise.all([
       db!.from('st_v2_subscriptions').select('plan,status,period_end,cancel_at_period_end,customer_id,catalog_version,billing_currency,billing_cadence,billing_amount')
         .eq('user_id', user).maybeSingle(),
@@ -92,6 +99,9 @@ export function Billing({ user }: { user: string }) {
   return <section className="content-page">
     <header className="content-title"><div className="card-icon"><CreditCard size={22}/></div><div><h1>Billing</h1><p>Manage your SecTalk subscription and workspace limits.</p></div></header>
     <SectionTabs label="Billing sections" value={view} onChange={setView} options={ [['subscription','My subscription'], ['plans','Compare plans']] }/>
+    <a href="/billing/usage">Workspace usage</a>
+    <a href="/billing/documents">Invoices and receipts</a>
+    {workspaceBilling && <a href="/billing/workspaces">{workspaceBilling === 'delegated' ? 'Workspace billing' : 'Manage workspace billing access'}</a>}
     {confirmation}
     {view==='subscription'&&<div className="panel release-panel billing-summary">
       <div><span className="pill">Current plan</span><h2>{(currentPlan === 'free' ? null : subscriptionTitle) ?? activeVersion?.title ?? plans.find(plan => plan.id === currentPlan)?.name ?? 'Free'}</h2>

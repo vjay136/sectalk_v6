@@ -5,11 +5,20 @@ import { paidPlans, type BillingCurrency, type Cadence, type PaidPlan, type Plan
 export const origin = process.env.SECTALK_APP_URL
 export const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
 const stripeKey = process.env.STRIPE_SECRET_KEY
+export const stripeLiveMode = /^(?:sk|rk)_live_/.test(stripeKey ?? '')
 const dbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const publishable = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 const dbSecret = process.env.SECTALK_BILLING_SUPABASE_KEY
 const options = { auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }
-export const stripe = stripeKey && webhookSecret && dbUrl && dbSecret && origin ? new Stripe(stripeKey, { timeout: 10000, maxNetworkRetries: 1 }) : null
+function localStripeOptions() {
+  const target = URL.parse(process.env.SECTALK_TEST_STRIPE_ORIGIN ?? '')
+  if (!target || !stripeKey?.startsWith('sk_test_') || URL.parse(origin ?? '')?.hostname !== '127.0.0.1'
+    || target.origin !== process.env.SECTALK_TEST_STRIPE_ORIGIN || target.protocol !== 'http:'
+    || target.hostname !== '127.0.0.1' || !target.port) return {}
+  return {host: target.hostname, port: Number(target.port), protocol: 'http' as const}
+}
+export const stripe = stripeKey && webhookSecret && dbUrl && dbSecret && origin
+  ? new Stripe(stripeKey, {timeout: 10000, maxNetworkRetries: 1, ...localStripeOptions()}) : null
 export const billingWriter = dbUrl && dbSecret ? createClient(dbUrl, dbSecret, options) : null
 const catalogReader = dbUrl && publishable ? createClient(dbUrl, publishable, options) : null
 const stripePrices = {

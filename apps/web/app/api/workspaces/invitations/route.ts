@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import nodemailer from 'nodemailer'
+import { renderWorkspaceInvitation, type InvitationTemplate } from '../../../../lib/workspace-invitation-template'
 import { logProviderFailure } from '../../../../lib/provider-log.mjs'
 
 export const runtime = 'nodejs'
@@ -59,6 +60,9 @@ export async function POST(request: Request) {
   const origin = invitationOrigin()
   const mail = mailTransport()
   if (!origin || !mail) return fail('Email delivery is unavailable. You can create an invitation link to share.', 503)
+  const configured = await client.rpc('st_v7_workspace_email_template', { p_workspace: workspace, p_action: 'delivery' })
+  if (configured.error || !configured.data) return fail('Email invitation settings are unavailable.', configured.error?.code === '42501' ? 403 : 503)
+  const copy = configured.data as { organization: string; template: InvitationTemplate | null }
   const issued = await client.rpc('st_v6_workspace_link_create', {
     p_workspace: workspace, p_email: email, p_hours: hours,
   })
@@ -71,9 +75,8 @@ export async function POST(request: Request) {
   try {
     const result = await mail.transport.sendMail({
       from: { address: mail.from, name: 'SecTalk by Eagle Security' },
-      to: { address: email, name: '' }, subject: 'Your SecTalk workspace invitation',
-      text: 'A SecTalk workspace administrator invited you to join. Open this link and sign in with the invited email.\n\n'
-        + link.href + '\n\nThis link can be used once and expires on ' + new Date(invitation.expires_at).toUTCString() + '.',
+      to: { address: email, name: '' },
+      ...renderWorkspaceInvitation(copy.template, copy.organization, link.href, new Date(invitation.expires_at)),
     })
     delivered = result.accepted.length === 1
   } catch {

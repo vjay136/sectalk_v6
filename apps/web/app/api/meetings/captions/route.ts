@@ -40,7 +40,13 @@ async function session(request: Request) {
     if (result.error) throw new Error('Caption state unavailable')
     return result.data
   }
-  return { services, participant, command }
+  async function publish(meeting: string, sid: string, lease: string, text: string, samples: number) {
+    const result = await db.rpc('st_v7_publish_metered_caption', {p_meeting: meeting, p_actor: actor,
+      p_sid: sid, p_lease: lease, p_text: text, p_samples: samples})
+    if (result.error) throw new Error('Caption state unavailable')
+    return result.data
+  }
+  return { services, participant, command, publish }
 }
 
 export async function GET() {
@@ -114,7 +120,7 @@ export async function PUT(request: Request) {
     const result = await provider.json()
     if (typeof result?.text!=='string' || result.text.length>500) return fail(503)
     if (await currentMicrophone(meeting)!==sid) return fail(403)
-    const stored = await context.command(meeting,'publish',{p_sid:sid,p_lease:lease,p_text:result.text})
+    const stored = await context.publish(meeting,sid,lease,result.text,body.byteLength / 2)
     return stored ? new Response(null,{status:204,headers}) : fail(403)
   } catch { return fail(503) }
 }

@@ -89,7 +89,7 @@ const fixture = createServer(async (request,response) => {
       data(await admin.storage.from('recordings').upload(key,audioBytes,{ contentType:'audio/ogg' }))
       const id = 'EG_local_fixture_'+starts
       result = { egressId:id,roomName:body.roomName,status:starts===1?'EGRESS_FAILED':'EGRESS_ACTIVE',egress:body,
-        fileResults:[{ filename:key,size:String(audioBytes.length) }] }
+        fileResults:[{ filename:key,size:String(audioBytes.length),duration:"6500000000" }] }
       jobs.set(id,result)
     } else if (request.url.endsWith('/ListEgress')) {
       result = { items:[...jobs.values()].filter(job=>(!body.egressId || job.egressId===body.egressId)
@@ -289,6 +289,10 @@ try {
   await waitForRealWorker(done)
   await button(hostPage,'Stop '+recordingLabel).click()
   await button(hostPage,'Download '+recordingLabel).waitFor()
+  const recorded = data(await host.client.rpc('st_v7_workspace_usage', {p_workspace:workspace}))
+  assert.ok(recorded.recording_ms > 0)
+  if (!real) assert.equal(recorded.recording_ms, 6500)
+  assert.equal((await guest.client.rpc('st_v7_workspace_usage', {p_workspace:workspace})).error?.code, '42501')
   if (!real) assert.equal(starts,4)
   assert.equal((await bytes(null,done)).status,401)
   assert.equal((await bytes(other,done)).status,404)

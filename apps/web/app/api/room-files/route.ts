@@ -67,6 +67,12 @@ async function handle(request: Request) {
   const hash = digestWorkspaceBytes(bytes)
   const document = attachmentDocumentFormat(filename)
   const scan = await scanAttachment(bytes, hash, document)
+  if (scan.verdict !== 'unavailable') {
+    const metered = await auth.storage.rpc('st_v7_meter_file_scan', {p_scope: 'room', p_container: room,
+      p_actor: auth.actor, p_file: file, p_digest: hash, p_name: filename})
+    if (metered.error) return fileFailure(503, 'File inspection usage is unavailable.')
+    if (!metered.data) return unavailable()
+  }
   if (scan.verdict === 'malware' || scan.reason || inspectAttachment(filename, bytes)) {
     return fileFailure(422, 'The room file was blocked by security inspection.')
   }
