@@ -35,6 +35,8 @@ export async function POST(request: Request) {
   })
   const { data: auth, error: authError } = await client.auth.getUser(jwt)
   if (authError || !auth.user) return fail('Sign in to moderate this meeting.', 401)
+  const {data:mode}=await client.from('st_v3_meetings').select('media_protection').eq('id',meeting).maybeSingle()
+  if (mode?.media_protection && ['lock','chat','screen'].includes(action)) return fail('This setting is fixed during protected media.',403)
 
   const result = await client.rpc('st_v6_moderate_meeting', {
     p_meeting: meeting, p_action: action,
@@ -47,7 +49,7 @@ export async function POST(request: Request) {
 
   const success = (affected = 0) => Response.json({ affected }, { headers })
   if (!url || !apiKey || !secret) return success()
-  const room = 'sectalk-v3-' + meeting
+  const room = (mode?.media_protection ? 'sectalk-protected-' : 'sectalk-v3-') + meeting
   const service = new RoomServiceClient(url.replace(/^ws/, 'http'), apiKey, secret, { requestTimeout: 5 })
   try {
     if (action === 'end') {

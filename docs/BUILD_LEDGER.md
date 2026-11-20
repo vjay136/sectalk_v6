@@ -120,11 +120,21 @@
 | P10 | Publish a versioned multi-currency billing catalog with grandfathered terms | Edge, SQL and a signed local webhook verified active offers, interval and currency controls, historical pricing and account scope |
 | P5 | Offer room-only guest access for selected owner-authored posts | Edge and SQL verified link and credential expiry, no account privileges, blocked cross-room access, and revocation after edits or policy changes |
 | P5 | Draft private, opt-in summaries of eligible room threads | Edge and local data verified role, per-author consent, scope, unsafe input filtering, and automatic invalidation after edits or withdrawal |
+| P5 | Add timed direct text messages | Real Edge confirmed sender and recipient expiry, cached quote removal, bounded server policy and physical scrubbing. Task and thread regressions passed after restoring the current room-source rule. |
+| P5 | Detect independently stored duplicate files within each workspace | Plural tenants and real Storage verified isolated byte fingerprints, existing-object backfill, rejection after removal and independent copies. |
+| P10 | Export privacy-filtered traces, metrics, and correlated errors to a Collector | Official local Collector decoded all three signals and confirmed availability after interrupted export. |
+| P4 | Finish secure password, email and authenticator change lifecycles | Real Mailpit and Edge verified email and authenticator delay, secure dual confirmation, immediate OTP recovery, and private device alerts |
+| P10 | Add queue health and service objectives alongside dead-letter replay | Edge verified live backlog, operator verification, replay and readiness. SQL verified complete time windows and exact objective math. |
+| P5 | Add permission-scoped access history for workspace files | Edge with two scopes and private Storage verified member access, audited owner policy, permitted admin history, revoked links and archival history |
+| P4 | Enforce native account session management and rotation | Edge and the configured GoTrue sidecar verified scoped session listing, live revocation, idle and absolute limits, and strict stale-token family denial |
+| P10 | Add two-party emergency access with one-time evidence and post-access review | Edge and SQL verified current owner approval, source consent, redaction boundaries, replay denial and auditable closure |
+| P5 | Protect direct calls and fixed-roster meetings with browser media transforms and verification codes | Native Edge and real LiveKit verified encrypted Opus and VP8 in direct calls, three meeting participants, wrong-key denial, roster departure and managed meeting regression |
+| P4 | Add authenticated device trust and public key bundles | Three Edge contexts verified native session binding, nonextractable private keys, signed bundles, remote blocking and independent device approval |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 137 verified features. The next checkpoint is due at 147, and the matrix records evidence as each feature passes.
+Local Git checkpoints are saved after each group of ten newly verified features. This checkpoint covers 147 verified features. The next checkpoint is due at 157, and the matrix records evidence as each feature passes.
 
 ## Remaining work by dependency
 

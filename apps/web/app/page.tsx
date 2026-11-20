@@ -41,12 +41,36 @@ export default function Home() {
   useEffect(() => {
     if (!db || !user || !token || recovering) return
     let active = true
-    void db.auth.mfa.getAuthenticatorAssuranceLevel(token).then(({ data, error }) => {
+    const client = db
+    void Promise.all([
+      client.auth.mfa.getAuthenticatorAssuranceLevel(token),
+      client.rpc('st_v7_current_session_valid'),
+    ]).then(([assurance, validation]) => {
       if (!active) return
-      setAccess({ user, state: error || !data.currentLevel ? 'error' : data.nextLevel === 'aal2' && data.currentLevel !== 'aal2' ? 'challenge' : 'allowed' })
+      if (!validation.error && validation.data === false) {
+        void client.auth.signOut({scope:'local'})
+        return
+      }
+      const {data,error}=assurance
+      setAccess({ user, state: error || validation.error || !data.currentLevel ? 'error' : data.nextLevel === 'aal2' && data.currentLevel !== 'aal2' ? 'challenge' : 'allowed' })
     }).catch(() => { if (active) setAccess({ user, state: 'error' }) })
     return () => { active = false }
   }, [user, token, recovering, attempt])
+
+  useEffect(() => {
+    if (!db || !user || recovering) return
+    const client = db
+    let active = true
+    const check = () => {
+      if (document.visibilityState !== 'visible') return
+      void client.rpc('st_v7_current_session_valid').then(({data,error})=>{
+        if (active && !error && data === false) void client.auth.signOut({scope:'local'})
+      })
+    }
+    const timer = window.setInterval(check,60000)
+    document.addEventListener('visibilitychange',check)
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener('visibilitychange',check) }
+  }, [user,recovering])
 
   const retry = () => setAttempt(value => value + 1)
   if (!loaded || (user && !recovering && access?.user !== user)) {

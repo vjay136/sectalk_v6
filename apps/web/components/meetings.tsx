@@ -16,11 +16,12 @@ import { MeetingRecording } from './meeting-recording'
 import { MeetingCaptions } from './meeting-captions'
 import { MeetingSummary } from './meeting-summary'
 import { MeetingGuestHost } from './meeting-guest-host'
+import { ProtectedMeeting,ProtectedMeetingStart } from './protected-meeting'
 import type { MeetingChoices } from './meeting-prejoin'
 
 const MeetingMedia = dynamic(() => import('./meeting-media'), { ssr: false })
 const MeetingPrejoin = dynamic(() => import('./meeting-prejoin'), { ssr: false })
-type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null; meeting_locked:boolean; chat_disabled:boolean; screen_share_disabled:boolean }
+type Meeting = { id:string; workspace_id:string; title:string; agenda:string; host_id:string; starts_at:string; ends_at:string; status:'scheduled'|'live'|'ended'; series_id:string|null; series_index:number|null; series_total:number|null; meeting_locked:boolean; chat_disabled:boolean; screen_share_disabled:boolean; media_protection?:number }
 type Attendance = { user_id:string; status:'waiting'|'admitted'|'declined'|'left'; requested_at:string; admitted_at:string|null; left_at:string|null; is_cohost:boolean; removed_at:string|null }
 export function Meetings({ user, requested }: { user:string; requested:string|null }) {
   const {active,workspaces,select}=useWorkspaceContext()
@@ -189,6 +190,7 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
   const selfAttendance=people.find(row=>row.user_id===user)
   const self=selfAttendance?.status
   const ended=meeting.status==='ended'||Date.parse(meeting.ends_at)<=Date.now()
+  const protectedMode=Boolean(meeting.media_protection)
   const moderator=host || (self==='admitted' && selfAttendance?.is_cohost===true)
   const moderation=useMeetingModeration(meeting.id,()=>Promise.all([refresh(),reload()]))
   const actionBusy=busy||moderation.running
@@ -265,20 +267,24 @@ function MeetingDetail({meeting,user,mediaReady,host,bulkAdmit,refresh}: {
       {self==='admitted' && meeting.status==='live' && !mediaReady && <span role="status">Live media unavailable</span>}
       {(self==='admitted'||self==='waiting') && <button className="secondary" disabled={busy} onClick={()=>{setMedia(null);void action('st_v3_leave',{})}}>Leave</button>}
     </div>}
-    {moderator && meeting.status==='live' && !ended &&
+    {!protectedMode && moderator && meeting.status==='live' && !ended &&
       <MeetingModeratorActions locked={meeting.meeting_locked} chatDisabled={meeting.chat_disabled} shareDisabled={meeting.screen_share_disabled}
         busy={actionBusy} moderate={moderation.act}/>}
-    {self==='admitted' && meeting.status==='live' && !ended && mediaReady && !media &&
-      <MeetingPrejoin busy={busy} join={connect} requestMedia={requestMedia}/>}
-    <MeetingRecording meeting={meeting.id} workspace={meeting.workspace_id} ended={ended}/>
-    {ended && <MeetingCaptions meeting={meeting.id} ended/>}
-    <MeetingSummary meeting={meeting.id}/>
-    {host && <MeetingGuestHost meeting={meeting.id} locked={meeting.meeting_locked}/>}
-    {media && self==='admitted' && !ended && <MeetingMedia {...media} meeting={meeting.id} focus={focus}
-      screenShareDisabled={meeting.screen_share_disabled} leave={refreshMedia}/>}
-    {self==='admitted'&&meeting.status==='live'&&!ended&&<>
-      <MeetingCollaboration meeting={meeting.id} user={user} host={host} chatDisabled={meeting.chat_disabled} setFocus={setFocus}/>
-      <MeetingEngagement meeting={meeting.id} user={user}/>
+    {protectedMode ? self==='admitted' && !ended && <ProtectedMeeting meeting={meeting.id} user={user}/> : <>
+      {host && self==='admitted' && meeting.status==='live' && !ended && mediaReady && !media &&
+        <ProtectedMeetingStart meeting={meeting.id} refresh={refresh}/>}
+      {self==='admitted' && meeting.status==='live' && !ended && mediaReady && !media &&
+        <MeetingPrejoin busy={busy} join={connect} requestMedia={requestMedia}/>}
+      <MeetingRecording meeting={meeting.id} workspace={meeting.workspace_id} ended={ended}/>
+      {ended && <MeetingCaptions meeting={meeting.id} ended/>}
+      <MeetingSummary meeting={meeting.id}/>
+      {host && <MeetingGuestHost meeting={meeting.id} locked={meeting.meeting_locked}/>}
+      {media && self==='admitted' && !ended && <MeetingMedia {...media} meeting={meeting.id} focus={focus}
+        screenShareDisabled={meeting.screen_share_disabled} leave={refreshMedia}/>}
+      {self==='admitted'&&meeting.status==='live'&&!ended&&<>
+        <MeetingCollaboration meeting={meeting.id} user={user} host={host} chatDisabled={meeting.chat_disabled} setFocus={setFocus}/>
+        <MeetingEngagement meeting={meeting.id} user={user}/>
+      </>}
     </>}
     {moderator && <section className="release-section" aria-label="Waiting room and attendance"><h2>Waiting room and attendance</h2>
       {host&&bulkAdmit&&meeting.status==='live'&&!ended&&people.some(person=>person.status==='waiting')&&

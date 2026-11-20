@@ -141,6 +141,7 @@ export function RoomReportQueue({scope}: {scope: 'platform' | 'workspace'}) {
       <h4>{categories[selected.category]}</h4>
       <p>{statuses[selected.status]} · {selected.room_name || 'Room unavailable'}</p>
       <p>{selected.workspace_name}</p>
+      {scope === 'platform' && selected.share_with_workspace && <p>Room report ID <code>{selected.id}</code></p>}
       {selected.details && <p className="case-text">{selected.details}</p>}
       {selected.evidence ? <blockquote>{selected.evidence}</blockquote> : <p>The reported post is no longer available.</p>}
       {selected.handed_off_at && <p>Shared with authorized workspace admins.</p>}

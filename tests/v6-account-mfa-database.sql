@@ -77,7 +77,14 @@ begin
   exception when insufficient_privilege then null;
   end;
   if public.st_v7_recover_authenticator(first_batch[1]) then raise exception 'A rotated code was accepted'; end if;
-  if not public.st_v7_recover_authenticator(lower(replacement[1])) then raise exception 'A current recovery code was rejected'; end if;
+  if public.st_v7_recovery_security_reset(lower(replacement[1]))<>'pending' then
+    raise exception 'A current recovery code did not start a pending reset'; end if;
+  if public.st_v7_recovery_security_reset(lower(replacement[1]))<>'pending'
+    or not exists(select 1 from auth.mfa_factors where user_id=account) then
+    raise exception 'Recovery removed the factor during cooling-off'; end if;
+  update sectalk_private.st_v7_account_security_changes set ready_at=now()-interval '1 minute' where user_id=account;
+  if public.st_v7_recovery_security_reset(lower(replacement[1]))<>'completed' then
+    raise exception 'Recovery did not complete after cooling off'; end if;
   if exists(select 1 from auth.sessions where user_id=account)
       or exists(select 1 from auth.mfa_factors where user_id=account)
       or exists(select 1 from sectalk_private.account_recovery_sets where user_id=account)

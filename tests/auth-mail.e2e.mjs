@@ -65,6 +65,12 @@ try {
   await page.getByRole('heading', { name: 'Your email is verified' }).waitFor()
   await page.getByRole('link', { name: 'Go to SecTalk sign in' }).click()
   await signIn(page, original, 200)
+  await page.getByLabel('Display name', {exact:true}).fill('Auth mail QA')
+  await page.getByLabel('Handle', {exact:true}).fill('authqa_' + randomBytes(6).toString('hex'))
+  await page.getByRole('button', {name:'Save profile',exact:true}).click()
+  await page.getByRole('button', {name:'Skip for now',exact:true}).click()
+  const activeDevice = page.getByRole('navigation', {name:'SecTalk features'})
+  await activeDevice.waitFor()
 
   const replay = await browser.newPage()
   await replay.goto(link)
@@ -88,9 +94,13 @@ try {
   await reset.getByLabel('Confirm password', { exact: true }).fill(changed)
   await reset.getByRole('button', { name: 'Update password' }).click()
   await reset.getByText('Password updated. Sign in with your new password.').waitFor()
+  await page.getByText('There is new activity in your account security settings.', {exact:true}).waitFor()
   await signIn(reset, original, 400)
   await signIn(reset, changed, 200)
-  console.log('Passed local signup email, passive link preview, confirmation, replay rejection, recovery OTP, and password replacement.')
+  await reset.getByRole('navigation', {name:'SecTalk features'}).getByRole('button',{name:'Profile',exact:true}).click()
+  await reset.getByRole('button',{name:'Security',exact:true}).click()
+  await reset.getByText(/Password change completed/).waitFor()
+  console.log('Passed local signup, passive link preview, replay rejection, immediate recovery OTP, and another device receiving the password alert.')
 } finally {
   await browser.close()
 }

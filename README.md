@@ -16,6 +16,21 @@ The browser uses the Supabase publishable key and the signed-in user's JWT. Neit
 
 Existing accounts created with passwordless sign-in can use **Forgot password** to set their first password. The Magic Link template applies to passwordless sign-in only. Supabase hosts auth templates independently from Vercel and the database migration.
 
+Enable **Secure email change** and allow the app origin as an Auth redirect. Keep email autoconfirm disabled so GoTrue sends confirmation to both addresses. SecTalk waits 24 hours before releasing a confirmed-address change or authenticator reset. The existing numeric password reset remains available as soon as the OTP is verified.
+
+SecTalk caps native sessions at 30 days after sign-in or 7 days without a refresh. For strict refresh-token reuse protection on self-hosted GoTrue, enable rotation and use the counter-based refresh-token algorithm. Keep the 10-second reuse allowance for concurrent refreshes. On managed Supabase, verify the equivalent policy and test that a stale ancestor revokes its latest descendant. Already issued JWTs can retain access until expiration on provider surfaces that do not recheck the session.
+
+```dotenv
+GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=true
+GOTRUE_SECURITY_REFRESH_TOKEN_ALGORITHM_VERSION=2
+GOTRUE_SECURITY_REFRESH_TOKEN_ALLOW_REUSE=false
+GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=10
+GOTRUE_SESSIONS_TIMEBOX=720h
+GOTRUE_SESSIONS_INACTIVITY_TIMEOUT=168h
+```
+
+The device registry uses secure browser storage and requires the server-only `SECTALK_DEVICE_BUNDLE_SERVICE_KEY` to finish device enrollment after verifying the signing key. Managed status requires a trusted management integration calling the provider-only registry procedure. The registry publishes approved public keys for authorized direct contacts. End-to-end message encryption is a separate protocol.
+
 ## Staff access
 
 Have the staff member verify an email code and create a SecTalk profile. Confirm the correct identity in Supabase Auth before running the following with a database operator account. Replace the UUID placeholder.

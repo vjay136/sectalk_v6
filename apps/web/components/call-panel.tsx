@@ -23,15 +23,27 @@ export function CallPanel({ state, self, name, openChat, reportContact }: {
 }) {
   const [muted, setMuted] = useState(false)
   const [camera, setCamera] = useState(true)
-  const { call, local, remote, connection, busy, answer, end, markBusy, screen, sharingBusy, shareScreen, stopSharing } = state
+  const { call, local, remote, connection, busy, answer, end, markBusy, screen, sharingBusy, shareScreen, stopSharing,
+    protection,confirmProtection } = state
   if (!call) return null
   const incoming = call.status === 'ringing' && call.callee === self
   const mode = call.video ? 'Video' : 'Audio'
+  const secure = call.media_protection===1
   const status = incoming ? 'Incoming call' : call.status === 'ringing' ? 'Ringing…'
+    : secure && !protection?.verified ? 'Waiting for code verification'
+    : secure && connection==='connected' && !protection?.ready ? 'Authenticating protected media…'
+    : secure && connection==='connected' && protection?.ready ? 'Protected media connected'
     : connection === 'connected' ? 'Connected' : connection === 'disconnected' || connection === 'failed' ? 'Reconnecting…' : 'Connecting…'
-  return <section className="call-panel" aria-label={mode + ' call'}>
+  return <section className="call-panel" aria-label={secure ? 'Protected '+mode.toLowerCase()+' call' : mode+' call'}>
     <div className="card-icon">{call.video ? <Video size={22} /> : <Phone size={21} />}</div>
     <div className="call-title"><h2>{name}</h2><p role="status">{mode} · {status}</p></div>
+    {secure && protection && <div>
+      <p>Verification code <output aria-label="Call verification code">{protection.code}</output></p>
+      {!protection.verified && <>
+        <p>Compare this code with your contact in a separate trusted channel. Hang up if the codes differ.</p>
+        <button type="button" className="secondary" onClick={confirmProtection}>Codes match</button>
+      </>}
+    </div>}
     {remote && <Media stream={remote} label="Remote participant" />}
     {local && call.video && <div className="self-media"><Media stream={screen || local} label={screen ? 'Your shared screen' : 'Your camera preview'} muted /></div>}
     <div className="action-row">
@@ -53,7 +65,7 @@ export function CallPanel({ state, self, name, openChat, reportContact }: {
         local.getVideoTracks().forEach(track => { track.enabled = !camera })
         setCamera(!camera)
       }}>{camera ? <Video size={18} /> : <VideoOff size={18} />}</button>}
-      {call.video && (connection === 'connected' || screen) && <button className="secondary" disabled={sharingBusy} onClick={() => void (screen ? stopSharing() : shareScreen())}>
+      {!secure && call.video && (connection === 'connected' || screen) && <button className="secondary" disabled={sharingBusy} onClick={() => void (screen ? stopSharing() : shareScreen())}>
         {screen ? <MonitorOff size={17} /> : <Monitor size={17} />} {screen ? 'Stop sharing' : 'Share screen'}
       </button>}
       <button className="danger" disabled={busy} onClick={end}><PhoneOff size={17} /> {incoming ? 'Decline' : call.status==='ringing'?'Cancel call':'Hang up'}</button>

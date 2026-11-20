@@ -6,12 +6,13 @@ import { ShieldCheck } from 'lucide-react'
 import { db } from '../lib/data'
 import { Brand } from './entry'
 import { useLocale } from './locale-provider'
+import { AccountSecurityChanges } from './account-security-changes'
 
 type RecoveryStatus = 'staff' | 'ready' | 'missing'
 type Setup = { id: string; qr: string; secret: string }
 const authenticatorName = 'SecTalk account'
 
-export function AccountMfa() {
+export function AccountMfa({hints}: {hints: EventTarget}) {
   const { t } = useLocale()
   const [factors, setFactors] = useState<Factor[] | null>(null)
   const [status, setStatus] = useState<RecoveryStatus | null>(null)
@@ -106,7 +107,7 @@ export function AccountMfa() {
     }
   }
 
-  return <div className="panel mfa-panel">
+  return <><div className="panel mfa-panel">
     <div className="card-icon"><ShieldCheck size={22} /></div>
     <h2>{t('authenticatorTitle')}</h2>
     <p>{t(totp ? 'authenticatorEnabled' : 'authenticatorDescription')}</p>
@@ -136,7 +137,7 @@ export function AccountMfa() {
       <button className="secondary" type="button" onClick={() => setCodes([])}>{t('recoveryCodesSaved')}</button>
     </div>}
     {error && <p role="alert">{error}</p>}
-  </div>
+  </div>{factors && status && <AccountSecurityChanges hints={hints} hasAuthenticator={Boolean(totp)} staff={status === 'staff'}/>}</>
 }
 
 export function SignInMfa({ retry, recovered }: { retry: () => void; recovered: () => void }) {
@@ -148,6 +149,7 @@ export function SignInMfa({ retry, recovered }: { retry: () => void; recovered: 
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [recoveryPending, setRecoveryPending] = useState('')
 
   useEffect(() => {
     let active = true
@@ -170,11 +172,20 @@ export function SignInMfa({ retry, recovered }: { retry: () => void; recovered: 
     setError('')
     try {
       if (recovery) {
-        const { data, error } = await db!.rpc('st_v7_recover_authenticator', { p_code: code })
-        if (error || !data) {
+        const { data, error } = await db!.rpc('st_v7_recovery_security_reset', { p_code: code })
+        if (error || data === 'unavailable') {
           setError(t(error?.code === 'PT429' ? 'recoveryRateLimit' : 'recoveryCodeError'))
           return
         }
+        if (data === 'pending') {
+          const pending = await db!.rpc('st_v7_account_security_status')
+          const ready = pending.data?.pending?.ready_at
+          setRecoveryPending(ready
+            ? 'Recovery can continue after ' + new Date(ready).toLocaleString() + '. Sign in and enter the same code then.'
+            : 'Recovery is pending during the 24-hour cooling-off period.')
+          return
+        }
+        if (data !== 'completed') return
         recovered()
         const result = await db!.auth.signOut({ scope: 'local' })
         if (result.error) retry()
@@ -205,6 +216,7 @@ export function SignInMfa({ retry, recovered }: { retry: () => void; recovered: 
       <button disabled={busy || (!recovery && !factorId)}>{t(recovery ? 'recoveryReset' : 'authenticatorVerify')}</button>
     </form>
     {error && <p role="alert">{error}</p>}
+    {recoveryPending && <p role="status">{recoveryPending}</p>}
     {status === 'staff' && <p>{t('recoveryStaff')}</p>}
     {status === 'ready' && <button type="button" className="secondary" disabled={busy} onClick={() => { setRecovery(!recovery); setCode(''); setError('') }}>
       {t(recovery ? 'authenticatorUseCode' : 'recoveryUseCode')}

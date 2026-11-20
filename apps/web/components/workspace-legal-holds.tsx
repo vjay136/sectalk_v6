@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
 import { RoomRetentionPolicy } from './room-retirement'
 import { WorkspacePolicyVersions } from './workspace-policy-versions'
+import { EmergencyAccess } from './emergency-access'
 
 type Hold = {
   id: string
@@ -22,7 +23,7 @@ function iso(value: FormDataEntryValue | null) {
   return value ? new Date(String(value)).toISOString() : null
 }
 
-export function WorkspaceLegalHolds({ workspace, members }: { workspace: string; members: Choice[] }) {
+export function WorkspaceLegalHolds({ workspace, members, owner }: { workspace: string; members: Choice[]; owner: boolean }) {
   const [state, setState] = useState<Access | null>(null)
   const [rooms, setRooms] = useState<Choice[]>([])
   const [factor, setFactor] = useState<string | null>(null)
@@ -32,6 +33,7 @@ export function WorkspaceLegalHolds({ workspace, members }: { workspace: string;
   const [message, setMessage] = useState('')
   const [retentionRevision, setRetentionRevision] = useState(0)
   const [historyRevision, setHistoryRevision] = useState(0)
+  const [showEmergency, setShowEmergency] = useState(false)
   const request = useRef<{ id: string; key: string } | null>(null)
   const current = useRef(0)
 
@@ -132,6 +134,10 @@ export function WorkspaceLegalHolds({ workspace, members }: { workspace: string;
         <summary>Policy changes and rollback</summary>
         <WorkspacePolicyVersions key={historyRevision} workspace={workspace} onChanged={() => setRetentionRevision(value => value + 1)} />
       </details>
+      {owner && <details className="release-create" onToggle={event => setShowEmergency(event.currentTarget.open)}>
+        <summary>Emergency access approvals</summary>
+        {showEmergency && <EmergencyAccess workspace={workspace}/>}
+      </details>}
       <p>Preserve matching workspace posts and protected versions during edits or removal. Date boundaries use your device’s time zone.</p>
       <details className="release-create">
         <summary>Place a preservation hold</summary>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { db, formatError, liveChannel, onReconnect, type Call } from './data'
 import { createCallQos } from './call-qos'
+import { protectedCallKeys, protectedCallSupported, protectedDescription, protectedTransports } from './protected-call'
 
 type Signal = {
   id: string; sender: string; kind: 'offer' | 'answer' | 'ice'; created_at: string
@@ -38,6 +39,8 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   const [busy, setBusy] = useState(false)
   const [screen, setScreen] = useState<MediaStream | null>(null)
   const [sharingBusy, setSharingBusy] = useState(false)
+  const [protection,setProtection] = useState<{code:string;verified:boolean;ready:boolean}|null>(null)
+  const approveCode=useRef<(()=>void)|null>(null)
   const stream = useRef<MediaStream | null>(null)
   const displayStream = useRef<MediaStream | null>(null)
   const activePeer = useRef<RTCPeerConnection | null>(null)
@@ -58,6 +61,9 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     stream.current = null
     setLocal(null)
     setRemote(null)
+    setProtection(null)
+    approveCode.current?.()
+    approveCode.current=null
     setConnection('connecting')
   }, [])
 
@@ -158,15 +164,16 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     }
   }, [user, refresh, applyCall, hints, device])
 
-  async function start(chatId: string, video: boolean) {
+  async function start(chatId: string, video: boolean, secure=false) {
     if (started.current || current.current) return
     started.current = true
     setBusy(true)
     try {
+      if (secure && !protectedCallSupported(video)) throw new Error('Protected calls require a browser with encoded media transforms.')
       const source = await media(video)
       if (!mounted.current) { source.getTracks().forEach(track => track.stop()); return }
       stream.current = source
-      const { data, error } = await db!.rpc('st_v6_start_call', { p_chat: chatId, p_video: video, p_device: device })
+      const { data, error } = await db!.rpc(secure?'st_v6_start_protected_call':'st_v6_start_call', { p_chat: chatId, p_video: video, p_device: device })
       if (error) throw error
       if (!mounted.current) {
         await db!.rpc('st_v6_call_action', { p_call: data, p_action: 'end', p_device: device })
@@ -191,6 +198,9 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     started.current = true
     setBusy(true)
     try {
+      if (incoming.media_protection && (incoming.media_protection!==1 || !protectedCallSupported(incoming.video))) {
+        throw new Error('This browser cannot answer the protected call.')
+      }
       const source = await media(incoming.video)
       if (!mounted.current || current.current?.id !== incoming.id) {
         source.getTracks().forEach(track => track.stop())
@@ -198,7 +208,9 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       }
       stream.current = source
       answering.current = incoming.id
-      const accept = () => db!.rpc('st_v6_call_action', { p_call: incoming.id, p_action: 'accept', p_device: device })
+      const accept = () => incoming.media_protection===1
+        ? db!.rpc('st_v6_accept_protected_call',{p_call:incoming.id,p_device:device})
+        : db!.rpc('st_v6_call_action', { p_call: incoming.id, p_action: 'accept', p_device: device })
       let response = await accept()
       if (response.error && (response.status === 0 || response.status >= 500) && mounted.current) response = await accept()
       const { data, error } = response
@@ -231,8 +243,10 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   const activeId = call?.status === 'active' ? call.id : null
   const isCaller = call?.caller === user
   useEffect(() => {
-    if (!activeId || !local) return
+    if (!activeId || !local || !call) return
     const callId = activeId
+    const secure=Boolean(call.media_protection)
+    const video=call.video
     const qos = createCallQos('direct', callId, device, isCaller)
     qos.started()
     let disposed = false
@@ -257,6 +271,10 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     let routeSampled = false
     let mosTimer: number | undefined
     let mosAttempts = 0
+    let protectedMedia:ReturnType<typeof protectedTransports>|undefined
+    let releaseCode:(()=>void)|undefined
+    let verifiedTimer:number|undefined
+    let encryptedTimer:number|undefined
 
     function fail(message: string) {
       if (disposed) return
@@ -379,9 +397,13 @@ export function useCalling(user: string, notice: (message: string) => void, hint
             const description = row.payload as RTCSessionDescriptionInit
             if (lastRemoteSdp === description.sdp ||
                 (row.kind === 'answer' && peer.signalingState !== 'have-local-offer')) continue
+            if (secure && !protectedDescription(description,video)) throw new Error('Unexpected protected media description')
             if (row.kind === 'offer' && iceDeadline - performance.now() <= 60000) await renewIce(peer)
             if (disposed) return
             await peer.setRemoteDescription(description)
+            if (secure && peer.getTransceivers().some(transport=>!protectedMedia?.receivers.has(transport.receiver))) {
+              throw new Error('Unexpected unprotected media receiver')
+            }
             lastRemoteSdp = description.sdp
             remoteUfrags = new Set([...description.sdp?.matchAll(/^a=ice-ufrag:([^\r\n]+)/gm) ?? []].map(match => match[1]))
             const remaining: RTCIceCandidateInit[] = []
@@ -409,14 +431,55 @@ export function useCalling(user: string, notice: (message: string) => void, hint
 
     async function negotiate() {
       try {
+        const keys=secure ? await protectedCallKeys(call!,user,async key=>{
+          const result=await db!.rpc('st_v6_protected_call_key',{p_call:callId,p_device:device,p_key:key})
+          if (result.error) throw result.error
+          return typeof result.data==='string'?result.data:null
+        },()=>disposed) : null
+        if (disposed) return
+        if (keys) {
+          setProtection({code:keys.code,verified:false,ready:false})
+          await new Promise<void>(resolve=>{
+            releaseCode=resolve
+            approveCode.current=resolve
+            verifiedTimer=window.setTimeout(()=>fail('The protection code was not verified in time.'),120000)
+          })
+          window.clearTimeout(verifiedTimer)
+          approveCode.current=null
+          if (disposed || current.current?.id!==callId) return
+          setProtection({code:keys.code,verified:true,ready:false})
+        }
         const { config, ttlSeconds } = await callConfiguration(callId)
         if (disposed) return
         const peer = new RTCPeerConnection(config)
         pc = peer
         activePeer.current = peer
         scheduleIceRenewal(peer, ttlSeconds)
-        local!.getTracks().forEach(track => peer.addTrack(track, local!))
-        peer.ontrack = event => { if (!disposed && event.streams[0]) setRemote(event.streams[0]) }
+        if (keys) {
+          const incoming=new MediaStream()
+          const confirmed=new Set<string>()
+          function showProtectedMedia() {
+            if (!disposed && confirmed.has('audio') && (!video || confirmed.has('video')) &&
+              incoming.getAudioTracks().length===1 && (!video || incoming.getVideoTracks().length===1)) {
+              window.clearTimeout(encryptedTimer)
+              setRemote(incoming)
+              setProtection({code:keys!.code,verified:true,ready:true})
+            }
+          }
+          protectedMedia=protectedTransports(peer,local!,keys,kind=>{
+            confirmed.add(kind)
+            showProtectedMedia()
+          },()=>fail('Protected media encryption failed.'))
+          peer.ontrack=event=>{
+            if (!protectedMedia?.receivers.has(event.receiver) || incoming.getTracks().includes(event.track)) return
+            incoming.addTrack(event.track)
+            showProtectedMedia()
+          }
+          encryptedTimer=window.setTimeout(()=>fail('Protected media could not be authenticated.'),18000)
+        } else {
+          local!.getTracks().forEach(track => peer.addTrack(track, local!))
+          peer.ontrack = event => { if (!disposed && event.streams[0]) setRemote(event.streams[0]) }
+        }
         peer.onicecandidate = event => {
           if (event.candidate) void transmit('ice', event.candidate.toJSON()).catch(() => undefined)
         }
@@ -471,12 +534,17 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       window.clearInterval(polling)
       window.clearTimeout(iceTimer)
       window.clearTimeout(mosTimer)
+      window.clearTimeout(verifiedTimer)
+      window.clearTimeout(encryptedTimer)
+      releaseCode?.()
+      approveCode.current=null
       removeChannel?.()
       removeHint?.()
       if (activePeer.current === pc) activePeer.current = null
       pc?.close()
+      protectedMedia?.close()
     }
-  }, [activeId, isCaller, local, user, end, notice, hints, device])
+  }, [activeId, call, isCaller, local, user, end, notice, hints, device])
 
   async function stopSharing() {
     const capture = displayStream.current
@@ -496,7 +564,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     const peer = activePeer.current
     const camera = stream.current?.getVideoTracks()[0]
     const sender = peer?.getSenders().find(item => item.track === camera)
-    if (sharingBusy || displayStream.current || !peer || peer.connectionState !== 'connected' || !camera || !sender) return
+    if (current.current?.media_protection || sharingBusy || displayStream.current || !peer || peer.connectionState !== 'connected' || !camera || !sender) return
     if (!navigator.mediaDevices?.getDisplayMedia) { notice('This browser does not support screen sharing.'); return }
     setSharingBusy(true)
     let capture: MediaStream | undefined
@@ -517,5 +585,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     }
   }
 
-  return { call, local, remote, connection, busy, start, answer, end, markBusy, historyVersion, screen, sharingBusy, shareScreen, stopSharing }
+  const confirmProtection=()=>approveCode.current?.()
+  return { call, local, remote, connection, busy, start, answer, end, markBusy, historyVersion, screen, sharingBusy, shareScreen, stopSharing,
+    protection,confirmProtection }
 }

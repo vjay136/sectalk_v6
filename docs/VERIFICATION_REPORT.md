@@ -5,9 +5,9 @@
 | Check | Result |
 | --- | --- |
 | Feature registry structure | 239 unique IDs across 19 modules, with matching matrix rows |
-| Clean source snapshot | The staged 137-feature snapshot passed 34 unit tests and a production build on checksum-verified Node 24.22.3, isolated Edge acceptance flows, and source and browser secret scans. A fresh local Supabase project applied the exact staged migrations and passed 90 rollback suites. |
+| Clean source snapshot | The staged 147-feature snapshot passed 34 unit tests and a production build on checksum-verified Node 24.22.3, targeted Edge flows, and source and browser secret checks. A fresh local Supabase project installed the exact migrations and passed 96 rollback suites. |
 | Unit tests | 34 passed, including document heuristics, attachment MIME handling, export payloads, SMTP, VAPID and readiness |
-| Supabase database integration | All 84 staged checkpoint rollback suites passed, including case collaboration, classified forwarding, workspace overview, incident scope and expanded scanner policy |
+| Supabase database integration | The earlier 127-feature checkpoint passed 84 rollback suites, including case collaboration, classified forwarding, workspace overview, incident scope and expanded scanner policy |
 | Readiness and status | Local health, readiness and JSON status returned healthy results. The public status page rendered the same database check. |
 | Two-browser chat | Direct messaging, custom reaction synchronization and removal, Find Friends navigation passed |
 | New UI | Saved-message creation and removal, filename and direction filters, and authorized ZIP download passed |
@@ -92,6 +92,7 @@
 | Office and compressed PDF inspection | The updated isolated ClamAV pipeline and clean Edge candidate verified document structure, mismatch denial, bounded archives, macro and embedded-link quarantine, known hashes and authorized release. |
 | Workspace governance, escalation and guest access | Edge and SQL verified policy simulation and rollback, scoped workspace analytics, personal and consented room escalation with real TOTP, room-only guest leases, and real lobby-approved LiveKit guest media. Hosted CAPTCHA remains a setup and acceptance item. |
 | Billing, resumable uploads, private exports and draft summaries | Edge verified scheduled multi-currency pricing and grandfathered terms through HTTP and SQL, resumable bytes and cleanup using real local Storage, scoped private export artifacts, and consent-gated meeting and room summaries. Stripe checkout in a provider sandbox remains open. |
+| Account lifecycle, emergency access and operations | Exact staged Edge verified signup link and numeric recovery OTP, another device receiving a security alert, delayed account changes, device trust, owner-approved one-time evidence, file history, queue replay and timed expiration. Native encrypted direct and three-person meetings passed in Edge with a local media provider. |
 | Updated candidate | `npm run build` passed with synchronized drafts, private notification controls, media checks and scoped analytics. |
 | Real Storage | Upload, authorized download, revoke, private profile photos and blocking passed |
 | Local Auth and mail | Signup link delivery, passive link preview, confirmation, replay rejection, recovery OTP and password replacement passed |

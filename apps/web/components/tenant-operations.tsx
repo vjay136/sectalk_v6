@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
+import { SectionTabs } from './section-tabs'
+import { EmergencyAccess } from './emergency-access'
 
 type WorkspaceMetadata = { id: string; name: string; created_at: string }
 type WorkspaceDetails = WorkspaceMetadata & { member_count: number }
@@ -9,6 +11,7 @@ type WorkspaceDetails = WorkspaceMetadata & { member_count: number }
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
 export function TenantOperations({ onAccessChanged }: { onAccessChanged: () => Promise<void> }) {
+  const [tab, setTab] = useState<'workspaces' | 'emergency'>('workspaces')
   const [results, setResults] = useState<WorkspaceMetadata[] | null>(null)
   const [selected, setSelected] = useState<WorkspaceDetails | null>(null)
   const [busy, setBusy] = useState(false)
@@ -60,6 +63,9 @@ export function TenantOperations({ onAccessChanged }: { onAccessChanged: () => P
 
   return <div className="panel">
     <div className="panel-header"><h2>Tenant operations</h2></div>
+    <SectionTabs label="Tenant operations sections" value={tab} onChange={setTab}
+      options={ [['workspaces','Workspace lookup'], ['emergency','Emergency access']] }/>
+    {tab === 'emergency' ? <EmergencyAccess/> : <>
     <form onSubmit={search}>
       <label>Workspace ID or start of name<input type="search" name="query" minLength={2} maxLength={64} required disabled={busy}/></label>
       <button className="primary" disabled={busy}>Search workspaces</button>
@@ -82,6 +88,7 @@ export function TenantOperations({ onAccessChanged }: { onAccessChanged: () => P
         disabled={busy} onClick={() => void view(workspace.id)}>
         <span><strong>{workspace.name}</strong><small>{workspace.id}</small></span>
       </button>)}
+    </>}
     </>}
   </div>
 }

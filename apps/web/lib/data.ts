@@ -38,9 +38,10 @@ export type Chat = {
   id: string; member_a: string; member_b: string; requester: string
   status: 'pending' | 'accepted' | 'declined'; updated_at: string
 }
-export type Message = { id: string; chat_id: string; sender: string; body: string; created_at: string; edited_at?: string | null; reply_to?: string | null; revoked_at?: string | null; forwarded?: boolean }
+export type Message = { id: string; chat_id: string; sender: string; body: string; created_at: string; edited_at?: string | null; reply_to?: string | null; revoked_at?: string | null; forwarded?: boolean; expires_at?: string | null }
 export type Call = {
   id: string; chat_id: string; caller: string; callee: string; video: boolean
+  media_protection?: number
   status: 'ringing' | 'active' | 'ended'; expires_at: string; created_at: string
   end_reason?: 'missed' | 'declined' | 'cancelled' | 'busy' | null
 }

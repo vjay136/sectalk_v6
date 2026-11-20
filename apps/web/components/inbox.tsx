@@ -34,6 +34,8 @@ import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
 import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
 import { AccountMfa } from './account-mfa'
+import { DeviceSessions } from './device-sessions'
+import { DeviceRegistry } from './device-registry'
 import { DraftStatus, notifyDraftChange, useSyncedDraft } from './synced-draft'
 import { pendingWorkspaceInvite } from '../lib/workspace-invite'
 import { QuietHoursSettings, useEffectiveAvailability, useQuietIncoming } from './quiet-hours'
@@ -71,7 +73,7 @@ export function Inbox({ user }: { user: string }) {
   const [paletteSearch,setPaletteSearch]=useState({query:'',sequence:0})
   const [chatTasks,setChatTasks]=useState(false)
   const [sourceTask,setSourceTask]=useState<string|null>(null)
-  const [profileTab, setProfileTab] = useState<'account' | 'security' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help'>('account')
+  const [profileTab, setProfileTab] = useState<'account' | 'security' | 'sessions' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help'>('account')
   const [managedBlock,setManagedBlock]=useState<Chat|null>(null)
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
@@ -210,6 +212,17 @@ export function Inbox({ user }: { user: string }) {
           }
         })
       })
+      .on('broadcast', { event: 'account_security_lifecycle' }, () => {
+        hints.dispatchEvent(new Event('account_security_lifecycle'))
+        announceAlert('There is new activity in your account security settings.', 'critical')
+      })
+      .on('broadcast', { event: 'session_lifecycle' }, () => {
+        hints.dispatchEvent(new Event('session_lifecycle'))
+        void db!.rpc('st_v7_current_session_valid').then(({data,error}) => {
+          if (!error && data === false) void db!.auth.signOut({scope:'local'})
+        })
+      })
+      .on('broadcast', { event: 'device_registry' }, () => hints.dispatchEvent(new Event('device_registry')))
       .on('broadcast', { event: 'workspace_memberships' }, () => { void reloadWorkspaces(); void refresh() })
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))
@@ -454,13 +467,14 @@ export function Inbox({ user }: { user: string }) {
       <div className="list-footer"><Avatar name={profile.name} photo={myExtras.photo}/><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
     </aside>
     {tab === 'profile' ? <section className="content-page"><h1>{t('profile')}</h1>
-      <SectionTabs label={t('profileSections')} value={profileTab} onChange={setProfileTab} options={ [['account',t('account')],['security',t('accountSecurity')],['availability',t('availability')],['discovery',t('discovery')],['activity',t('activityReports')],['blocked',t('blockedContacts')],['help',t('help')]] }/>
+      <SectionTabs label={t('profileSections')} value={profileTab} onChange={setProfileTab} options={ [['account',t('account')],['security',t('accountSecurity')],['sessions','Devices and sessions'],['availability',t('availability')],['discovery',t('discovery')],['activity',t('activityReports')],['blocked',t('blockedContacts')],['help',t('help')]] }/>
       {profileTab === 'account' ? <><div className="profile-handle"><code>@{profile.handle}</code><button className="secondary" onClick={async () => {
         try { await navigator.clipboard.writeText(profile.handle); setNotice('Handle copied.') }
         catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
       }}><Copy size={15} /> Copy handle</button></div>
       <ProfileForm profile={profile} onSave={refresh} /><ProfileAppearance user={user} profile={myExtras}/></> :
-      profileTab==='security'?<AccountMfa/>:
+      profileTab==='security'?<AccountMfa hints={hints}/>:
+      profileTab==='sessions'?<><DeviceSessions hints={hints}/><DeviceRegistry hints={hints}/></>:
       profileTab==='discovery'?<DiscoverySettings user={user}/>:
       profileTab==='activity'?<ProfileActivity openReports={()=>setTab('safety')}/>:
       profileTab==='help'?<InProductHelp openFriends={()=>setTab('friends')} openSafety={()=>setTab('safety')}/>:
@@ -524,6 +538,15 @@ export function Inbox({ user }: { user: string }) {
               }}><ListChecks size={18}/></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start audio call" title="Start audio call" onClick={() => void call.start(chat.id, false)}><Phone size={18} /></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start video call" title="Start video call" onClick={() => void call.start(chat.id, true)}><Video size={20} /></button>
+              <details className="call-menu">
+                <summary className="icon" aria-label="Protected call options" title="Protected calls"><ShieldCheck size={18}/></summary>
+                <div className="message-menu-panel" style={{top:'100%',right:0,bottom:'auto'}}>
+                  <button type="button" className="text-button" disabled={call.busy || !!call.call}
+                    onClick={()=>void call.start(chat.id,false,true)}>Start protected audio call</button>
+                  <button type="button" className="text-button" disabled={call.busy || !!call.call}
+                    onClick={()=>void call.start(chat.id,true,true)}>Start protected video call</button>
+                </div>
+              </details>
             </>}
             <button className="icon" title="Report contact" aria-label="Report contact" onClick={() => setReport({ chat: chat.id, message: null })}><Flag size={18} /></button>
             <button className="icon" title={blocked ? 'Unblock contact' : 'Block contact'} aria-label={blocked ? 'Unblock contact' : 'Block contact'} onClick={() => setBlockCheck(true)}><Ban size={18} /></button>
@@ -617,13 +640,13 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
           row.status==='active'&&Date.parse(row.expires_at)>now?'In progress':row.status==='ringing'?'Ringing':'Ended'
         return <div className="report-row" key={row.id}>
           <Avatar name={name} />
-          <div><strong>{name}</strong><small>{incoming ? 'Incoming' : 'Outgoing'} {row.video ? 'video' : 'audio'} · {new Date(row.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</small><span className="call-state">{status}</span></div>
+          <div><strong>{name}</strong><small>{incoming ? 'Incoming' : 'Outgoing'} {row.media_protection===1?'protected ':''}{row.video ? 'video' : 'audio'} · {new Date(row.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</small><span className="call-state">{status}</span></div>
           {reachable && <span className="call-history-controls">
             {incoming&&missed(row)&&<button className="secondary" aria-label={'Call back '+name}
-              disabled={state.busy||!!state.call} onClick={()=>void state.start(row.chat_id,row.video)}>Call back</button>}
+              disabled={state.busy||!!state.call} onClick={()=>void state.start(row.chat_id,row.video,row.media_protection===1)}>Call back</button>}
             <button className="icon" aria-label={'Open conversation with ' + name} title="Open conversation" onClick={() => openChat(row.chat_id)}><MessageCircle size={17} /></button>
-            <button className="icon" aria-label={'Start audio call with ' + name} title="Audio call" disabled={state.busy || !!state.call} onClick={() => void state.start(row.chat_id, false)}><Phone size={17} /></button>
-            <button className="icon" aria-label={'Start video call with ' + name} title="Video call" disabled={state.busy || !!state.call} onClick={() => void state.start(row.chat_id, true)}><Video size={17} /></button>
+            <button className="icon" aria-label={'Start '+(row.media_protection===1?'protected ':'')+'audio call with '+name} title={row.media_protection===1?'Protected audio call':'Audio call'} disabled={state.busy || !!state.call} onClick={() => void state.start(row.chat_id,false,row.media_protection===1)}><Phone size={17} /></button>
+            <button className="icon" aria-label={'Start '+(row.media_protection===1?'protected ':'')+'video call with '+name} title={row.media_protection===1?'Protected video call':'Video call'} disabled={state.busy || !!state.call} onClick={() => void state.start(row.chat_id,true,row.media_protection===1)}><Video size={17} /></button>
           </span>}
         </div>
       })}
@@ -721,7 +744,10 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const composerInput=useRef<HTMLTextAreaElement>(null)
   const cursor=useRef<{start:number;end:number}|null>(null)
   const [replying, setReplying] = useState<Message | null>(null)
-  const [quotes,setQuotes]=useState<Record<string,Pick<Message,'id'|'sender'|'body'>>>({})
+  const [quotes,setQuotes]=useState<Record<string,Pick<Message,'id'|'sender'|'body'|'expires_at'>>>({})
+  const [expireAfter, setExpireAfter] = useState(0)
+  const pendingExpiry = useRef<{id:string;body:string;seconds:number;reply:string|null}|null>(null)
+  const [expiryClock, setExpiryClock] = useState(Date.now)
   const [history,setHistory]=useState<EditHistory|null>(null)
   const [historySettings,setHistorySettings]=useState(false)
   const [clock, setClock] = useState(0)
@@ -748,6 +774,33 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const runAgain=useRef(false)
   const refreshWindow=useRef(false)
   const activityVersion=useRef(0)
+  useEffect(() => {
+    const expiring=[...messages,...Object.values(quotes),replying,removing?.message]
+      .flatMap(message=>message?.expires_at?[Date.parse(message.expires_at)]:[])
+    const alive = (message: Pick<Message, 'expires_at'>, now: number) =>
+      !message.expires_at || Date.parse(message.expires_at)>now
+    let timer: number | undefined
+    function advance() {
+      window.clearTimeout(timer)
+      const now = Date.now()
+      setExpiryClock(now)
+      if (expiring.some(time=>time<=now)) {
+        setMessages(rows=>rows.some(row=>!alive(row,now))?rows.filter(row=>alive(row,now)):rows)
+        setQuotes(rows=>Object.values(rows).some(row=>!alive(row,now))?
+          Object.fromEntries(Object.entries(rows).filter(([,row])=>alive(row,now))):rows)
+        setReplying(row=>row&&!alive(row,now)?null:row)
+        setRemoving(row=>row&&!alive(row.message,now)?null:row)
+      }
+      const next = Math.min(...expiring.filter(time=>time>now))
+      if (Number.isFinite(next)) timer=window.setTimeout(advance,next-now)
+    }
+    advance()
+    document.addEventListener('visibilitychange',advance)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange',advance)
+    }
+  }, [messages,quotes,replying,removing])
   const merge = useCallback((rows: DirectMessage[], existingOnly=false) => {
     for(const row of rows)if(row.revoked_at)revoked.current.set(row.id,row)
     const current=rows.map(row=>revoked.current.get(row.id)||row)
@@ -895,7 +948,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
             void loadLatest.current(undefined,false)
           }else if(payload.eventType==='UPDATE')merge([message],true)
           if(payload.eventType==='UPDATE')setQuotes(current=>current[message.id]?
-            {...current,[message.id]:{id:message.id,sender:message.sender,body:message.body.slice(0,240)}}:current)
+            {...current,[message.id]:{id:message.id,sender:message.sender,body:message.body.slice(0,240),expires_at:message.expires_at}}:current)
         }
       })
       .subscribe(status => { if (status === 'SUBSCRIBED') void loadLatest.current() })
@@ -1031,7 +1084,29 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     if((!body&&!attachment)||sending.current||busy||blocked)return
     const reply=replying?.id??null
     const at=new Date().toISOString()
-    if(attachment){
+    if(expireAfter){
+      if(!navigator.onLine||attachment){inform('Reconnect to send a disappearing text message.');return}
+      if(pendingExpiry.current?.body!==body||pendingExpiry.current.seconds!==expireAfter||pendingExpiry.current.reply!==reply)
+        pendingExpiry.current={id:crypto.randomUUID(),body,seconds:expireAfter,reply}
+      sending.current=true
+      setBusy(true)
+      try{
+        const result=await db!.rpc('st_v6_send_disappearing_message',{
+          p_chat:chat.id,p_id:pendingExpiry.current.id,p_body:body,p_seconds:expireAfter,p_reply:reply,
+        })
+        if(result.error)throw result.error
+        pendingExpiry.current=null
+        setExpireAfter(0)
+        nearBottom.current=true
+        void load()
+      }catch(error){
+        inform(formatError(error,'Could not send the disappearing message. Your draft is still here.'))
+        return
+      }finally{
+        sending.current=false
+        setBusy(false)
+      }
+    }else if(attachment){
       if(!navigator.onLine){inform('Reconnect to send attachments.');return}
       void transmit({id:attachment.id,body,reply,file:attachment.file,at,state:'queued'})
       setAttachment(null)
@@ -1147,10 +1222,13 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       }}>Load earlier messages</button>}
       {results?.length === 0 && <p>No messages match that search.</p>}
       {results === null && loaded && !messages.length && <div className="empty-thread"><div className="card-icon"><MessageCircle size={24}/></div><h2>Say hello</h2><p>This is the start of your conversation.</p></div>}
-      {(results ?? messages).filter(message=>!hidden.includes(message.id)).map(message => {
+      {(results ?? messages).filter(message=>!hidden.includes(message.id)&&
+        (!message.expires_at||Date.parse(message.expires_at)>expiryClock)).map(message => {
         const own = message.sender === self
         const file=message.revoked_at?undefined:files[message.id]
+        const sourceQuote=message.reply_to?quotes[message.reply_to]:null
         const quote=message.reply_to&&!hidden.includes(message.reply_to)&&!revoked.current.has(message.reply_to)
+          &&(!sourceQuote?.expires_at||Date.parse(sourceQuote.expires_at)>expiryClock)
           ? quotes[message.reply_to]:null
         const read=own&&typeof activity?.read_sequence==='number'&&message.sequence<=activity.read_sequence
           &&message.sequence>=(activity.read_since_sequence??0)
@@ -1183,6 +1261,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
             account={self} message={message.id} revision={message.edited_at||message.created_at} body={message.body} sender={message.sender}
             onReport={()=>onReport(message,file)}/>}
           <div className="message-meta"><time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
+            {message.expires_at&&!message.revoked_at&&<span>Disappears at {formatTime(message.expires_at)}</span>}
             {message.forwarded&&!message.revoked_at&&<span>Forwarded</span>}
             {message.edited_at&&!message.revoked_at && (!blocked&&(own||activity?.share_peer_edit_history)?
               <button type="button" className="text-button" aria-label="View edit history" onClick={async () => {
@@ -1202,16 +1281,16 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
                     onClick={() => void react(message.id,option.emoji)}>{option.emoji}</button>
                 })}</div>
                 <button type="button" className="text-button" onClick={()=>setReacting(message.id)}>More reactions</button>
-                <button type="button" className="text-button" onClick={() => void update('st_v2_pin', { p_chat: chat.id, p_message: message.id })}>Pin message</button>
+                {!message.expires_at&&<button type="button" className="text-button" onClick={() => void update('st_v2_pin', { p_chat: chat.id, p_message: message.id })}>Pin message</button>}
                 <button type="button" className="text-button" onClick={() => setReplying(message)}>Reply</button>
-                {!file&&<button type="button" className="text-button" onClick={()=>setForwarding(message.id)}>Forward message</button>}
-                {own&&!file&&Date.now()-Date.parse(message.created_at)<86400000&&<button type="button" className="text-button" onClick={()=>setEditing(message)}>Edit message</button>}</>}
+                {!file&&!message.expires_at&&<button type="button" className="text-button" onClick={()=>setForwarding(message.id)}>Forward message</button>}
+                {own&&!file&&!message.expires_at&&Date.now()-Date.parse(message.created_at)<86400000&&<button type="button" className="text-button" onClick={()=>setEditing(message)}>Edit message</button>}</>}
                 {file&&<button type="button" className="text-button" onClick={()=>void download(file)}>Download attachment</button>}
-                {!message.revoked_at&&<button type="button" className="text-button" onClick={async()=>{
+                {!message.revoked_at&&!message.expires_at&&<button type="button" className="text-button" onClick={async()=>{
                   const result=await setSavedMessage(message.id,true)
                   inform(result.error?'Could not save this message.':'Message saved. Find it in Inbox → Saved messages.')
                 }}>Save message</button>}
-                {!blocked&&!message.revoked_at&&<button type="button" className="text-button" onClick={()=>onTask(message.id)}>Create task from message</button>}
+                {!blocked&&!message.revoked_at&&!message.expires_at&&<button type="button" className="text-button" onClick={()=>onTask(message.id)}>Create task from message</button>}
                 {!own&&!message.revoked_at&&<button type="button" className="text-button" onClick={()=>onReport(message,file)}>Report message</button>}
                 <button type="button" className="text-button" onClick={()=>setRemoving({message,action:'hide'})}>Delete for me</button>
                 {own&&!message.revoked_at&&<button type="button" className="text-button remove-text" onClick={()=>setRemoving({message,action:'revoke'})}>Revoke for everyone</button>}
@@ -1285,20 +1364,25 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         <button className="primary" disabled={blocked}>Save history setting</button>
       </form>
     </Dialog>}
-    {replying && <div className="thread-pin"><span>Replying to <EmojiText value={replying.body}/></span><button type="button" className="icon" aria-label="Cancel reply" onClick={() => setReplying(null)}><X size={16}/></button></div>}
+    {replying && (!replying.expires_at||Date.parse(replying.expires_at)>expiryClock) && <div className="thread-pin"><span>Replying to <EmojiText value={replying.body}/></span><button type="button" className="icon" aria-label="Cancel reply" onClick={() => setReplying(null)}><X size={16}/></button></div>}
     {attachment&&<div className="thread-pin"><Paperclip size={16}/><span>{attachment.file.name}</span>
       <button type="button" className="icon" disabled={busy} aria-label="Remove attachment" onClick={()=>setAttachment(null)}><X size={16}/></button>
     </div>}
     {emoji&&<Dialog title="Add emoji" close={()=>setEmoji(false)}><ChatEmoji onPick={pickEmoji}/></Dialog>}
     {reacting&&<Dialog title="Add a reaction" close={()=>setReacting(null)}><ChatEmoji onPick={value=>void react(reacting,value)}/></Dialog>}
     {scheduleOpen&&<Dialog title="Scheduled messages" close={()=>setScheduleOpen(false)}>
-      <ScheduledMessages chat={chat.id} draft={draft.trim()} schedule={schedule} canSchedule={!blocked&&Boolean(draft.trim())&&!replying&&!attachment}/>
+      <ScheduledMessages chat={chat.id} draft={draft.trim()} schedule={schedule} canSchedule={!blocked&&Boolean(draft.trim())&&!replying&&!attachment&&!expireAfter}/>
     </Dialog>}
     <DraftStatus draft={syncedDraft}/>
     {!blocked && fileCapacity && <p id="attachment-capacity" className="attachment-capacity muted">
       {formatChatFileBytes(fileCapacity.max_file_bytes)} per attachment · {formatChatFileBytes(Math.max(0,
         fileCapacity.max_storage_bytes - fileCapacity.stored_bytes - fileCapacity.reserved_bytes))} storage available
     </p>}
+    <label className="attachment-capacity">Message timer<select value={expireAfter} disabled={blocked||busy||Boolean(attachment)}
+      onChange={event=>setExpireAfter(Number(event.target.value))}>
+      <option value={0}>Off</option><option value={60}>1 minute</option><option value={3600}>1 hour</option>
+      <option value={86400}>1 day</option><option value={604800}>7 days</option>
+    </select></label>
     <form className="composer" onSubmit={send}>
       <input ref={filePicker} hidden type="file" accept={extensions} onChange={event=>{
         const file=event.target.files?.[0]
@@ -1312,7 +1396,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       }}/>
       <button type="button" className="icon" title="Attach file" aria-label="Attach file"
         aria-describedby={!blocked&&fileCapacity?'attachment-capacity':undefined}
-        disabled={blocked||busy} onClick={()=>filePicker.current?.click()}><Paperclip size={19}/></button>
+        disabled={blocked||busy||Boolean(expireAfter)} onClick={()=>filePicker.current?.click()}><Paperclip size={19}/></button>
       <button type="button" className="icon" title="Add emoji" aria-label="Add emoji" disabled={blocked||busy} onClick={()=>{
         if(composerInput.current)cursor.current={start:composerInput.current.selectionStart,end:composerInput.current.selectionEnd}
         setEmoji(true)
