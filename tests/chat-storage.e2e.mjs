@@ -1,5 +1,6 @@
 // Run with the Supabase CLI local stack, the app migrations and loopback-only API keys.
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 
@@ -82,6 +83,47 @@ if(app) {
     await first.locator(sample).filter({hasText:'Emoji reaction integration'}).locator('.reaction-row .custom-emoji').waitFor()
     await message.locator('.reaction-row button[aria-pressed=true]').click()
     await first.locator(sample).filter({hasText:'Emoji reaction integration'}).locator('.reaction-row .custom-emoji').waitFor({state:'detached'})
+    if(process.env.SECTALK_TEST_V6==='1') {
+      const sampleMessage=first.locator(sample).filter({hasText:'Emoji reaction integration'})
+      await sampleMessage.locator('summary[aria-label="Message actions"]').click()
+      await sampleMessage.getByRole('button',{name:'Save message',exact:true}).click()
+      await first.getByText('Message saved. Find it in Inbox → Saved messages.').waitFor()
+      const savedResponse=first.waitForResponse(response=>response.request().method()==='GET'&&response.url().includes('/rest/v1/st_v6_saved_messages'))
+      await first.getByRole('button',{name:'Saved messages',exact:true}).click()
+      const savedList=await savedResponse
+      assert.equal(savedList.status(),200,'Saved-message API did not return HTTP 200')
+      const savedRows=await savedList.json()
+      assert.ok(savedList.ok(),JSON.stringify(savedRows))
+      assert.ok(savedRows.some(row=>row.message?.body==='Emoji reaction integration'),'Saved message was not returned by the API')
+      await first.getByRole('heading',{name:'Saved messages'}).waitFor()
+      await first.getByText('Emoji reaction integration',{exact:true}).waitFor()
+      await first.getByRole('button',{name:'Remove from saved'}).click()
+      await first.getByText('Use a message’s action menu to save it here.').waitFor()
+
+      const libraryFile=randomUUID()
+      data(await sender.client.rpc('st_v5_stage_file',{
+        p_chat:chat,p_id:libraryFile,p_filename:'library-test.txt',p_bytes:raw.length,
+      }))
+      data(await storage(sender.client).upload(libraryFile,raw.buffer,{contentType:'application/octet-stream'}))
+      data(await sender.client.rpc('st_v5_send_file',{p_id:libraryFile,p_caption:'Library test message'}))
+      await second.getByRole('button',{name:'Files',exact:true}).click()
+      await second.getByRole('heading',{name:'Files',exact:true}).waitFor()
+      await second.getByLabel('Direction').selectOption('received')
+      const files=second.getByRole('region',{name:'Chat files'})
+      await files.getByRole('searchbox',{name:'Filename',exact:true}).fill('library-test')
+      await files.getByRole('button',{name:'Search',exact:true}).click()
+      await files.getByRole('checkbox',{name:'library-test.txt'}).check()
+      const downloaded=second.waitForEvent('download')
+      await second.getByRole('button',{name:/Download selected/}).click()
+      const zip=await downloaded
+      assert.equal(zip.suggestedFilename(),'sectalk-files.zip')
+      const {unzipSync}=await import('fflate')
+      const entries=unzipSync(await readFile(await zip.path()))
+      assert.deepEqual(Object.keys(entries),['01-library-test.txt'])
+      assert.equal(new TextDecoder().decode(entries['01-library-test.txt']),new TextDecoder().decode(raw))
+      console.log('Passed saved-message creation and removal, file filters, and authorized ZIP download.')
+      await first.getByRole('button',{name:'Inbox',exact:true}).click()
+    }
     await first.getByRole('button',{name:'Find Friends',exact:true}).first().click()
     await first.getByRole('heading',{name:'Find Friends',exact:true}).waitFor()
     console.log('Passed two-browser chat, custom reaction synchronization, reaction removal, and Find Friends navigation.')

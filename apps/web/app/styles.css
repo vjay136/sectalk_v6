@@ -393,6 +393,7 @@ body { background: var(--bg); }
 .activity-stats div { background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 12px; }
 .activity-stats dt { color: var(--muted); font-size: .8rem; }
 .activity-stats dd { margin: 5px 0; font-size: 1.5rem; font-weight: 730; }
+.saved-shortcut { margin: 8px 16px; align-self: flex-start; }
 @media (max-width: 700px) {
   .full-panel .content-page { grid-column: 1; }
   .workspace .rail { justify-content: flex-start; gap: 0; overflow-x: auto; }

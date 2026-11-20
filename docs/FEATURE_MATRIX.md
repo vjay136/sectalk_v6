@@ -35,7 +35,7 @@ Status is conservative. Rows require verification against the complete registry 
 | ORG-12 | Healthcare profile (PHI-safe defaults, break-glass access with justification + alert) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | ORG-13 | Legal hold (scoped by user/room/date; overrides retention and deletion) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | ORG-14 | Compliance profile templates (compliance-ready presets: healthcare, education, finance, GDPR-style) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
-| MSG-01 | 1:1 direct messages | Signed-in contacts | Inbox | st_send | Supabase account inbox hint | tests/chat-storage.e2e.mjs | IN_PROGRESS | Prior local browser evidence exists. This release needs a clean rerun. |
+| MSG-01 | 1:1 direct messages | Signed-in contacts | Inbox | st_send | Supabase account inbox hint | tests/chat-storage.e2e.mjs, tests/database.sql | DONE | Two isolated browser sessions exchanged a direct message. DB tests verify contact consent and participant-only access. |
 | MSG-02 | Group chats (size limits by plan/policy; add/remove members with key rotation) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | MSG-03 | E2EE mode (per-conversation; per-device keys; sender keys for groups; rotate on membership change) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | MSG-04 | Managed-encryption mode (server envelope encryption; searchable; compliance-exportable); mode set by policy at conversation creation, immutable afterwards, clearly labeled in UI | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
@@ -54,7 +54,7 @@ Status is conservative. Rows require verification against the complete registry 
 | MSG-17 | Rich text (sanitized markdown subset), safe link previews (server fetch with SSRF guard in managed mode; client-generated in E2EE mode, toggleable) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | MSG-18 | Multi-device sync and new-device history policy (E2EE: history transfer only by approved device) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | MSG-19 | Report/flag message (to moderators/SOC; includes user-consented plaintext disclosure for E2EE) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
-| MSG-20 | Saved/starred messages | Chat participants | Inbox and Saved | st_v6_saved_messages | Private account state | tests/v6-database.sql | IN_PROGRESS | Implementation in this branch. |
+| MSG-20 | Saved/starred messages | Chat participants | Inbox and Saved | st_v6_saved_messages | Private account state | tests/v6-database.sql, tests/chat-storage.e2e.mjs | DONE | Browser save and removal passed. RLS tests verify duplicate writes, isolation, hide and revoke. |
 | MSG-21 | Scheduled send | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | MSG-22 | Voice notes (record, encrypt, waveform, transcript opt-in) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | THR-01 | Threads: create from message, replies, counts, follow/unfollow | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
@@ -97,7 +97,7 @@ Status is conservative. Rows require verification against the complete registry 
 | FILE-09 | Delete + retention + soft delete + purge job | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | FILE-10 | Access logs (view/download/share) visible to owner/admin per policy | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | FILE-11 | Duplicate detection by content hash (tenant-scoped only; never cross-tenant dedupe) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
-| FILE-12 | Files library tab with filters, sort, bulk actions | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
+| FILE-12 | Files library tab with filters, sort, bulk actions | Chat participants | Files and Chat files | st_v5_files, Supabase Storage | On-demand reads | tests/chat-storage.e2e.mjs | DONE | Browser filters and ZIP download passed. Each download uses the caller's permissions. |
 | FILE-13 | Legal hold on files | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | FILE-14 | AI file inspection integration (macro/script/phishing-doc heuristics) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | FILE-15 | Storage classes: attachments, recordings, avatars, exports (separate buckets/prefixes, lifecycle rules) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
@@ -238,7 +238,7 @@ Status is conservative. Rows require verification against the complete registry 
 | PLAT-06 | i18n framework (en + one RTL locale scaffold working; ICU messages) | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | PLAT-07 | Accessibility (WCAG 2.2 AA, keyboard-complete, screen-reader tested) | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
 | PLAT-08 | PWA + responsive layouts + offline shell | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
-| PLAT-09 | Health/readiness/status endpoints + public status page | Public | API health and readiness | GET /api/health and GET /api/ready | None | tests/readiness.test.mjs | IN_PROGRESS | Readiness endpoint in this branch. Public status page is pending. |
+| PLAT-09 | Health/readiness/status endpoints + public status page | Public | API health and readiness | GET /api/health and GET /api/ready | None | tests/readiness.test.mjs, tests/v6-database.sql | IN_PROGRESS | Readiness unit tests, anonymous DB check and local HTTP 200 passed. Public status page is pending. |
 | PLAT-10 | Backup/restore/DR scripts with restore-verification job | — | — | — | — | — | NOT_STARTED | Full implementation and verification are open. |
 | PLAT-11 | User settings: Profile, Security, Devices, Sessions, Notifications, Privacy, Appearance (light/dark/high-contrast/reduced-motion), Billing, Data export & account deletion | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |
 | PLAT-12 | Onboarding, empty states, in-product help, keyboard shortcuts sheet | — | — | — | — | — | IN_PROGRESS | Baseline has part of the workflow. Complete acceptance remains open. |

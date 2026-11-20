@@ -8,7 +8,7 @@ import { SectionTabs } from './section-tabs'
 
 type VaultObject = { name: string; id: string; created_at: string; metadata: { size?: number } | null }
 
-export function Vault({ user }: { user: string }) {
+export function Vault({ user, embedded = false }: { user: string; embedded?:boolean }) {
   const [files,setFiles] = useState<VaultObject[] | null>(null)
   const [view,setView] = useState<'files'|'upload'>('files')
   const [selected,setSelected] = useState<VaultObject | null>(null)
@@ -75,8 +75,8 @@ export function Vault({ user }: { user: string }) {
     } finally { setBusy(false) }
   }
 
-  return <section className="content-page">
-    <header className="content-title"><div className="card-icon"><LockKeyhole size={22}/></div><div><h1>Private vault</h1><p>Encrypt files and filenames on this device before they leave your browser.</p></div></header>
+  return <section className={embedded?'release-section':'content-page'}>
+    {embedded?<h2>Private vault</h2>:<header className="content-title"><div className="card-icon"><LockKeyhole size={22}/></div><div><h1>Private vault</h1><p>Encrypt files and filenames on this device before they leave your browser.</p></div></header>}
     <p className="release-info">Keep each file’s passphrase. SecTalk cannot recover it or open the file for you. File size and upload time remain visible to the service.</p>
     {error && <p role="alert" className="error">{error}</p>}
     {notice && <p role="status">{notice}</p>}

@@ -1,6 +1,6 @@
 {
   "name": "sectalk",
-  "version": "5.0.0",
+  "version": "6.0.0-alpha.1",
   "private": true,
   "workspaces": [
     "apps/web"
@@ -13,6 +13,8 @@
     "build": "npm run build -w @sectalk/web",
     "start": "npm run start -w @sectalk/web",
     "typecheck": "npm run typecheck -w @sectalk/web",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "verify:registry": "node scripts/verify-registry.mjs"
   }
 }

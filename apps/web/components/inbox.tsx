@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import dynamic from 'next/dynamic'
 import {
-  ArrowLeft, Ban, Bell, BellOff, CalendarDays, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Inbox as InboxIcon, LockKeyhole, LogOut, ShieldAlert,
+  ArrowLeft, Ban, Bell, BellOff, Bookmark, CalendarDays, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Folder, Inbox as InboxIcon, LogOut, ShieldAlert,
   Download, Hash, ListChecks, MessageCircle, MoreHorizontal, Paperclip, Phone, Pin, Search, Send, Shield, ShieldCheck, Smile, UserPlus, UserRound, Users, Video, X,
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
@@ -15,11 +15,12 @@ import { ReportDialog, Safety } from './safety'
 import { Workspaces } from './workspaces'
 import { Billing } from './billing'
 import { Meetings } from './meetings'
-import { Vault } from './vault'
+import { FilesLibrary } from './files-library'
 import { GlobalSearch, Notifications } from './discover'
 import { SectionTabs } from './section-tabs'
 import { downloadChatFile, extensions, sendChatFile, supportedFile, type ChatFile } from '../lib/chat-files'
 import { EmojiText } from './emoji-text'
+import { SavedMessages, setSavedMessage } from './saved-messages'
 import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
 
 const ChatEmoji=dynamic(()=>import('./chat-emoji'))
@@ -41,7 +42,7 @@ export function Inbox({ user }: { user: string }) {
   const [blocks, setBlocks] = useState<string[]>([])
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends'>(() =>
+  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
   const [profileTab, setProfileTab] = useState<'account' | 'availability' | 'discovery' | 'activity' | 'blocked'>('account')
@@ -257,7 +258,7 @@ export function Inbox({ user }: { user: string }) {
   return <main className={'workspace ' + (selected && tab === 'inbox' ? 'thread-open' : '') + (tab !== 'inbox' ? ' full-panel' : '')}>
     <nav className="rail" aria-label="SecTalk features">
       <Brand compact />
-      <button className={tab === 'inbox' ? 'active' : ''} aria-current={tab === 'inbox' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>Inbox</span></button>
+      <button className={tab === 'inbox' || tab === 'saved' ? 'active' : ''} aria-current={tab === 'inbox' || tab === 'saved' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>Inbox</span></button>
       <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>Friends</span></button>
       <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>Calls</span></button>
       <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>Workspaces</span></button>
@@ -265,7 +266,7 @@ export function Inbox({ user }: { user: string }) {
       <button className={tab==='tasks'?'active':''} aria-current={tab==='tasks'?'page':undefined} onClick={()=>setTab('tasks')}><ListChecks size={19}/><span>Tasks</span></button>
       <button className={tab==='calendar'?'active':''} aria-current={tab==='calendar'?'page':undefined} onClick={()=>setTab('calendar')}><CalendarDays size={19}/><span>Calendar</span></button>
       <button className={tab==='meetings'?'active':''} aria-current={tab==='meetings'?'page':undefined} onClick={()=>{setRequestedMeeting(null);setTab('meetings')}}><CalendarDays size={19}/><span>Meetings</span></button>
-      <button className={tab==='vault'?'active':''} aria-current={tab==='vault'?'page':undefined} onClick={()=>setTab('vault')}><LockKeyhole size={19}/><span>Vault</span></button>
+      <button className={tab==='vault'?'active':''} aria-current={tab==='vault'?'page':undefined} onClick={()=>setTab('vault')}><Folder size={19}/><span>Files</span></button>
       <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} title="Search (Ctrl or Command + K)" onClick={()=>setTab('search')}><Search size={19}/><span>Search</span></button>
       <button className={tab==='notifications'?'active':''} aria-current={tab==='notifications'?'page':undefined} onClick={()=>setTab('notifications')}><Bell size={19}/><span>Notifications</span></button>
       <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>Safety</span></button>
@@ -281,6 +282,7 @@ export function Inbox({ user }: { user: string }) {
         <button aria-pressed={mode === 'requests'} className={mode === 'requests' ? 'active' : ''} onClick={openRequests}>Incoming {requests.length > 0 && <span>{requests.length}</span>}</button>
         <button aria-pressed={mode==='sent'} className={mode==='sent'?'active':''} onClick={()=>{setMode('sent');select(null)}}>Sent</button>
       </div>
+      <button type="button" className="secondary saved-shortcut" onClick={()=>setTab('saved')}><Bookmark size={16}/> Saved messages</button>
       <div className="chat-list">
         {visible.length === 0 && <div className="list-empty"><InboxIcon size={22} /><strong>{search ? 'No matching contacts' : mode==='chats'?'No conversations yet':mode==='sent'?'No sent requests':'No incoming requests'}</strong><p>{!search&&mode==='chats'?'Send a request to someone you know.':''}</p></div>}
         {visible.map(item => {
@@ -327,11 +329,12 @@ export function Inbox({ user }: { user: string }) {
         <p>Accepted contacts can see your last activity for up to seven days when both availability and last seen are shared.</p></div>}
       </section> :
       tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}/>:
+      tab==='saved'?<SavedMessages openChat={select}/>:
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} /> :
       tab==='workspaces'||tab==='rooms'||tab==='tasks'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} /> :
       tab === 'billing' ? <Billing user={user} /> :
       tab === 'meetings' ? <Meetings key={requestedMeeting||'all'} requested={requestedMeeting} user={user}/> :
-      tab === 'vault' ? <Vault user={user}/> :
+      tab === 'vault' ? <FilesLibrary user={user} openChat={select}/> :
       tab === 'search' ? <GlobalSearch openChat={select} openMeeting={openMeeting}/> :
       tab === 'notifications' ? <Notifications user={user} openMeeting={openMeeting}/> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
@@ -747,6 +750,10 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
                 <button type="button" className="text-button" onClick={() => setReplying(message)}>Reply</button>
                 {own&&!file&&Date.now()-Date.parse(message.created_at)<86400000&&<button type="button" className="text-button" onClick={()=>setEditing(message)}>Edit message</button>}</>}
                 {file&&<button type="button" className="text-button" onClick={()=>void download(file)}>Download attachment</button>}
+                {!message.revoked_at&&<button type="button" className="text-button" onClick={async()=>{
+                  const result=await setSavedMessage(message.id,true)
+                  inform(result.error?'Could not save this message.':'Message saved. Find it in Inbox → Saved messages.')
+                }}>Save message</button>}
                 {!own&&!message.revoked_at&&<button type="button" className="text-button" onClick={()=>onReport(message,file)}>Report message</button>}
                 <button type="button" className="text-button" onClick={()=>setRemoving({message,action:'hide'})}>Delete for me</button>
                 {own&&!message.revoked_at&&<button type="button" className="text-button remove-text" onClick={()=>setRemoving({message,action:'revoke'})}>Revoke for everyone</button>}

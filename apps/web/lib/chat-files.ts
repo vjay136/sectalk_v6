@@ -24,13 +24,26 @@ export async function sendChatFile(chat: string, id: string, file: File, caption
   if (result.error) throw result.error
 }
 
-export async function downloadChatFile(file: ChatFile) {
-  const { data, error } = await db!.storage.from('sectalk-chat-files').download(file.id)
+export async function fetchChatFile(id: string) {
+  const { data, error } = await db!.storage.from('sectalk-chat-files').download(id)
   if (error) throw error
-  const url = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }))
+  return data
+}
+
+export function downloadName(filename: string) {
+  return filename.replace(/[\/\\:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '_') || 'attachment'
+}
+
+export function saveDownload(data: Blob, filename: string) {
+  const url = URL.createObjectURL(data)
   const link = document.createElement('a')
   link.href = url
-  link.download = file.filename.replace(/[\/\\:*?"<>|\u0000-\u001f]/g, '_')
+  link.download = downloadName(filename)
   link.click()
   window.setTimeout(() => URL.revokeObjectURL(url), 5000)
+}
+
+export async function downloadChatFile(file: ChatFile) {
+  const data = await fetchChatFile(file.id)
+  saveDownload(new Blob([data], { type: 'application/octet-stream' }), file.filename)
 }
