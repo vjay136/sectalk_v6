@@ -13,6 +13,14 @@ type Post = { id: string; sender: string; body: string; created_at: string }
 type ItemKind = 'task' | 'note' | 'event' | 'announcement'
 type Item = { id: string; kind: ItemKind; title: string; details: string; due_at: string | null; completed: boolean; created_by: string }
 type Audit = { id: number; event: string; actor: string; created_at: string }
+type WorkspaceView = 'workspaces' | 'rooms' | 'tasks' | 'calendar'
+type Checklist = { id:string; task_id:string; label:string; completed:boolean }
+const workspaceViews = {
+  workspaces: { title:'Workspaces', description:'Manage workspace membership and activity.', icon:Users },
+  rooms: { title:'Rooms', description:'Join conversations in your workspace channels.', icon:Hash },
+  tasks: { title:'Tasks', description:'Assign tasks and track progress with checklists.', icon:ListChecks },
+  calendar: { title:'Calendar', description:'See workspace events, meetings, and task deadlines.', icon:CalendarDays },
+}
 const itemLabels: Record<ItemKind, string> = { task: 'Task', note: 'Note', event: 'Calendar event', announcement: 'Announcement' }
 
 function QuickForm({ label, button, children, send }: {
@@ -48,7 +56,7 @@ async function rpc(name: string, values: Record<string, unknown>) {
   return data
 }
 
-export function Workspaces({ user }: { user: string }) {
+export function Workspaces({ user, view = 'workspaces' }: { user:string;view?:WorkspaceView }) {
   const [spaces, setSpaces] = useState<Space[]>([])
   const [invites, setInvites] = useState<Invite[]>([])
   const [selected, setSelected] = useState('')
@@ -87,10 +95,11 @@ export function Workspaces({ user }: { user: string }) {
   }
 
   const space = spaces.find(row => row.id === selected)
+  const {title, description, icon:Icon}=workspaceViews[view]
   return <section className="content-page">
-    <header className="content-title"><div className="card-icon"><Users size={22}/></div><div><h1>Workspaces</h1><p>Private team channels, tasks, notes, and calendar events.</p></div></header>
+    <header className="content-title"><div className="card-icon"><Icon size={22}/></div><div><h1>{title}</h1><p>{description}</p></div></header>
     {error && <p role="alert" className="error">{error}</p>}
-    {invites.length > 0 && <section className="panel release-panel"><h2>Invitations</h2>{invites.map(invite => <div className="release-row" key={invite.id}>
+    {view==='workspaces' && invites.length > 0 && <section className="panel release-panel"><h2>Invitations</h2>{invites.map(invite => <div className="release-row" key={invite.id}>
       <strong>{invite.workspace_name}</strong>
       <button className="primary" disabled={busy} onClick={() => void reply(invite.id, true)}>Join</button>
       <button className="secondary" disabled={busy} onClick={() => void reply(invite.id, false)}>Decline</button>
@@ -99,20 +108,21 @@ export function Workspaces({ user }: { user: string }) {
       {spaces.length > 0 && <label>Workspace<select value={selected} onChange={event => setSelected(event.target.value)}>
         {spaces.map(row => <option value={row.id} key={row.id}>{row.name}</option>)}
       </select></label>}
-      <details className="release-create" open={!space || undefined}>
+      {view==='workspaces' && <details className="release-create" open={!space || undefined}>
         <summary>Create a workspace</summary><QuickForm label="Create a workspace" button="Create workspace" send={async fields => {
           const id = await rpc('st_v2_create_workspace', { p_name: fields.get('name') })
           await reload()
           setSelected(id)
         }}><label>Workspace name<input name="name" required maxLength={64} placeholder="e.g. Eagle Security" /></label></QuickForm>
-      </details>
+      </details>}
     </div>
-    {space && <WorkspaceArea key={space.id} space={space} user={user} />}
+    {space ? <WorkspaceArea key={space.id+view} space={space} user={user} view={view} /> :
+      view!=='workspaces' && <p>Join or create a workspace to get started.</p>}
   </section>
 }
 
-function WorkspaceArea({ space, user }: { space: Space; user: string }) {
-  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'activity'>('channels')
+function WorkspaceArea({ space, user, view }: { space:Space;user:string;view:WorkspaceView }) {
+  const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'activity'>('people')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelId, setChannelId] = useState('')
   const [members, setMembers] = useState<Member[]>([])
@@ -150,12 +160,12 @@ function WorkspaceArea({ space, user }: { space: Space; user: string }) {
   }, [load])
 
   return <div className="panel release-panel">
-    <SectionTabs label="Workspace sections" value={tab==='activity'&&!manager?'channels':tab} onChange={setTab} options={[
+    {view==='workspaces' && <SectionTabs label="Workspace sections" value={tab==='activity'&&!manager?'people':tab} onChange={setTab} options={[
       ['channels', <><Hash size={15}/> Channels</>], ['board', <><ListChecks size={15}/> Board</>],
       ['people', <><Users size={15}/> People</>], ...(manager ? [['activity','Activity'] as const] : []),
-    ]}/>
+    ]}/>}
     {error && <p role="alert" className="error">{error}</p>}
-    {(tab === 'channels'||(tab==='activity'&&!manager)) && <div className="release-section">
+    {(view==='rooms'||(view==='workspaces'&&tab==='channels')) && <div className="release-section">
       <div className="release-flex">
         <label>Channel<select value={channelId} onChange={event => setChannelId(event.target.value)}>{channels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</select></label>
         {manager && <details className="release-create"><summary>New channel</summary><QuickForm label="New channel" button="Create channel" send={async fields => {
@@ -166,8 +176,10 @@ function WorkspaceArea({ space, user }: { space: Space; user: string }) {
       </div>
       {channelId && <ChannelFeed key={channelId} channelId={channelId} profiles={profiles} user={user}/>}
     </div>}
-    {tab === 'board' && <Board space={space.id} manager={manager} />}
-    {tab === 'people' && <div className="release-section">
+    {view==='workspaces' && tab==='board' && <Board space={space.id} manager={manager} />}
+    {view==='tasks'&&<TaskList space={space.id} actor={user} manager={manager} members={members} profiles={profiles}/>}
+    {view==='calendar'&&<WorkspaceCalendar space={space.id} />}
+    {view==='workspaces'&&(tab==='people'||(tab==='activity'&&!manager)) && <div className="release-section">
       {manager && <QuickForm label="Invite a member" button="Send invitation" send={async fields => {
         if (!await rpc('st_v2_invite', { p_workspace: space.id, p_handle: fields.get('handle') })) throw new Error('This contact is unavailable or has already been invited.')
         await load()
@@ -181,7 +193,7 @@ function WorkspaceArea({ space, user }: { space: Space; user: string }) {
         }}><label>Change access<select name="role" defaultValue={member.role}><option value="member">Member</option><option value="admin">Admin</option><option value="remove">Remove access</option></select></label></QuickForm>}
       </div>)}
     </div>}
-    {tab==='activity'&&manager&&<div className="release-section"><h2>Recent workspace activity</h2>{audit.length===0&&<p>No activity yet.</p>}
+    {view==='workspaces'&&tab==='activity'&&manager&&<div className="release-section"><h2>Recent workspace activity</h2>{audit.length===0&&<p>No activity yet.</p>}
       {audit.map(event => <div className="release-row" key={event.id}><strong>{event.event.replace('.', ' ')}</strong><span>{profiles[event.actor]?.name || 'Workspace member'}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></div>)}
     </div>}
   </div>
@@ -272,5 +284,158 @@ function Board({ space, manager }: { space: string; manager: boolean }) {
         catch (error) { setError(formatError(error, 'Could not update task.')) }
       }}>{item.completed ? 'Reopen completed task' : 'Mark complete'}</button>}
     </article>)}
+  </div>
+}
+
+function TaskList({ space,actor,manager,members,profiles }: {
+  space:string;actor:string;manager:boolean;members:Member[];profiles:Record<string,Profile>
+}) {
+  const [items,setItems]=useState<Item[]|null>(null)
+  const [assignments,setAssignments]=useState<Record<string,string>>({})
+  const [checks,setChecks]=useState<Checklist[]>([])
+  const [filter,setFilter]=useState<'open'|'mine'|'done'>('open')
+  const [error,setError]=useState('')
+  const [busy,setBusy]=useState(false)
+  const checklistKey=useRef<{ task:string;label:string;id:string }|null>(null)
+  const reload=useCallback(async () => {
+    const result=await db!.from('st_v2_items').select('*').eq('workspace_id',space).eq('kind','task').order('created_at',{ascending:false}).limit(100)
+    if(result.error) { setError('Could not load tasks.'); return }
+    const ids=result.data.map(item=>item.id)
+    if(ids.length) {
+      const [assigned,list]=await Promise.all([
+        db!.from('st_v4_task_assignments').select('task_id,assignee').in('task_id',ids),
+        db!.from('st_v4_checklist').select('id,task_id,label,completed').in('task_id',ids).order('created_at').limit(1000),
+      ])
+      if(assigned.error||list.error){ setError('Could not load assignments or checklists.');return }
+      setAssignments(Object.fromEntries(assigned.data.map(row=>[row.task_id,row.assignee])))
+      setChecks(list.data)
+    } else { setAssignments({});setChecks([]) }
+    setItems(result.data)
+    setError('')
+  },[space])
+  useEffect(()=>{
+    void reload()
+    const channel=liveChannel('v4-tasks:'+space,reload)
+      .on('postgres_changes',{event:'*',schema:'public',table:'st_v2_items',filter:'workspace_id=eq.'+space},reload).subscribe()
+    const reconnect=onReconnect(reload)
+    const timer=window.setInterval(reload,8000)
+    return ()=>{reconnect();window.clearInterval(timer);void db!.removeChannel(channel)}
+  },[reload,space])
+
+  async function change(task:string, action:string, input:Record<string,unknown>={}) {
+    await rpc('st_v4_task_change',{p_task:task,p_action:action,...input})
+    await reload()
+  }
+  async function toggle(task:string, action:string, input:Record<string,unknown>) {
+    if(busy)return
+    setBusy(true)
+    try{ await change(task,action,input) }catch(error){setError(formatError(error,'Could not update the task.'))}
+    finally{setBusy(false)}
+  }
+
+  const visible=items?.filter(item=>filter==='mine'?assignments[item.id]===actor:filter==='done'?item.completed:!item.completed)
+  return <div className="release-section">
+    <SectionTabs label="Task filters" value={filter} onChange={setFilter} options={[
+      ['open','Open tasks'],['mine','Assigned to me'],['done','Completed'],
+    ]}/>
+    <details className="release-create"><summary>Create a task</summary>
+      <QuickForm label="Create a task" button="Create task" send={async fields=>{
+        const due=String(fields.get('due')||'')
+        await rpc('st_v2_add_item',{p_workspace:space,p_kind:'task',p_title:fields.get('title'),p_details:fields.get('details'),p_due:due?new Date(due).toISOString():null})
+        setFilter('open');await reload()
+      }}>
+        <label>Title<input name="title" required maxLength={120}/></label>
+        <label>Details<textarea name="details" maxLength={3000} rows={2}/></label>
+        <label>Due date (optional)<input name="due" type="datetime-local"/></label>
+      </QuickForm>
+    </details>
+    {error&&<p role="alert" className="error">{error}</p>}
+    {!items&&!error&&<p role="status">Loading tasks…</p>}
+    {visible?.length===0&&<p>No tasks in this view.</p>}
+    {visible?.map(item=>{
+      const assigned=members.some(member=>member.user_id===assignments[item.id])?assignments[item.id]:''
+      const owner=manager||item.created_by===actor
+      const canEdit=owner||assigned===actor
+      const checklist=checks.filter(check=>check.task_id===item.id)
+      return <article className="release-board-item" key={item.id}>
+        <div className="release-row"><h2>{item.title}</h2><span className="pill">{item.completed?'Completed':'Open'}</span></div>
+        {item.details&&<p>{item.details}</p>}
+        {item.due_at&&<p>Due <time dateTime={item.due_at}>{new Date(item.due_at).toLocaleString()}</time></p>}
+        <p>{assigned?'Assigned to '+(profiles[assigned]?.name||'workspace member'):'Unassigned'}</p>
+        {owner&&<details className="release-create"><summary>Assign task</summary>
+          <QuickForm label={'Assign '+item.title} button="Save assignment" send={fields=>change(item.id,'assign',{p_person:fields.get('assignee')||null})}>
+            <label>Assignee<select key={assigned} name="assignee" defaultValue={assigned}>
+              <option value="">Unassigned</option>{members.map(member=><option key={member.user_id} value={member.user_id}>
+                {profiles[member.user_id]?.name||'Workspace member'}
+              </option>)}
+            </select></label>
+          </QuickForm>
+        </details>}
+        {checklist.length>0&&<ul>{checklist.map(check=><li key={check.id}><label className="task-check">
+          <input type="checkbox" checked={check.completed} disabled={!canEdit||busy} onChange={event=>void toggle(item.id,'checklist.toggle',{p_item:check.id,p_done:event.target.checked})}/>
+          {check.label}
+        </label></li>)}</ul>}
+        {canEdit&&<div className="release-flex">
+          <details className="release-create"><summary>Add checklist item</summary>
+            <QuickForm label="Add checklist item" button="Add item" send={async fields=>{
+              const label=String(fields.get('label')).trim()
+              if(checklistKey.current?.task!==item.id||checklistKey.current.label!==label) checklistKey.current={task:item.id,label,id:crypto.randomUUID()}
+              await change(item.id,'checklist.add',{p_item:checklistKey.current.id,p_label:label})
+              checklistKey.current=null
+            }}><label>Checklist item<input name="label" required maxLength={150}/></label></QuickForm>
+          </details>
+          <button className="secondary" disabled={busy} onClick={()=>void toggle(item.id,'complete',{p_done:!item.completed})}>
+            {item.completed?'Reopen task':'Mark complete'}
+          </button>
+        </div>}
+      </article>
+    })}
+  </div>
+}
+
+function WorkspaceCalendar({space}: {space:string}) {
+  const [entries,setEntries]=useState<{id:string;title:string;at:string;kind:'events'|'meetings'|'deadlines'}[]|null>(null)
+  const [filter,setFilter]=useState<'all'|'events'|'meetings'|'deadlines'>('all')
+  const [error,setError]=useState('')
+  const reload=useCallback(async()=>{
+    const [items,meetings]=await Promise.all([
+      db!.from('st_v2_items').select('id,title,kind,due_at').eq('workspace_id',space).in('kind',['event','task']).not('due_at','is',null).order('due_at').limit(100),
+      db!.from('st_v3_meetings').select('id,title,starts_at').eq('workspace_id',space).neq('status','ended').order('starts_at').limit(100),
+    ])
+    if(items.error||meetings.error){setError('Could not load your calendar.');return}
+    setEntries([
+      ...items.data.map(row=>({id:row.id,title:row.title,at:row.due_at,kind:row.kind==='task'?'deadlines' as const:'events' as const})),
+      ...meetings.data.map(row=>({id:row.id,title:row.title,at:row.starts_at,kind:'meetings' as const})),
+    ].sort((first,second)=>Date.parse(first.at)-Date.parse(second.at)))
+    setError('')
+  },[space])
+  useEffect(()=>{
+    void reload()
+    const timer=window.setInterval(reload,10000)
+    const reconnect=onReconnect(reload)
+    return ()=>{window.clearInterval(timer);reconnect()}
+  },[reload])
+  const visible=entries?.filter(entry=>filter==='all'||entry.kind===filter)
+  return <div className="release-section">
+    <SectionTabs label="Calendar filters" value={filter} onChange={setFilter} options={[
+      ['all','Agenda'],['events','Events'],['meetings','Meetings'],['deadlines','Task deadlines'],
+    ]}/>
+    <details className="release-create"><summary>Add a calendar event</summary>
+      <QuickForm label="Add a calendar event" button="Add event" send={async fields=>{
+        await rpc('st_v2_add_item',{p_workspace:space,p_kind:'event',p_title:fields.get('title'),p_details:fields.get('details'),p_due:new Date(String(fields.get('start'))).toISOString()})
+        setFilter('events');await reload()
+      }}>
+        <label>Title<input name="title" required maxLength={120}/></label>
+        <label>Starts at<input name="start" type="datetime-local" required/></label>
+        <label>Details<textarea name="details" maxLength={3000} rows={2}/></label>
+      </QuickForm>
+    </details>
+    {error&&<p role="alert" className="error">{error}</p>}
+    {!entries&&!error&&<p role="status">Loading calendar…</p>}
+    {visible?.length===0&&<p>No calendar entries in this view.</p>}
+    {visible?.map(entry=><div className="release-row" key={entry.kind+entry.id}>
+      <strong>{entry.title}</strong><span className="pill">{entry.kind==='deadlines'?'Task':entry.kind==='events'?'Event':'Meeting'}</span>
+      <time dateTime={entry.at}>{new Date(entry.at).toLocaleString()}</time>
+    </div>)}
   </div>
 }

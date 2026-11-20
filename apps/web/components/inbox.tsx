@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowLeft, Ban, Bell, BellOff, CalendarDays, Check, CheckCheck, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Inbox as InboxIcon, LockKeyhole, LogOut, ShieldAlert,
-  MessageCircle, Phone, Pin, Plus, Search, Send, Shield, ShieldCheck, UserRound, Users, Video, X,
+  Hash, ListChecks, MessageCircle, Phone, Pin, Plus, Search, Send, Shield, ShieldCheck, UserRound, Users, Video, X,
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
 import { useCalling } from '../lib/calling'
@@ -33,7 +33,7 @@ export function Inbox({ user }: { user: string }) {
   const [blocks, setBlocks] = useState<string[]>([])
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications'>(() =>
+  const [tab, setTab] = useState<'inbox' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar'>(() =>
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests'>('chats')
   const [profileTab, setProfileTab] = useState<'account' | 'availability'>('account')
@@ -213,6 +213,9 @@ export function Inbox({ user }: { user: string }) {
       <button className={tab === 'inbox' ? 'active' : ''} aria-current={tab === 'inbox' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>Inbox</span></button>
       <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>Calls</span></button>
       <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>Workspaces</span></button>
+      <button className={tab==='rooms'?'active':''} aria-current={tab==='rooms'?'page':undefined} onClick={()=>setTab('rooms')}><Hash size={19}/><span>Rooms</span></button>
+      <button className={tab==='tasks'?'active':''} aria-current={tab==='tasks'?'page':undefined} onClick={()=>setTab('tasks')}><ListChecks size={19}/><span>Tasks</span></button>
+      <button className={tab==='calendar'?'active':''} aria-current={tab==='calendar'?'page':undefined} onClick={()=>setTab('calendar')}><CalendarDays size={19}/><span>Calendar</span></button>
       <button className={tab==='meetings'?'active':''} aria-current={tab==='meetings'?'page':undefined} onClick={()=>{setRequestedMeeting(null);setTab('meetings')}}><CalendarDays size={19}/><span>Meetings</span></button>
       <button className={tab==='vault'?'active':''} aria-current={tab==='vault'?'page':undefined} onClick={()=>setTab('vault')}><LockKeyhole size={19}/><span>Vault</span></button>
       <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} title="Search (Ctrl or Command + K)" onClick={()=>setTab('search')}><Search size={19}/><span>Search</span></button>
@@ -256,7 +259,7 @@ export function Inbox({ user }: { user: string }) {
         </select></label><p>Availability expires while you are away from SecTalk.</p></div>}
       </section> :
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} /> :
-      tab === 'workspaces' ? <Workspaces user={user} /> :
+      tab==='workspaces'||tab==='rooms'||tab==='tasks'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} /> :
       tab === 'billing' ? <Billing user={user} /> :
       tab === 'meetings' ? <Meetings key={requestedMeeting||'all'} requested={requestedMeeting} user={user}/> :
       tab === 'vault' ? <Vault user={user}/> :
