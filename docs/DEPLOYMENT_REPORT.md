@@ -12,6 +12,8 @@ The generated schema at checkpoint `d3b80c9` installed all 378 migrations on a f
 
 The fresh-install bundle generated from checkpoint `f6c1d88` applied all 382 migrations through `20261121190000` on a clean local Supabase project. SHA-256 is `ff127e8433a7a47a5ee1130da8014699d31c6d0b35135af9b8d208060b0c8686`. The database matched every migration version and name and the checked-in RPC permission inventory. It contained zero Auth users and no public SecTalk table without row-level security. Web, Admin and Workers passed their PostgREST readiness checks. The reinstall preflight refused the existing schema. Managed room SSO, meeting notice acknowledgements, offboarding reconciliation and native root-removal rehearsal passed on the fresh install.
 
+The local 382-migration installation advanced to 387 through `20261121210000` using the incremental bundle. A second invocation refused the already-applied prefix and left the 387 history rows in place. The resulting database matched all 758 reviewed RPC signatures. The incremental bundle generated from the recorded 359-migration hosted baseline contains 28 migrations. Confirm the live migration history and the intended release commit before applying an incremental bundle to the hosted project.
+
 Local production builds passed for Web, Admin and Workers with loopback fixture settings. The isolated Web build passed its browser asset scan. The Free-tier gate passed the three project asset scans. A synthetic full-gate check verified that a server-only value in a Workers browser asset blocks release and the error redacts the value.
 
 | Optional in the Free-tier scope | Current boundary |
