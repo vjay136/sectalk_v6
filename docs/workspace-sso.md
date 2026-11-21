@@ -60,6 +60,7 @@ Direct-chat tasks, meeting schedules and workspace membership keep their existin
 | Workspace overview and analytics | Workspace entry enforcement requires the pinned provider receipt for both dashboard reads. Analytics also requires fresh authenticator verification. |
 | SCIM credential management | Workspace entry enforcement requires the pinned provider receipt and fresh authenticator verification to view settings, rotate or revoke a provisioning token. Existing machine credentials continue under the SCIM endpoint's own checks until rotated, revoked or expired. |
 | Notification, availability and data loss policies | Workspace entry enforcement checks the pinned receipt for notification and availability reads. Policy changes and the data loss editor also honor the separate policy management scope when enabled. |
+| Impersonation watch and profile rule registry | Workspace entry enforcement checks the pinned receipt for manager reads and changes. Only the workspace owner can change registry versions. The rule evaluation service retains its existing service-only permission. |
 | Billing, other workspace administration and scheduled operations | Existing role, assurance and capability boundaries also apply. Owner recovery uses a current native authenticator. |
 
 Workspace-wide enforcement remains pending. Native SAML has been exercised against an isolated signed fixture. Native OpenID Connect completion requires an approved, reachable HTTPS provider. The local-only fixture is rejected by Supabase's private-network guard.
