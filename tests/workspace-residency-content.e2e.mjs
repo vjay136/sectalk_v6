@@ -366,6 +366,13 @@ try {
   const foreignProof = await fixtureAuthenticator(foreignOwner.client)
   const verifiedDestination = createClient(targetDatabase, targetPublishable, { ...options, accessToken: async () => destinationProof.session.access_token })
   const verifiedForeign = createClient(targetDatabase, targetPublishable, { ...options, accessToken: async () => foreignProof.session.access_token })
+  targetSql(`begin;
+    insert into public.st_v2_workspaces(id,name,owner) values('${workspace}','Unclaimed destination fixture','${destinationOwner.id}');
+    insert into public.st_v2_members(workspace_id,user_id,role) values('${workspace}','${destinationOwner.id}','owner');
+    commit;`)
+  assert.equal(data(await importTasks(verifiedDestination,{p_workspace:workspace})),null)
+  assert.equal((await importTasks(verifiedDestination)).error?.code,'42501')
+  targetSql(`delete from public.st_v2_workspaces where id='${workspace}' and owner='${destinationOwner.id}';`)
   assert.equal((await claimWorkspace(verifiedForeign,claimCommand)).error?.code,'42501')
   assert.equal((await claimWorkspace(verifiedDestination,{...claimCommand,p_confirmation:'wrong'})).error?.code,'42501')
   targetSql(`update sectalk_private.st_v8_residency_installation set installation_nonce='${randomUUID()}' where cell='${cell}';`)
@@ -596,8 +603,11 @@ try {
   }
   assert.equal((await importTasks(verifiedForeign)).error?.code, '42501')
   assert.equal((await importTasks(verifiedDestination, { ...importCommand, p_confirmation: 'wrong' })).error?.code, '42501')
+  targetSql(`update sectalk_private.st_v8_residency_installation set installation_nonce='${randomUUID()}' where cell='${cell}';`)
+  assert.equal((await importTasks(verifiedDestination)).error?.code,'42501')
+  targetSql(`update sectalk_private.st_v8_residency_installation set installation_nonce='${installationNonce}' where cell='${cell}';`)
   targetSql(`update sectalk_private.st_v8_residency_content_admissions set manifest_sha256=repeat('0',64) where approval='${approval}';`)
-  assert.equal((await importTasks(verifiedDestination)).error?.code, 'PT409')
+  assert.equal((await importTasks(verifiedDestination)).error?.code, '42501')
   targetSql(`update sectalk_private.st_v8_residency_content_admissions set manifest_sha256='${manifest.manifestSha256}' where approval='${approval}';`)
   const conflictId = records.findLast(item=>item.kind==='workspace_task').id
   targetSql(`insert into public.st_v2_items(id,workspace_id,kind,title,created_by)
