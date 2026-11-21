@@ -3,10 +3,11 @@
 import {useCallback,useEffect,useState,type FormEvent} from 'react'
 import {verifyAccountCredential} from '../lib/account-credential'
 import {db,formatError} from '../lib/data'
+import {workspaceFileRequest} from '../lib/workspace-files-client'
 
 type ReplayResult='matched'|'source_changed'|'not_replayed'
 type ReplayRecord={kind:string;id:string;change:string;revision:string|null;result:ReplayResult}
-type StagedFile={file:string;sha256:string;bytes:number;digest:string;state:'staged'|'approved'|'changed'}
+type StagedFile={file:string;filename:string|null;sha256:string;bytes:number;digest:string;state:'staged'|'approved'|'changed'|'restored'}
 type FileReview={role?:'owner'|'reviewer';files?:StagedFile[]}
 type SourceReview={
   state:'inactive'|'awaiting_manifest'|'held'
@@ -73,24 +74,33 @@ export function WorkspaceResidencySourceReplayReview({workspace}:{workspace:stri
     }
   }
 
-  async function approveFile(event:FormEvent<HTMLFormElement>,file:StagedFile){
+  async function processFile(event:FormEvent<HTMLFormElement>,file:StagedFile,action:'approve'|'restore'){
     event.preventDefault()
-    if(busy||file.state!=='staged'||fileReview?.role!=='reviewer')return
+    if(busy||!fileReview)return
     const form=event.currentTarget
     const fields=new FormData(form)
     const confirmation=String(fields.get('workspace')||'')
     setBusy(true);setError('')
     try {
       await verifyCredential(fields,confirmation)
-      const result=await db!.rpc('st_v8_residency_source_file_review',{
-        p_workspace:workspace,p_file:file.file,p_digest:file.digest,p_confirmation:confirmation,
-      })
-      if(result.error)throw result.error
-      const approved=(result.data as FileReview).files?.[0]
-      if(!approved||approved.file!==file.file||approved.state!=='approved')throw new Error('The file approval could not be verified.')
-      setFileReview({role:'reviewer',files:fileReview.files?.map(copy=>copy.file===file.file?approved:copy)})
+      let updated:StagedFile
+      if(action==='approve') {
+        const result=await db!.rpc('st_v8_residency_source_file_review',{
+          p_workspace:workspace,p_file:file.file,p_digest:file.digest,p_confirmation:confirmation,
+        })
+        if(result.error)throw result.error
+        const approved=(result.data as FileReview).files?.[0]
+        if(!approved||approved.file!==file.file||approved.state!=='approved')throw new Error('The file approval could not be verified.')
+        updated=approved
+      }else{
+        const response=await workspaceFileRequest(workspace,'POST',{id:file.file,rollbackRestore:file.digest})
+        const result=await response.json()
+        if(result.file!==file.file||result.state!=='restored')throw new Error('The restored file could not be verified.')
+        updated={...file,state:'restored'}
+      }
+      setFileReview({...fileReview,files:fileReview.files?.map(copy=>copy.file===file.file?updated:copy)})
       form.reset()
-    }catch(cause){setError(formatError(cause,'Could not approve the staged file.'))}
+    }catch(cause){setError(formatError(cause,action==='approve'?'Could not approve the staged file.':'Could not restore the approved file.'))}
     finally{setBusy(false)}
   }
 
@@ -137,18 +147,22 @@ export function WorkspaceResidencySourceReplayReview({workspace}:{workspace:stri
       </details>}
       {!!fileReview?.files?.length&&<section aria-label="Staged rollback files">
         <h4>Staged rollback files</h4>
-        <ul>{fileReview.files.map(file=><li key={file.file}>
+        <ul>{fileReview.files.map(file=>{
+          const fileAction=review.coverage==='preservation_hold'||!file.filename?undefined:
+            file.state==='staged'&&fileReview.role==='reviewer'?'approve':file.state==='approved'&&fileReview.role==='owner'?'restore':undefined
+          return <li key={file.file}>
+          {file.filename&&<p>{file.filename}</p>}
           <p>File <code>{file.file}</code> · {file.bytes.toLocaleString()} bytes</p>
           <p>SHA-256 <code>{file.sha256}</code></p>
-          <p role="status">{file.state==='approved'?'Approved for restoration':file.state==='changed'?'Staged copy changed or is missing':'Awaiting independent approval'}</p>
-          {file.state==='staged'&&fileReview.role==='reviewer'&&review.coverage!=='preservation_hold'&&
-            <form className="release-form" onSubmit={event=>void approveFile(event,file)}>
+          <p role="status">{!file.filename?'Stage a fresh signed copy for restoration':file.state==='restored'?'Restored to workspace Files':
+            file.state==='approved'?'Approved for restoration':file.state==='changed'?'Recovery copy changed or is missing':'Awaiting independent approval'}</p>
+          {fileAction&&<form className="release-form" onSubmit={event=>void processFile(event,file,fileAction)}>
               <p>Workspace ID <code>{workspace}</code></p>
               <label>Confirm staged file workspace ID<input name="workspace" required autoComplete="off" disabled={busy}/></label>
-              <label>Authenticator code for file approval if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" disabled={busy}/></label>
-              <button className="secondary" disabled={busy}>Approve staged file</button>
+              <label>Authenticator code if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" disabled={busy}/></label>
+              <button className="secondary" disabled={busy}>{fileAction==='approve'?'Approve staged file':'Restore approved file'}</button>
             </form>}
-        </li>)}</ul>
+        </li>})}</ul>
       </section>}
     </>}
     {!error&&action&&<form className="release-form" onSubmit={event=>void recordEvidence(event,action)}>

@@ -8,7 +8,7 @@ export class WorkspaceFileRequestError extends Error {
 
 export async function workspaceFileRequest(workspace: string, method: string, options: {
   id?: string; file?: File; action?: 'view' | 'share'; signal?: AbortSignal; room?: boolean; rollbackReview?: string;
-  rollbackProof?: string
+  rollbackProof?: string; rollbackRestore?: string
 } = {}) {
   const { data } = await db!.auth.getSession()
   if (!data.session) throw new Error('Sign in to access workspace files.')
@@ -16,6 +16,7 @@ export async function workspaceFileRequest(workspace: string, method: string, op
   if (options.id) query.set('file', options.id)
   if (options.action) query.set('action', options.action)
   if (options.rollbackReview) query.set('residency-rollback', options.rollbackReview)
+  if (options.rollbackRestore) query.set('residency-rollback-restore', options.rollbackRestore)
   const headers = new Headers({ Authorization: 'Bearer ' + data.session.access_token })
   if (options.rollbackProof) {
     query.set('residency-rollback-stage', '1')

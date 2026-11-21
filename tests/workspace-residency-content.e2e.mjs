@@ -1676,6 +1676,11 @@ try {
             assert.equal(fileRow.sha256,sha256)
             assert.equal(fileRow.bytes,fileBytes.length)
             const decision={p_file:rollbackFile.id,p_confirmation:workspace,p_digest:fileRow.digest}
+            const restore=(token,digest=fileRow.digest)=>fetch(sourceApp+'/api/workspace-files?'+new URLSearchParams({
+              workspace,file:rollbackFile.id,'residency-rollback-restore':digest,
+            }),{method:'POST',headers:{Authorization:'Bearer '+token}})
+            const restoreArgs={p_workspace:workspace,p_file:rollbackFile.id,p_digest:fileRow.digest}
+            assert.equal((await restore(ownerProof.session.access_token)).status,409)
             assert.equal((await fileReview(verifiedOwner,decision)).error?.code,'42501')
             assert.equal((await fileReview(proofClient(sourceMemberProof))).error?.code,'42501')
             assert.equal((await fileReview(verifiedReviewer,{...decision,p_digest:'0'.repeat(64)})).error?.code,'PT409')
@@ -1704,6 +1709,40 @@ try {
             }
             assert.equal(sourceSql(`select count(*) from sectalk_private.st_v6_workspace_files where (workspace,id)=('${workspace}','${rollbackFile.id}');`),'0')
             console.log('Edge approved the exact private receipt as independent reviewer; stale evidence and native object drift were denied while the source stayed held.')
+            assert.equal((await restore(reviewerProof.session.access_token)).status,404)
+            assert.equal((await restore(ownerProof.session.access_token,'0'.repeat(64))).status,409)
+            assert.equal((await verifiedOwner.rpc('st_v8_residency_source_file_restore',{...restoreArgs,p_action:'publish'})).error?.code,'PT409')
+            const livePath=workspace+'/'+rollbackFile.id
+            const liveBucket=source.storage.from('sectalk-workspace-files')
+            data(await liveBucket.upload(livePath,Buffer.alloc(fileBytes.length,32),{contentType:'application/octet-stream'}))
+            try {
+              assert.equal((await restore(ownerProof.session.access_token)).status,409)
+              assert.equal(sourceSql(`select count(*) from sectalk_private.st_v6_workspace_files where (workspace,id)=('${workspace}','${rollbackFile.id}');`),'0')
+            } finally { data(await liveBucket.remove([livePath])) }
+            const ownerPanel=sourceReviewPage.getByRole('region',{name:'Source rollback verification',exact:true})
+            await ownerPanel.getByRole('button',{name:'Refresh source verification',exact:true}).click()
+            const ownerStaged=ownerPanel.getByRole('region',{name:'Staged rollback files',exact:true})
+            await ownerStaged.getByText('Approved for restoration',{exact:true}).waitFor()
+            await ownerStaged.getByLabel('Confirm staged file workspace ID').fill(workspace)
+            const restorationResponse=sourceReviewPage.waitForResponse(response=>response.url().includes('residency-rollback-restore='))
+            await ownerStaged.getByRole('button',{name:'Restore approved file',exact:true}).click()
+            const restored=await restorationResponse
+            assert.equal(restored.status(),200,await restored.text())
+            await ownerStaged.getByText('Restored to workspace Files',{exact:true}).waitFor()
+            const retryRestore=await restore(ownerProof.session.access_token)
+            assert.equal(retryRestore.status,200,await retryRestore.clone().text())
+            assert.deepEqual(await retryRestore.json(),await restored.json())
+            assert.equal(data(await fileReview(verifiedReviewer)).files[0].state,'restored')
+            assert.equal(sourceSql(`select count(*) from sectalk_private.st_v8_residency_file_write_permits;`),'0')
+            assert.equal(sourceSql(`select count(*) from public.st_v2_workspace_audit where workspace_id='${workspace}' and event='workspace.residency_file_replay_restored' and target='${rollbackFile.id}';`),'1')
+            await sourceReviewPage.getByRole('group',{name:'Workspace sections'}).getByRole('button',{name:'Files',exact:true}).click()
+            const fileCard=sourceReviewPage.getByRole('article').filter({has:sourceReviewPage.getByRole('heading',{name:rollbackFile.name,exact:true})})
+            await fileCard.waitFor()
+            const downloaded=sourceReviewPage.waitForEvent('download')
+            await fileCard.getByRole('button',{name:'Download file',exact:true}).click()
+            assert.deepEqual(await readFile(await (await downloaded).path()),fileBytes)
+            await sourceReviewPage.getByRole('group',{name:'Workspace sections'}).getByRole('button',{name:'Organization settings',exact:true}).click()
+            console.log('Edge restored the independently approved file to normal source Files and downloaded exact bytes while ordinary writes stayed held.')
           }
           let sourceChatAuthor
           if(checkChannelReplay){

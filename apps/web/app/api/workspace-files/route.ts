@@ -12,6 +12,25 @@ export const maxDuration = 40
 
 const forbidden = () => fileFailure(404, 'Workspace file access is unavailable.')
 
+async function inspectRecoveryFile(storage: Exclude<Awaited<ReturnType<typeof authenticateFileRequest>>, Response>['storage'],
+  filename: string, bytes: Buffer, hash: string) {
+  if (!allowedFileType(filename, 'application/octet-stream', bytes)) {
+    return fileFailure(415, 'The recovery copy has an unsupported attachment type.')
+  }
+  const blocked = await storage.rpc('st_v7_upload_digest_blocked', { p_hash: hash })
+  if (blocked.error) return fileFailure(503, 'The platform file policy could not be checked.')
+  if (blocked.data === true) return fileFailure(422, 'The recovery copy was blocked by platform policy.')
+  const scan = await scanAttachment(bytes, hash, attachmentDocumentFormat(filename))
+  if (scan.verdict === 'malware') return fileFailure(422, 'The recovery copy was blocked by security scanning.')
+  if (scan.unsupported) return fileFailure(415, 'The document structure is outside supported inspection limits.')
+  if (scan.verdict !== 'clean' || (officeFormatPattern.test(filename) && !scan.validatedFormat)) {
+    return fileFailure(503, 'Workspace file security scanning is unavailable.')
+  }
+  if (attachmentInspectionLabel(scan.reason ?? inspectAttachment(filename, bytes))) {
+    return fileFailure(422, 'The recovery copy was blocked by security scanning.')
+  }
+}
+
 async function stageRollbackFile(request: Request, workspace: string, file: string) {
   const encoded = request.headers.get('x-sectalk-rollback-file-proof')
   if (!encoded || !/^[A-Za-z0-9_-]{1,5462}$/.test(encoded)) return forbidden()
@@ -31,20 +50,9 @@ async function stageRollbackFile(request: Request, workspace: string, file: stri
   if (admitted.error || admitted.data?.state !== 'proof_verified' || !validFileId(admitted.data.handoff)) return forbidden()
 
   const filename = admitted.data.filename
-  if (typeof filename !== 'string' || !allowedFileType(filename, 'application/octet-stream', bytes)) {
-    return fileFailure(415, 'The recovery copy has an unsupported attachment type.')
-  }
-  const blocked = await auth.storage.rpc('st_v7_upload_digest_blocked', { p_hash: hash })
-  if (blocked.error) return fileFailure(503, 'The platform file policy could not be checked.')
-  if (blocked.data === true) return fileFailure(422, 'The recovery copy was blocked by platform policy.')
-  const scan = await scanAttachment(bytes, hash, attachmentDocumentFormat(filename))
-  if (scan.verdict === 'malware' || attachmentInspectionLabel(scan.reason ?? inspectAttachment(filename, bytes))) {
-    return fileFailure(422, 'The recovery copy was blocked by security scanning.')
-  }
-  if (scan.unsupported) return fileFailure(415, 'The document structure is outside supported inspection limits.')
-  if (scan.verdict !== 'clean' || (officeFormatPattern.test(filename) && !scan.validatedFormat)) {
-    return fileFailure(503, 'Workspace file security scanning is unavailable.')
-  }
+  if (typeof filename !== 'string') return forbidden()
+  const inspection = await inspectRecoveryFile(auth.storage, filename, bytes, hash)
+  if (inspection) return inspection
 
   const bucket = auth.storage.storage.from('sectalk-residency-recovery')
   const object = `${workspace}/${admitted.data.handoff}/${file}/${hash}`
@@ -62,6 +70,43 @@ async function stageRollbackFile(request: Request, workspace: string, file: stri
   return Response.json(staged.data, { headers: fileHeaders })
 }
 
+async function restoreRollbackFile(request: Request, workspace: string, file: string, digest: string) {
+  if (!/^[0-9a-f]{64}$/.test(digest)) return forbidden()
+  const auth = await authenticateFileRequest(request, { type: 'workspace', id: workspace })
+  if (auth instanceof Response) return auth
+  const args = { p_workspace: workspace, p_file: file, p_digest: digest }
+  const restoreError = (code?: string) => code === 'PT409' ? fileFailure(409, 'The approved recovery copy changed or the file already exists.') :
+    code === 'PT413' ? fileFailure(413, 'The workspace file storage limit was reached.') :
+    code === '42501' ? forbidden() : fileFailure(503, 'File restoration is unavailable.')
+  const prepared = await auth.client.rpc('st_v8_residency_source_file_restore', args)
+  if (prepared.error) return restoreError(prepared.error.code)
+  const copy = prepared.data
+  if (copy?.state === 'restored') return Response.json(copy, { headers: fileHeaders })
+  if (copy?.state !== 'ready' || !validFileId(copy.handoff) || typeof copy.filename !== 'string' ||
+    typeof copy.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(copy.sha256) ||
+    !Number.isInteger(copy.bytes) || copy.bytes < 1 || copy.bytes > workspaceFileMaximum) return forbidden()
+
+  const recovery = auth.storage.storage.from('sectalk-residency-recovery')
+  const staged = await recovery.download(`${workspace}/${copy.handoff}/${file}/${copy.sha256}`)
+  if (staged.error || !staged.data || staged.data.size !== copy.bytes) return restoreError('PT409')
+  const bytes = Buffer.from(await staged.data.arrayBuffer())
+  if (digestWorkspaceBytes(bytes) !== copy.sha256) return restoreError('PT409')
+  const inspection = await inspectRecoveryFile(auth.storage, copy.filename, bytes, copy.sha256)
+  if (inspection) return inspection
+
+  const bucket = auth.storage.storage.from(workspaceFileBucket)
+  const object = workspaceFilePath(workspace, file)
+  await bucket.upload(object, bytes, { contentType: 'application/octet-stream', upsert: false, cacheControl: '0',
+    metadata: { sectalkRollbackApproval: digest, sectalkRollbackSha256: copy.sha256 } })
+  const stored = await bucket.download(object)
+  if (stored.error || !stored.data || stored.data.size !== copy.bytes ||
+    digestWorkspaceBytes(Buffer.from(await stored.data.arrayBuffer())) !== copy.sha256) return restoreError('PT409')
+  const restored = await auth.client.rpc('st_v8_residency_source_file_restore', { ...args, p_action: 'publish' })
+  if (restored.error) return restoreError(restored.error.code)
+  if (restored.data?.state !== 'restored') return restoreError()
+  return Response.json(restored.data, { headers: fileHeaders })
+}
+
 async function handle(request: Request) {
   const query = new URL(request.url).searchParams
   const workspace = query.get('workspace')?.toLowerCase()
@@ -73,13 +118,16 @@ async function handle(request: Request) {
   const verificationId = query.get('residency-verify')?.toLowerCase()
   const rollbackReview = query.get('residency-rollback')?.toLowerCase()
   const rollbackStage = query.get('residency-rollback-stage')
+  const rollbackRestore = query.get('residency-rollback-restore')
   const filename = readUploadFilename(request)
   const mime = request.headers.get('content-type') || ''
   if (!validFileId(workspace) || (file !== undefined && !validFileId(file))) return fileFailure(400, 'Choose a valid workspace file.')
-  if (rollbackStage !== null) {
-    if (rollbackStage !== '1' || !file || request.method !== 'POST' || action !== null ||
+  if (rollbackStage !== null || rollbackRestore !== null) {
+    if (!file || request.method !== 'POST' || action !== null ||
       exportId || storagePlan || importId || verificationId || rollbackReview) return forbidden()
-    return stageRollbackFile(request, workspace, file)
+    if (rollbackStage === '1' && rollbackRestore === null) return stageRollbackFile(request, workspace, file)
+    if (rollbackRestore !== null && rollbackStage === null) return restoreRollbackFile(request, workspace, file, rollbackRestore)
+    return forbidden()
   }
   if (exportId !== undefined && (!validFileId(exportId) || !file || request.method !== 'GET')) return forbidden()
   if (storagePlan !== undefined && (!validFileId(storagePlan) || !exportId || action !== null || request.method !== 'GET')) return forbidden()
