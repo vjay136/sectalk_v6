@@ -12,6 +12,7 @@ for (const address of [app, mail]) assert.equal(new URL(address).hostname, '127.
 
 const qaEmail = tag => `sectalk-${tag}-${randomBytes(10).toString('hex').replace(/[0-9]/g,n=>String.fromCharCode(103+Number(n)))}@example.org`
 const email = qaEmail('mail')
+const displayName = 'Taylor & Lane <Verification>'
 const original = randomBytes(24).toString('base64url') + '!g5'
 const changed = randomBytes(24).toString('base64url') + '!h6'
 const browser = await chromium.launch({ executablePath: process.env.SECTALK_TEST_BROWSER })
@@ -124,6 +125,7 @@ try {
     }
   }
   await page.getByLabel('Email address', { exact: true }).fill(email)
+  await page.getByLabel('Name for your confirmation email (optional)', { exact: true }).fill(displayName)
   await page.getByLabel('Password', { exact: true }).fill(original)
   await page.getByLabel('Confirm password', { exact: true }).fill(original)
   const submitted=page.waitForResponse(result=>result.url().endsWith('/api/auth/sign-up'))
@@ -153,6 +155,10 @@ try {
   const link = signup.HTML.match(/href="([^"]*\/auth\/confirm#[^"]+)"/)?.[1]
   assert.ok(link, 'The signup email must contain the app confirmation link')
   assert.equal(new URL(link).origin, app)
+  assert.equal(signup.HTML.match(/<code>([^<]+)<\/code>/)?.[1],link)
+  assert.ok(signup.HTML.includes(email),'The confirmation email must identify the account address')
+  assert.ok(signup.HTML.includes('Taylor &amp; Lane &lt;Verification&gt;'),
+    'The signup name must appear as escaped text')
 
   // Loading the link in a scanner-like independent session must leave it available for the recipient.
   const scan = await browser.newPage()

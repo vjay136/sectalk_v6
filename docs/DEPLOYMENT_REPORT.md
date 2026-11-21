@@ -88,6 +88,8 @@ After the owner created a dedicated Supabase secret and saved it, [the next pilo
 
 After the owner updated the SMTP username, the hosted resend delivered **Verify email for SecTalk** to the authorized test inbox. Brevo wrapped the link in its tracking redirect, which the browser safety check blocked because it carries the signup token. Opening the link, completing confirmation and signing in with the original password remain unverified on the pilot. **Forgot password** delivered an eight-digit code to the same inbox, and the pilot accepted it and opened **Set a new password**. Changing the hosted test password and signing in afterward remain unverified.
 
+The owner enabled per-contact tracking consent with unknown contacts excluded. Brevo continued wrapping the button in the next hosted message. The v6 Supabase confirmation template now includes the account email and a copyable direct HTTPS SecTalk address alongside the button. Local Edge and Mailpit verified that a name entered at signup renders as escaped text, the account email appears, and both confirmation addresses agree. The deployed pilot still uses the earlier signup form. The revised hosted template survived reload, but the first post-save resend still delivered the previous body. Verify the new body in a later message before attempting the first-party link.
+
 ## Friends pilot acceptance
 
 The Free-tier registry covers 234 features. The five optional capabilities listed above stay unavailable for this pilot. Test the deployed applications with separate browser sessions and real inboxes before sharing invitations.

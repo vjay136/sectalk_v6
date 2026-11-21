@@ -44,6 +44,9 @@ test('applying Auth release preserves other callbacks, uses link and OTP templat
   assert.equal(fixture.config.mailer_allow_unverified_email_sign_ins, false)
   assert.equal(fixture.config.mailer_otp_length, 8)
   assert.match(fixture.config.mailer_templates_confirmation_content, /#token_hash=\{\{ \.TokenHash \}\}/)
+  const confirmation=fixture.config.mailer_templates_confirmation_content
+  assert.equal(confirmation.match(/<code>([^<]+)<\/code>/)?.[1],
+    confirmation.match(/<a href="([^"]+)"/)?.[1])
   assert.match(fixture.config.mailer_templates_recovery_content, /\{\{ \.Token \}\}/)
   assert.doesNotMatch(fixture.config.mailer_templates_recovery_content, /ConfirmationURL/)
   assert.deepEqual((await fixture.run({ apply: true })).changed, [])

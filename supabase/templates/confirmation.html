@@ -4,9 +4,14 @@
     <main style="max-width:480px;margin:auto;padding:28px;background:#fff;border-radius:14px">
       <p style="color:#15548b;font-size:13px;font-weight:700;letter-spacing:.08em">SECTALK BY EAGLE SECURITY</p>
       <h1 style="margin:12px 0">Verify your email</h1>
+      <p>{{ with .Data.signup_display_name }}Hello, {{ . | html }}.{{ else }}Hello.{{ end }}</p>
       <p>Confirm your email address to finish creating your SecTalk account.</p>
+      <p style="padding:12px;background:#edf4fc;border-radius:8px">Account email <strong dir="ltr">{{ .Email }}</strong></p>
       <p style="margin:24px 0"><a href="{{ if and .RedirectTo (ne .RedirectTo .SiteURL) }}{{ .RedirectTo }}{{ else }}{{ .SiteURL }}/auth/confirm{{ end }}#token_hash={{ .TokenHash }}" style="display:inline-block;padding:14px 20px;background:#12599a;color:#fff;border-radius:8px;text-decoration:none;font-weight:700">Verify email address</a></p>
-      <p>Follow the instructions on the SecTalk page. After verification, you can sign in with your email and password. If you didn’t create a SecTalk account, you can ignore this message.</p>
+      <p>Follow the instructions on the SecTalk page. After verification, you can sign in with your email and password.</p>
+      <p style="margin:20px 0 6px">You can also copy this direct SecTalk address into your browser:</p>
+      <p style="margin:0;color:#15548b;font-size:13px;overflow-wrap:anywhere;word-break:break-word"><code>{{ if and .RedirectTo (ne .RedirectTo .SiteURL) }}{{ .RedirectTo }}{{ else }}{{ .SiteURL }}/auth/confirm{{ end }}#token_hash={{ .TokenHash }}</code></p>
+      <p style="margin-top:20px;color:#364e6a;font-size:14px">This link is for your account only. If you didn’t create a SecTalk account, you can ignore this message.</p>
     </main>
   </body>
 </html>

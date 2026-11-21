@@ -48,6 +48,7 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
   const { t } = useLocale()
   const [step, setStep] = useState<Step>(startRecovery?'forgot':'sign-in')
   const [email, setEmail] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [code, setCode] = useState('')
@@ -142,7 +143,7 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
             catch(error) {setSignupChallenge('');throw error}
           }
           const response=await fetch('/api/auth/sign-up',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({action:'signup',email:address,password,invite:pendingWorkspaceInvite(),
+            body:JSON.stringify({action:'signup',email:address,password,displayName:displayName.trim(),invite:pendingWorkspaceInvite(),
               ...(signupChallenge?{challenge:signupChallenge,solution}:{})}),signal:controller.signal})
           if (response.status===428) {
             const payload=await response.json()
@@ -269,6 +270,8 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
             <p>{t(description)}{checkEmail && <> <strong dir="ltr">{email}</strong>.</>}</p>
           </div>
           {showEmail && <label>{t('emailAddress')}<div className="input-icon"><Mail size={16} /><input dir="ltr" type="email" autoComplete="email" maxLength={254} required placeholder="you@example.com" value={email} onChange={event => {setEmail(event.target.value);setSignupChallenge('')}} /></div></label>}
+          {current==='sign-up'&&<label>{t('signupDisplayName')}<input name="displayName" autoComplete="name"
+            dir="auto" maxLength={50} value={displayName} onChange={event=>setDisplayName(event.target.value)}/></label>}
           {passwordRequired && <label>{t('password')}<div className="input-icon"><KeyRound size={16} /><input key={current} type="password" autoComplete={newPassword ? 'new-password' : 'current-password'} minLength={newPassword ? 12 : undefined} maxLength={256} required placeholder={newPassword ? t('minimumPassword') : t('yourPassword')} value={password} onChange={event => setPassword(event.target.value)} /></div></label>}
           {newPassword && <label>{t('confirmPassword')}<div className="input-icon"><KeyRound size={16} /><input type="password" autoComplete="new-password" minLength={12} maxLength={256} required placeholder={t('reenterPassword')} value={confirmation} onChange={event => setConfirmation(event.target.value)} /></div></label>}
           {current==='new-password'&&recoveryFactor&&<label>{t('authenticatorCode')}<input name="recovery-authenticator"

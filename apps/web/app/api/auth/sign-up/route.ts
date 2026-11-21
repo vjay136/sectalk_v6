@@ -29,6 +29,11 @@ export async function POST(request:Request) {
     const resend=input.action==='resend'
     if (!resend&&(input.action!=='signup'||typeof input.password!=='string'||input.password.length<12
       ||new TextEncoder().encode(input.password).length>72)) return failure()
+    let displayName:string|undefined
+    if (!resend&&input.displayName!==undefined) {
+      if (typeof input.displayName!=='string'||input.displayName.length>50||/[\p{Cc}\p{Zl}\p{Zp}]/u.test(input.displayName)) return failure()
+      displayName=input.displayName.trim()||undefined
+    }
     if (input.invite!=null&&(typeof input.invite!=='string'||!invitePattern.test(input.invite))) return failure()
     if (input.challenge!=null&&(typeof input.challenge!=='string'||!challengePattern.test(input.challenge)
       ||!Number.isInteger(input.solution)||input.solution<0||input.solution>=250000)) return failure()
@@ -66,6 +71,7 @@ export async function POST(request:Request) {
       if (consumed.error || consumed.data!==true) return failure(503)
 
       const created=await admission.auth.admin.createUser({email,email_confirm:false,
+        ...(displayName?{user_metadata:{signup_display_name:displayName}}:{}),
         password_hash:await signupPasswordHash(input.password)})
       if (created.error) {
         if (created.error.code&&duplicateAccountCodes.has(created.error.code)) return sent()
