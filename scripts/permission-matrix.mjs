@@ -77,7 +77,7 @@ export const permissions={
   'billing.workspace.read':'Active workspace billing administrator; linked subscription payment status and invoices only.',
   'billing.workspace.delegate':'Workspace owner with fresh billing proof; eligible members only.',
   'billing.checkout':'Own subscription, current identity and fresh native proof.',
-  'billing.trial':'Current workspace owner. Starting a trial requires fresh native proof and the tenant’s unused eligibility.',
+  'billing.trial':'Current workspace owner with applicable entry and billing SSO receipts. Starting a trial requires fresh native proof and a server recheck of the exact session and unused eligibility.',
   'billing.invoice.refund':'Explicit workspace billing authority, owned invoice scope and fresh native proof.',
   'soc.queue.read':'Verified authorized platform moderation staff.',
   'security.disclosure.review':'Assigned disclosure reviewer with a current session and fresh native MFA.',
@@ -224,7 +224,7 @@ account('workspaces/residency/room-file-copy','GET','workspace.residency.room_fi
 account('workspaces/residency/route-link','GET','workspace.residency.routing','operationalReportViewer','rpc:st_v8_residency_active_route','rpc:st_v8_residency_routing_rehearsal')
 account('workspaces/rule-registry','POST','policy.rule.evaluate','getUser','rpc:st_v7_workspace_rule_registry')
 account('workspaces/trial','GET','billing.trial','billingIdentity','rpc:st_v7_workspace_trial_status')
-account('workspaces/trial','POST','billing.trial','billingIdentity','rpc:st_v7_sensitive_action_status','rpc:st_v7_start_workspace_trial')
+account('workspaces/trial','POST','billing.trial','billingIdentity','rpc:st_v8_workspace_trial_session','rpc:st_v8_start_workspace_trial_for_session')
 
 export const entrypoints=entries.sort((a,b)=>a.path.localeCompare(b.path)||a.method.localeCompare(b.method))
 

@@ -4,6 +4,8 @@ The existing SecTalk v5 Vercel project and GitHub release are the live baseline.
 
 The pilot tracks `main` in the separate [SecTalk v6 GitHub repository](https://github.com/vjay136/sectalk_v6), rooted at `apps/web` in the `silent-soldier-vjay` scope. An update to that branch can trigger a new pilot deployment. The existing `origin` points to the v5 repository.
 
+Deploy the updated Web app alongside the workspace trial SSO migration before enabling hosted trials. The migration replaces the older service entry point with one that takes the authenticated owner's native session. The pilot keeps billing disabled.
+
 Run `npm run verify:registry -- --release-free` to check the 234 required rows for the Free-tier source. The full-scope gate is `npm run verify:registry -- --release` and requires all 239 rows. Both release gates scan the Web, Admin and Workers browser assets. The structural registry check runs separately as `npm run verify:registry`.
 
 Local production builds passed for Web, Admin and Workers with loopback fixture settings. The isolated Web build passed its browser asset scan. The Free-tier gate passed the three project asset scans. A synthetic full-gate check verified that a server-only value in a Workers browser asset blocks release and the error redacts the value.

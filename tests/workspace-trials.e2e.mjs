@@ -24,6 +24,7 @@ let retrieved=0
 let requestFields
 let workspace
 let server
+let primaryFailure=false
 
 function data(result) {
   if(result.error)throw result.error
@@ -126,11 +127,23 @@ try {
   const summary=data(await owner.client.rpc('st_v6_workspace_admin_overview',{p_workspace:workspace}))
   assert.equal(summary.seat_limit,required?30:100)
   console.log('Passed real trial UI and policy enforcement for '+(required?'hosted card confirmation via a loopback Stripe contract and signed webhook':'optionally card-free activation')+'.')
+} catch(error) {
+  primaryFailure=true
+  throw error
 } finally {
   await browser.close()
   if(server)await new Promise(resolve=>server.close(resolve))
-  if(workspace)execFileSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-q','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],{
-    input:`delete from public.st_v2_workspaces where id='${workspace}';`,windowsHide:true,
-  })
-  for(const user of users)data(await admin.auth.admin.deleteUser(user))
+  try {
+    if(workspace)execFileSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-q','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],{
+      input:`begin; set local session_replication_role=replica;
+        delete from public.st_v2_workspace_audit where workspace_id='${workspace}';
+        delete from sectalk_private.st_v8_workspace_audit_custody where workspace='${workspace}';
+        set local session_replication_role=origin;
+        delete from public.st_v2_workspaces where id='${workspace}'; commit;`,windowsHide:true,
+    })
+    for(const user of users)data(await admin.auth.admin.deleteUser(user))
+  }catch(error) {
+    if(!primaryFailure)throw error
+    console.error('Disposable trial fixture cleanup failed.')
+  }
 }

@@ -32,10 +32,10 @@ export async function POST(request:Request) {
   if(!payload||typeof payload.workspace!=='string'||!uuid.test(payload.workspace)||!['professional','business'].includes(payload.plan)){
     return response({error:'Choose an available trial plan.'},400)
   }
-  const proof=await identity.client.rpc('st_v7_sensitive_action_status',{p_kind:'billing'})
-  if(proof.error||proof.data!=='verified')return response({error:'Verify your current sign-in to start a trial.'},403)
-  const trial=await billingWriter.rpc('st_v7_start_workspace_trial',{
-    p_workspace:payload.workspace,p_owner:identity.user.id,p_plan:payload.plan,p_card_required:policy==='required',
+  const proof=await identity.client.rpc('st_v8_workspace_trial_session',{p_workspace:payload.workspace})
+  if(proof.error||!uuid.test(proof.data??''))return response({error:'Verify your current workspace sign-in to start a trial.'},403)
+  const trial=await billingWriter.rpc('st_v8_start_workspace_trial_for_session',{
+    p_workspace:payload.workspace,p_owner:identity.user.id,p_session:proof.data,p_plan:payload.plan,p_card_required:policy==='required',
   })
   if(trial.error){
     if(trial.error.code==='42501')return response({error:'Workspace trial unavailable.'},403)

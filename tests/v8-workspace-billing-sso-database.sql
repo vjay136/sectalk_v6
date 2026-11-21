@@ -164,6 +164,41 @@ begin
     raise exception 'Verified owner could not restore standard entry'; end if;
   if public.st_v8_workspace_billing_access(workspace) is distinct from 'required' then
     raise exception 'Entry recovery disabled the separate billing policy'; end if;
+  if public.st_v8_workspace_trial_session(workspace) is not null
+    or public.st_v8_workspace_trial_session(second_workspace) is distinct from owner_session then
+    raise exception 'Trial authorization did not separately enforce workspace billing SSO'; end if;
+  begin
+    perform public.st_v7_workspace_trial_status(workspace);
+    raise exception 'Password owner read protected trial status';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  set local role service_role;
+  begin
+    perform public.st_v8_start_workspace_trial_for_session(workspace,owner_id,owner_session,'business',false);
+    raise exception 'Service trial mutation ignored the current owner session scope';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  insert into sectalk_private.st_v7_workspace_sso_sessions(session,workspace,principal,protocol,provider)
+    values(owner_session,workspace,owner_id,'oidc',provider);
+  set local role authenticated;
+  if public.st_v8_workspace_trial_session(workspace) is distinct from owner_session
+    or public.st_v7_workspace_trial_status(workspace)->>'state' is distinct from 'subscribed' then
+    raise exception 'Signed owner lost the protected trial scope'; end if;
+  reset role;
+  set local role service_role;
+  begin
+    perform public.st_v8_start_workspace_trial_for_session(workspace,owner_id,owner_session,'business',false);
+    raise exception 'Existing plan did not block a trial';
+  exception when sqlstate 'PT409' then null; end;
+  reset role;
+  update auth.custom_oauth_providers set enabled=false where identifier=provider;
+  set local role service_role;
+  begin
+    perform public.st_v8_start_workspace_trial_for_session(workspace,owner_id,owner_session,'business',false);
+    raise exception 'A disconnected provider retained trial mutation access';
+  exception when insufficient_privilege then null; end;
+  reset role;
+  set local role authenticated;
   if public.st_v8_workspace_billing_policy(workspace,false)->>'required' is distinct from 'false' then
     raise exception 'Verified owner could not restore standard billing sign-in'; end if;
   if public.st_v8_workspace_billing_access(workspace) is distinct from 'allowed' then

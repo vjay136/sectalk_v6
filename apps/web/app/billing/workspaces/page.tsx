@@ -10,7 +10,7 @@ import {formatBillingAmount, isBillingCurrency} from '../../../lib/billing'
 import {useWorkspaceBillingAccess} from '../../../components/workspace-billing-access'
 import {workspaceBillingSsoMessage} from '../../../lib/workspace-billing-access'
 
-type Scope = {id: string; name: string; manages: boolean; delegated: boolean}
+type Scope = {id: string; name: string; manages: boolean; delegated: boolean; commercial?: boolean}
 type Member = {id: string; name: string; handle: string; granted: boolean; eligible: boolean}
 type Summary = {plan: string; plan_version: number; seats: number; seat_limit: number; recording_ms: number;
   transcription_samples: number; storage_byte_hours: number; storage_bytes: number; storage_quota_bytes: number;
@@ -52,7 +52,8 @@ export default function WorkspaceBilling() {
       const merged=new Map<string,Scope>()
       for(const scope of (billing.data||[]) as Scope[])merged.set(scope.id,scope)
       for(const scope of (commercial.data||[]) as {id:string;name:string}[]) {
-        if(!merged.has(scope.id))merged.set(scope.id,{...scope,manages:false,delegated:false})
+        const current=merged.get(scope.id)??{...scope,manages:false,delegated:false}
+        merged.set(scope.id,{...current,commercial:true})
       }
       setScopes([...merged.values()].sort((a,b)=>a.name.localeCompare(b.name)))
     })
@@ -129,7 +130,8 @@ export default function WorkspaceBilling() {
     {usesStandardBilling&&billingAccess==='required'&&<p role="status">{workspaceBillingSsoMessage}</p>}
     {usesStandardBilling&&billingAccess==='unavailable'&&<p role="alert">Billing access is unavailable for this workspace.</p>}
     {selected&&usesStandardBilling&&billingAccess==='allowed'&&<WorkspaceSeats key={selected.id} workspace={selected.id}/>}
-    {selected&&<WorkspaceEnterpriseOrders key={'enterprise-'+selected.id} workspace={selected.id} name={selected.name}/>}
+    {selected&&(selected.commercial||billingAccess==='allowed')&&
+      <WorkspaceEnterpriseOrders key={'enterprise-'+selected.id} workspace={selected.id} name={selected.name}/>}
     {selected?.delegated&&billingAccess==='allowed'&&<WorkspaceInvoiceAdjustments key={'adjustments-'+selected.id} workspace={selected.id}/>}
     {selected?.manages && billingAccess==='allowed' && <section aria-label="Billing administrator access" className="panel release-panel">
       <h2>Billing administrator access</h2>
