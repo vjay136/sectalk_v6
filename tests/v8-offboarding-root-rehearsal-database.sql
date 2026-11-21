@@ -64,6 +64,10 @@ begin
   set local role authenticated;
   perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
   perform public.st_v8_offboarding_reconciliation(w,'confirm',w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256');
+  begin
+    perform public.st_v8_offboarding_root_rehearsal(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256');
+    raise exception 'The independent reviewer was allowed to run the owner rehearsal';
+  exception when insufficient_privilege then null; end;
   reset role;
   begin
     perform sectalk_private.st_v8_offboarding_root_rehearse(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256');
@@ -93,7 +97,13 @@ begin
   end;
   drop trigger offboarding_root_rehearsal_fixture on public.st_v2_channels;
   select m.sha256 into strict before_audit from sectalk_private.st_v8_offboarding_audit_custody_manifest(w) m where m.valid;
-  receipt:=sectalk_private.st_v8_offboarding_root_rehearse(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256');
+  set local role authenticated;
+  begin
+    perform public.st_v8_offboarding_root_rehearsal(w,gen_random_uuid()::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256');
+    raise exception 'The API accepted a different workspace confirmation';
+  exception when insufficient_privilege then null; end;
+  receipt:=public.st_v8_offboarding_root_rehearsal(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256');
+  reset role;
   select m.valid,m.sha256 into strict verified,after_audit from sectalk_private.st_v8_offboarding_audit_custody_manifest(w) m;
   if receipt->>'deletedInsideRollback' is distinct from 'true' or receipt->>'rolledBack' is distinct from 'true'
     or receipt->>'providerBytes' is distinct from 'unverified' or receipt->>'backupErasure' is distinct from 'unverified'
@@ -111,6 +121,11 @@ begin
     where has_function_privilege(r,'sectalk_private.st_v8_offboarding_root_rehearse(uuid,text,uuid,text)','EXECUTE')
       or has_table_privilege(r,'sectalk_private.st_v8_offboarding_root_rehearsal_roster','SELECT,INSERT,UPDATE,DELETE'))
     then raise exception 'An API role can issue or consume native rehearsal authorizations'; end if;
+  if exists(select 1 from unnest(array['anon','service_role']) r
+    where has_function_privilege(r,'public.st_v8_offboarding_root_rehearsal(uuid,text,uuid,text)','EXECUTE'))
+    or has_schema_privilege('authenticated','sectalk_private','USAGE') then
+    raise exception 'The rehearsal exposed private access or a non-user RPC grant';
+  end if;
 end $$;
 
 select 'passed: exact independently reviewed native root DELETE and cascades within mandatory rollback, retained custody, rejected transitive rows, unknown hooks and permit reuse';

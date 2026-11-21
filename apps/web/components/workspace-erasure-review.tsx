@@ -1,6 +1,7 @@
 'use client'
 
 import {useCallback,useEffect,useRef,useState,type FormEvent} from 'react'
+import {verifyAccountCredential} from '../lib/account-credential'
 import {db,formatError} from '../lib/data'
 
 const labels:Record<string,string>={
@@ -46,6 +47,7 @@ export function WorkspaceErasureReview({workspace,role}:{workspace:string;role:'
   const [status,setStatus]=useState<Status>()
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
+  const [rehearsedPlan,setRehearsedPlan]=useState<string>()
   const revision=useRef(0)
 
   const load=useCallback(async()=>{
@@ -92,6 +94,40 @@ export function WorkspaceErasureReview({workspace,role}:{workspace:string;role:'
     } finally {setBusy(false)}
   }
 
+  async function rehearse(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if(busy||!status?.current||!status.reviewedAt||!status.plan||!status.sha256||role!=='owner') return
+    const form=event.currentTarget
+    const fields=new FormData(form)
+    const confirmation=String(fields.get('workspace')).trim()
+    setBusy(true)
+    setError('')
+    setRehearsedPlan(undefined)
+    try {
+      if(confirmation!==workspace) throw new Error('Enter the exact workspace ID.')
+      const assurance=await db!.rpc('st_v7_sensitive_action_status',{p_kind:'export'})
+      if(assurance.error) throw assurance.error
+      if(assurance.data==='totp') {
+        const code=String(fields.get('code')||'')
+        if(!code) throw new Error('Enter a current authenticator code.')
+        await verifyAccountCredential(code,true)
+      } else if(assurance.data!=='verified') {
+        throw new Error('Verify your account before running the removal rehearsal.')
+      }
+      const {data,error:failure}=await db!.rpc('st_v8_offboarding_root_rehearsal',{
+        p_workspace:workspace,p_confirmation:confirmation,p_reconciliation:status.plan,p_sha256:status.sha256,
+      })
+      if(failure) throw failure
+      if(data?.reconciliation!==status.plan||data?.workspace!==workspace||data?.rolledBack!==true) {
+        throw new Error('The rehearsal did not return a verified rollback result.')
+      }
+      setRehearsedPlan(status.plan)
+      form.reset()
+    } catch(cause) {
+      setError(formatError(cause,'The workspace record rehearsal could not be completed.'))
+    } finally {setBusy(false)}
+  }
+
   function counts(title:string,values:Record<string,number>) {
     return <section aria-label={title}>
       <h5>{title}</h5>
@@ -134,6 +170,14 @@ export function WorkspaceErasureReview({workspace,role}:{workspace:string;role:'
           {root.unclassifiedConstraints>0&&<p>{root.unclassifiedConstraints} foreign-key constraints still need a retention classification.</p>}
           {counts('Direct references by data family',root.categories)}
           {counts('Effect of removing the workspace record',root.deleteActions)}
+          <p>The database can rehearse removal of an empty default channel, the two approvers’ memberships, and the workspace record. It rolls back the entire operation.</p>
+          {role==='owner'&&status.current&&status.reviewedAt&&!status.held&&<form className="release-form" onSubmit={event=>void rehearse(event)}>
+            <label>Workspace ID for removal rehearsal<input name="workspace" required maxLength={36} autoComplete="off"/></label>
+            <label>Authenticator code if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}"/></label>
+            <button className="secondary" disabled={busy}>Run rollback-only removal rehearsal</button>
+          </form>}
+          {rehearsedPlan&&status.current&&rehearsedPlan===status.plan&&
+            <p role="status">Workspace record rehearsal passed. All rehearsal changes were rolled back.</p>}
         </details>}
         {counts('Verified scoped deletion receipts',status.summary.verifiedDeletionReceipts)}
         {archiveFindings&&counts('Archive receipt findings',archiveFindings)}

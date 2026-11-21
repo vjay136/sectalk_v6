@@ -9,6 +9,7 @@ const origin=new URL(process.env.SECTALK_STORAGE_TEST_URL).origin
 const targets=new Map([
   ['http://127.0.0.1:55321','supabase_db_v4-auth-qa'],
   ['http://127.0.0.1:56651','supabase_db_v6-i232-qa'],
+  ['http://127.0.0.1:56801','supabase_db_v6-bundle243-qa'],
 ])
 const qaContainer=targets.get(origin)
 assert.ok(qaContainer,'Use a disposable Supabase QA project')
@@ -75,6 +76,10 @@ try {
   data(await owner.client.rpc('st_v2_invite',{p_workspace:workspace,p_handle:member.handle}))
   const invitation=data(await member.client.from('st_v2_invites').select('id').eq('workspace_id',workspace).single())
   data(await member.client.rpc('st_v2_reply_invite',{p_invite:invitation.id,p_accept:true}))
+  const rehearsal={p_workspace:workspace,p_confirmation:workspace,p_reconciliation:randomUUID(),p_sha256:'a'.repeat(64)}
+  assert.ok((await anon.rpc('st_v8_offboarding_root_rehearsal',rehearsal)).error)
+  assert.ok((await service.rpc('st_v8_offboarding_root_rehearsal',rehearsal)).error)
+  assert.equal((await outsider.client.rpc('st_v8_offboarding_root_rehearsal',rehearsal)).status,403)
   const outsiderView=data(await outsider.client.rpc('st_v7_permission_catalog',{p_workspace:workspace}))
   assert.equal(outsiderView.workspace_role,null)
   assert.deepEqual(outsiderView.workspaces,[])

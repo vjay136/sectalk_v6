@@ -859,6 +859,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v8_offboarding_room_thread_copy(uuid, uuid, uuid, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_v8_offboarding_room_thread_delete(uuid, uuid, uuid, text, text, uuid, text)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_billing_admin_session`, `sectalk_private.st_v7_session_deadline`, `sectalk_private.st_v8_offboarding_role` |
 | `public.st_v8_offboarding_room_thread_status(uuid)` | `authenticated` | definer | Database scope | `auth.uid` |
+| `public.st_v8_offboarding_root_rehearsal(uuid, text, uuid, text)` | `authenticated` | invoker | Delegated scope | `sectalk_private.st_v8_run_offboarding_root_rehearsal`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_billing_admin_session`, `sectalk_private.st_v8_offboarding_role` |
 | `public.st_v8_offboarding_source_batch(uuid, text, text, jsonb, uuid, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_v8_offboarding_source_batch_status(uuid)` | `authenticated` | definer | Database scope | `auth.uid` |
 | `public.st_v8_offboarding_storage_copies(uuid, uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v7_billing_admin_session` |
