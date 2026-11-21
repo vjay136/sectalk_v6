@@ -6,6 +6,8 @@ import {db,formatError} from '../lib/data'
 
 type ReplayResult='matched'|'source_changed'|'not_replayed'
 type ReplayRecord={kind:string;id:string;change:string;revision:string|null;result:ReplayResult}
+type StagedFile={file:string;sha256:string;bytes:number;digest:string;state:'staged'|'approved'|'changed'}
+type FileReview={role?:'owner'|'reviewer';files?:StagedFile[]}
 type SourceReview={
   state:'inactive'|'awaiting_manifest'|'held'
   reviewDigest?:string
@@ -24,6 +26,7 @@ const resultLabels:Record<ReplayResult,string>={
 
 export function WorkspaceResidencySourceReplayReview({workspace}:{workspace:string}) {
   const [review,setReview]=useState<SourceReview>()
+  const [fileReview,setFileReview]=useState<FileReview>()
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
   const [visible,setVisible]=useState(50)
@@ -35,7 +38,15 @@ export function WorkspaceResidencySourceReplayReview({workspace}:{workspace:stri
       const result=await (signal?query.abortSignal(signal):query)
       if(signal?.aborted)return
       if(result.error)throw result.error
-      setReview(result.data as SourceReview)
+      const next=result.data as SourceReview
+      setReview(next)
+      if(next.state==='held') {
+        const files=db!.rpc('st_v8_residency_source_file_review',{p_workspace:workspace})
+        const staged=await (signal?files.abortSignal(signal):files)
+        if(signal?.aborted)return
+        if(staged.error)throw staged.error
+        setFileReview(staged.data as FileReview)
+      } else setFileReview(undefined)
     }catch(cause){
       if(!signal?.aborted){
         setError(formatError(cause,'Could not check the source records.'))
@@ -51,6 +62,38 @@ export function WorkspaceResidencySourceReplayReview({workspace}:{workspace:stri
     return ()=>controller.abort()
   },[refresh])
 
+  async function verifyCredential(fields:FormData,confirmation:string){
+    if(confirmation!==workspace)throw new Error('Enter the exact workspace ID shown above.')
+    const assurance=await db!.rpc('st_v7_sensitive_action_status',{p_kind:'room_role'})
+    if(assurance.error)throw assurance.error
+    if(assurance.data!=='verified'){
+      const code=String(fields.get('code')||'')
+      if(!code)throw new Error('Enter a current authenticator code.')
+      await verifyAccountCredential(code,true)
+    }
+  }
+
+  async function approveFile(event:FormEvent<HTMLFormElement>,file:StagedFile){
+    event.preventDefault()
+    if(busy||file.state!=='staged'||fileReview?.role!=='reviewer')return
+    const form=event.currentTarget
+    const fields=new FormData(form)
+    const confirmation=String(fields.get('workspace')||'')
+    setBusy(true);setError('')
+    try {
+      await verifyCredential(fields,confirmation)
+      const result=await db!.rpc('st_v8_residency_source_file_review',{
+        p_workspace:workspace,p_file:file.file,p_digest:file.digest,p_confirmation:confirmation,
+      })
+      if(result.error)throw result.error
+      const approved=(result.data as FileReview).files?.[0]
+      if(!approved||approved.file!==file.file||approved.state!=='approved')throw new Error('The file approval could not be verified.')
+      setFileReview({role:'reviewer',files:fileReview.files?.map(copy=>copy.file===file.file?approved:copy)})
+      form.reset()
+    }catch(cause){setError(formatError(cause,'Could not approve the staged file.'))}
+    finally{setBusy(false)}
+  }
+
   async function recordEvidence(event:FormEvent<HTMLFormElement>,action:'capture'|'confirm'){
     event.preventDefault()
     if(busy||!review?.evidenceDigest)return
@@ -59,14 +102,7 @@ export function WorkspaceResidencySourceReplayReview({workspace}:{workspace:stri
     const confirmation=String(fields.get('workspace')||'')
     setBusy(true);setError('')
     try {
-      if(confirmation!==workspace)throw new Error('Enter the exact workspace ID shown above.')
-      const assurance=await db!.rpc('st_v7_sensitive_action_status',{p_kind:'room_role'})
-      if(assurance.error)throw assurance.error
-      if(assurance.data!=='verified'){
-        const code=String(fields.get('code')||'')
-        if(!code)throw new Error('Enter a current authenticator code.')
-        await verifyAccountCredential(code,true)
-      }
+      await verifyCredential(fields,confirmation)
       const result=await db!.rpc('st_v8_residency_source_evidence',{
         p_workspace:workspace,p_action:action,p_confirmation:confirmation,
         p_review:review.evidenceId,p_digest:review.evidenceDigest,
@@ -99,6 +135,21 @@ export function WorkspaceResidencySourceReplayReview({workspace}:{workspace:stri
         </li>)}</ul>
         {visible<records.length&&<button className="secondary" onClick={()=>setVisible(previous=>previous+50)}>Show more records</button>}
       </details>}
+      {!!fileReview?.files?.length&&<section aria-label="Staged rollback files">
+        <h4>Staged rollback files</h4>
+        <ul>{fileReview.files.map(file=><li key={file.file}>
+          <p>File <code>{file.file}</code> · {file.bytes.toLocaleString()} bytes</p>
+          <p>SHA-256 <code>{file.sha256}</code></p>
+          <p role="status">{file.state==='approved'?'Approved for restoration':file.state==='changed'?'Staged copy changed or is missing':'Awaiting independent approval'}</p>
+          {file.state==='staged'&&fileReview.role==='reviewer'&&review.coverage!=='preservation_hold'&&
+            <form className="release-form" onSubmit={event=>void approveFile(event,file)}>
+              <p>Workspace ID <code>{workspace}</code></p>
+              <label>Confirm staged file workspace ID<input name="workspace" required autoComplete="off" disabled={busy}/></label>
+              <label>Authenticator code for file approval if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" disabled={busy}/></label>
+              <button className="secondary" disabled={busy}>Approve staged file</button>
+            </form>}
+        </li>)}</ul>
+      </section>}
     </>}
     {!error&&action&&<form className="release-form" onSubmit={event=>void recordEvidence(event,action)}>
       <p>Workspace ID <code>{workspace}</code></p>

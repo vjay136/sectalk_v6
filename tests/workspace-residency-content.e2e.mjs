@@ -1669,6 +1669,41 @@ try {
             assert.equal(sourceSql(`select count(*) from sectalk_private.st_v6_workspace_files where (workspace,id)=('${workspace}','${rollbackFile.id}');`),'0')
             assert.equal(sourceSql(`select count(*) from storage.objects where (bucket_id,name)=('sectalk-workspace-files','${workspace}/${rollbackFile.id}');`),'0')
             console.log('Edge staged a reviewed file in private recovery Storage. Exact retries retained one receipt and the live workspace remained held.')
+            const fileReview=(client,options={})=>client.rpc('st_v8_residency_source_file_review',{p_workspace:workspace,...options})
+            const fileRow=data(await fileReview(verifiedOwner)).files[0]
+            assert.equal(fileRow.state,'staged')
+            assert.equal(fileRow.file,rollbackFile.id)
+            assert.equal(fileRow.sha256,sha256)
+            assert.equal(fileRow.bytes,fileBytes.length)
+            const decision={p_file:rollbackFile.id,p_confirmation:workspace,p_digest:fileRow.digest}
+            assert.equal((await fileReview(verifiedOwner,decision)).error?.code,'42501')
+            assert.equal((await fileReview(proofClient(sourceMemberProof))).error?.code,'42501')
+            assert.equal((await fileReview(verifiedReviewer,{...decision,p_digest:'0'.repeat(64)})).error?.code,'PT409')
+            const fileReviewerContext=await browser.newContext({storageState:{cookies:[],origins:[{origin:sourceOrigin,
+              localStorage:[{name:'sb-127-auth-token',value:JSON.stringify(reviewerProof.session)}],
+            }]}})
+            try {
+              const fileReviewerPage=await fileReviewerContext.newPage()
+              await fileReviewerPage.goto(sourceOrigin+'/?workspace='+workspace)
+              const stagedPanel=fileReviewerPage.getByRole('region',{name:'Staged rollback files',exact:true})
+              await stagedPanel.getByText(sha256,{exact:true}).waitFor()
+              await stagedPanel.getByLabel('Confirm staged file workspace ID').fill(workspace)
+              await stagedPanel.getByRole('button',{name:'Approve staged file',exact:true}).click()
+              await stagedPanel.getByText('Approved for restoration',{exact:true}).waitFor()
+            } finally { await fileReviewerContext.close() }
+            assert.equal(data(await fileReview(verifiedReviewer,decision)).files[0].state,'approved')
+            assert.equal(data(await fileReview(verifiedOwner)).files[0].state,'approved')
+            assert.equal(sourceSql(`select count(*) from public.st_v2_workspace_audit where workspace_id='${workspace}' and event='workspace.residency_file_replay_approved' and target='${rollbackFile.id}';`),'1')
+            const stagedObjectFilter=`where (bucket_id,name)=('sectalk-residency-recovery','${rollbackStagingPath}')`
+            sourceSql(`update storage.objects set metadata=jsonb_set(metadata,'{size}',to_jsonb(${fileBytes.length+1})) ${stagedObjectFilter};`)
+            try {
+              assert.equal(data(await fileReview(verifiedReviewer)).files[0].state,'changed')
+              assert.equal((await fileReview(verifiedReviewer,decision)).error?.code,'PT409')
+            } finally {
+              sourceSql(`update storage.objects set metadata=jsonb_set(metadata,'{size}',to_jsonb(${fileBytes.length})) ${stagedObjectFilter};`)
+            }
+            assert.equal(sourceSql(`select count(*) from sectalk_private.st_v6_workspace_files where (workspace,id)=('${workspace}','${rollbackFile.id}');`),'0')
+            console.log('Edge approved the exact private receipt as independent reviewer; stale evidence and native object drift were denied while the source stayed held.')
           }
           let sourceChatAuthor
           if(checkChannelReplay){
