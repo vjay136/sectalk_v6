@@ -4,7 +4,7 @@ declare
   owner_id uuid:=gen_random_uuid(); member_user uuid:=gen_random_uuid();
   factor uuid:=gen_random_uuid(); owner_session uuid:=gen_random_uuid(); signed_session uuid:=gen_random_uuid();
   space uuid:=gen_random_uuid(); other_space uuid; task uuid;
-  room uuid:=gen_random_uuid(); channel uuid;
+  room uuid:=gen_random_uuid(); post uuid:=gen_random_uuid(); channel uuid;
   provider text:='custom:workspace-entry-rollback'; domain text:='entry-sso.example.invalid';
   owner_claim jsonb:=jsonb_build_object('sub',owner_id,'session_id',owner_session,'role','authenticated','aal','aal2');
   signed_claim jsonb:=jsonb_build_object('sub',member_user,'session_id',signed_session,'role','authenticated','aal','aal1');
@@ -28,6 +28,8 @@ begin
   space:=public.st_v6_create_typed_workspace(space,'Locked entry fixture','enterprise');
   other_space:=public.st_v2_create_workspace('Unprotected entry control');
   perform public.st_v6_room_create(room,space,'Protected settings room','public','blank');
+  perform public.st_v6_room_post(room,post,'Synthetic thread for receipt checks','message');
+  insert into public.st_v6_thread_follows(room_id,post_id) values(room,post);
   channel:=public.st_v2_create_channel(space,'protected-settings');
   task:=public.st_v2_add_item(space,'task','Protected task','Synthetic workspace task',null);
   reset role;
@@ -58,6 +60,22 @@ begin
     or not exists(select 1 from public.st_v8_workspace_entry_shells(array[space,other_space]) s
       where s.id=space and s.name='Locked entry fixture') then
     raise exception 'Protected landing leaked private metadata or lost its own switcher/recovery'; end if;
+  if public.st_v6_read_receipt_settings(space) is distinct from '{}'::jsonb
+    or public.st_v6_read_receipt_settings(space,room) is distinct from '{}'::jsonb
+    or public.st_v6_read_receipt_settings(other_space)->>'workspace_enabled' is distinct from 'true'
+    or public.st_v6_read_receipt_settings()->>'personal_enabled' is distinct from 'true'
+    or exists(select 1 from public.st_v6_thread_follows f where f.room_id=room) then
+    raise exception 'Password session bypassed interaction scope or lost personal controls'; end if;
+  delete from public.st_v6_thread_follows f where f.room_id=room and f.post_id=post;
+  if found then raise exception 'Password session removed a protected followed thread'; end if;
+  begin
+    perform public.st_v6_set_read_receipt_policy(false,space);
+    raise exception 'Password owner changed workspace read receipt policy';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v6_set_read_receipt_policy(false,null,room);
+    raise exception 'Password owner changed room read receipt policy';
+  exception when insufficient_privilege then null; end;
   begin
     perform public.st_v2_add_item(space,'task','Unauthorized board item','Synthetic denied task',null);
     raise exception 'Password owner wrote to protected planning';
@@ -119,6 +137,11 @@ begin
     or public.st_v8_workspace_entry_policy(space,false)->>'access' is distinct from 'none' then
     raise exception 'Signed member lost full workspace or accessed owner recovery'; end if;
   perform public.st_v2_complete_task(task,true);
+  insert into public.st_v6_thread_follows(room_id,post_id) values(room,post);
+  perform public.st_v6_share_room_reads(room,array[post]);
+  if public.st_v6_read_receipt_settings(space,room)->>'room_enabled' is distinct from 'true'
+    or not exists(select 1 from public.st_v6_room_thread_state(room,array[post]) f where f.following) then
+    raise exception 'Signed reader could not follow a thread or read its receipt settings'; end if;
   perform public.st_v6_set_room_quiet(room,'mute',true);
   perform public.st_v6_set_channel_quiet(channel,'mute',true);
   if public.st_v6_room_quiet_settings(room)->>'muted' is distinct from 'true'
@@ -151,6 +174,12 @@ begin
   if settings->>'shadow' is distinct from 'profile-rules-v2' then
     raise exception 'Signed owner could not stage the new registry version';
   end if;
+  if (select amount from public.st_v6_room_read_counts(room,array[post])) is distinct from 1::bigint
+    or not exists(select 1 from public.st_v6_room_thread_state(room,array[post]) f where f.following) then
+    raise exception 'Signed owner could not read the shared receipt or the preserved follow'; end if;
+  perform public.st_v6_set_read_receipt_policy(false,null,room);
+  if public.st_v6_read_receipt_settings(space,room)->>'room_enabled' is distinct from 'false' then
+    raise exception 'Signed owner could not change the room read receipt policy'; end if;
   perform public.st_v6_manage_room(room,'archive');
   if public.st_v6_room_retirement(room,'schedule')->>'requested_at' is null then
     raise exception 'Signed and freshly verified owner could not schedule retirement'; end if;
@@ -164,6 +193,9 @@ begin
   if exists(select 1 from public.st_v2_workspaces where id=space)
     or not exists(select 1 from public.st_v8_workspace_entry_shells(array[space]) s where s.id=space) then
     raise exception 'Disabled provider retained workspace entry'; end if;
+  if public.st_v6_read_receipt_settings(space,room) is distinct from '{}'::jsonb
+    or exists(select 1 from public.st_v6_thread_follows f where f.room_id=room) then
+    raise exception 'Revoked receipt retained room interactions'; end if;
   begin
     perform public.st_v6_impersonation_watch_list(space);
     raise exception 'Disabled provider retained watch access';
@@ -186,6 +218,8 @@ begin
     or public.st_v6_room_quiet_settings(room)->>'muted' is distinct from 'false'
     or public.st_v6_channel_quiet_settings(channel)->>'muted' is distinct from 'false' then
     raise exception 'Recovery did not restore the owner’s settings and retirement controls'; end if;
+  if public.st_v6_read_receipt_settings(space,room)->>'room_enabled' is distinct from 'false' then
+    raise exception 'Recovery changed or hid the existing receipt policy'; end if;
 end $$;
 select 'passed: private workspace entry, roster, planner, impersonation watch and rule registry, independent scopes and recovery' as result;
 rollback;
