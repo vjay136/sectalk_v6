@@ -96,10 +96,7 @@ try {
   data(await admin.storage.from('sectalk-chat-files').upload(attachment, bytes, {contentType: 'application/octet-stream'}))
   const publication = data(await admin.rpc('st_v7_publish_hashed_file', {p_file: attachment, p_actor: subject.user.id,
     p_caption: excerpt, p_hash: createHash('sha256').update(bytes).digest('hex')}))
-  report = data(await ordinary.client.rpc('st_v5_report', {p_chat: chat, p_message: publication.id, p_category: 'harassment',
-    p_details: 'Standalone moderation test report.', p_share_file: true}))
-  assert.match(report, /^[a-f0-9-]{36}$/)
-  assert.equal(Boolean((await ordinary.client.rpc('st_v5_case', {p_report: report})).error), true)
+  assert.deepEqual(data(await ordinary.client.from('st_v8_moderation_queue_signal').select('revision')),[])
 
   browser = await chromium.launch({executablePath: process.env.SECTALK_TEST_BROWSER})
   const ordinaryPage = await browser.newPage()
@@ -120,12 +117,27 @@ try {
   const queueTab = tabs.getByRole('button', {name: 'Queue operations', exact: true})
   const queue = page.getByRole('region', {name: 'Queue operations', exact: true})
   assert.equal(await queue.count(), 0)
+  let queueConnected=false
+  page.on('websocket',socket=>{
+    socket.on('framereceived',({payload})=>{
+      if(typeof payload==='string'&&payload.includes('moderation-queue:')&&payload.includes('"postgres_changes"')&&
+         payload.includes('"status":"ok"')) queueConnected=true
+    })
+  })
   await page.getByLabel('Authenticator code', {exact: true}).fill(await totpCode(operator.factor.secret))
   await page.getByRole('button', {name: 'Verify code', exact: true}).click()
   await page.getByRole('heading', {name: 'Moderation queue', exact: true}).waitFor()
   assert.equal(await queueTab.count(), 0)
-  await page.getByLabel('Report category', {exact: true}).selectOption('harassment')
-  await page.getByRole('button', {name: new RegExp('@' + subject.handle)}).click()
+  const deadline=Date.now()+10000
+  while(!queueConnected&&Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,100))
+  assert.ok(queueConnected,'Moderation queue must be connected before the report is filed')
+  const incoming = page.getByRole('button', {name: new RegExp('@' + subject.handle)})
+  assert.equal(await incoming.count(),0)
+  report = data(await ordinary.client.rpc('st_v5_report', {p_chat: chat, p_message: publication.id, p_category: 'harassment',
+    p_details: 'Standalone moderation test report.', p_share_file: true}))
+  assert.match(report, /^[a-f0-9-]{36}$/)
+  assert.equal(Boolean((await ordinary.client.rpc('st_v5_case', {p_report: report})).error), true)
+  await incoming.click({timeout:6000})
   await page.getByText(excerpt, {exact: true}).waitFor()
   const download = page.waitForEvent('download')
   await page.getByRole('button', {name: 'Download shared file', exact: true}).click()

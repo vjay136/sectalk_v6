@@ -25,6 +25,8 @@ Moderation requires active staff and a verified authenticator. The standalone po
 
 When resolving or dismissing a direct-message report, enter a private staff reason and a separate summary for the person who filed the report. The reporter sees the shared summary in Safety → My reports. The staff reason stays in the restricted audit log.
 
+The open Moderation queue refreshes through a Realtime signal when a report is filed, removed, or changes status or priority. Staff with a current authenticator session can receive the signal. The queue fetches the actual reports through its existing access checks and also refreshes periodically and on reconnect.
+
 Vulnerability disclosures arrive from the consumer site’s public report form. The Admin tab uses a separate disclosure assignment and the native five-minute TOTP requirement on every read and action. The server-only `SECTALK_DISCLOSURE_ENCRYPTION_KEY` must match the public intake’s key. The public intake’s service credential is required on the consumer origin only.
 
 Authorized managed-room evidence downloads also use the existing v6 key custody configuration. Set `SECTALK_KMS_WRAPPING_KEY` for managed custody and the matching `SECTALK_EXTERNAL_KMS_URL`, `SECTALK_EXTERNAL_KMS_TOKEN` and `SECTALK_EXTERNAL_KMS_KEYS` if external custody is enabled. Keep these values server-only. [Artifact key custody](../EXTERNAL_TENANT_KEYS.md)

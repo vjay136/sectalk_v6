@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Flag, ShieldAlert, ShieldCheck } from 'lucide-react'
-import { categories, db, formatError } from '../lib/data'
+import { categories, db, formatError, liveChannel, onReconnect } from '../lib/data'
 import { downloadChatFile, type ChatFile } from '../lib/chat-files'
 import { SocResponseActions } from './soc-response-actions'
 import { CaseCollaboration, CaseCollaborationAlerts } from './case-collaboration'
@@ -66,9 +66,19 @@ export function ModerationQueue({linkIncident}: {linkIncident?: (report: string)
   }, [category, status, due, offset])
   useEffect(() => {
     if (selected) return
+    const refresh = () => { if (document.visibilityState === 'visible') void load() }
+    const channel = liveChannel('moderation-queue', refresh)
+      .on('postgres_changes', {event:'UPDATE',schema:'public',table:'st_v8_moderation_queue_signal'}, refresh)
+      .subscribe()
     void load()
-    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load() }, 15000)
-    return () => { ++queueVersion.current; window.clearInterval(timer) }
+    const timer = window.setInterval(refresh, 15000)
+    const removeReconnect = onReconnect(refresh)
+    return () => {
+      ++queueVersion.current
+      window.clearInterval(timer)
+      removeReconnect()
+      void db!.removeChannel(channel)
+    }
   }, [load, selected])
   const timer = selected && rows?.find(row => row.id === selected.id)
 
