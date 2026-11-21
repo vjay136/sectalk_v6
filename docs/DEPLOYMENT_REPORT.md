@@ -4,7 +4,7 @@ The existing SecTalk v5 Vercel project and GitHub release are the live baseline.
 
 Publish future v6 updates to `main` in the separate [SecTalk v6 GitHub repository](https://github.com/vjay136/sectalk_v6) using the local `v6` remote. The existing `origin` points to the v5 repository. Import the v6 repository into a separate Vercel project under `silent-soldier-vjay` and configure it with the v6 backend.
 
-Run `npm run verify:registry -- --release-free` to check the 234 required rows and the Web, Admin and Workers browser assets before publishing the Free-tier source. The full-scope gate remains `npm run verify:registry -- --release` and requires all 239 rows. The structural registry check runs separately as `npm run verify:registry`.
+Run `npm run verify:registry -- --release-free` to check the 234 required rows for the Free-tier source. The full-scope gate is `npm run verify:registry -- --release` and requires all 239 rows. Both release gates scan the Web, Admin and Workers browser assets. The structural registry check runs separately as `npm run verify:registry`.
 
 | Optional in the Free-tier scope | Current boundary |
 | --- | --- |

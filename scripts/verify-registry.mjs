@@ -43,7 +43,7 @@ if (fullRelease || freeRelease) {
     process.exitCode=1
   }else{
     try {
-      const findings=verifySecrets(freeRelease?{buildAll:true}:{build:true})
+      const findings=verifySecrets({buildAll:true})
       if(findings.length){
         for(const {file,rule} of findings)console.error(file+' — '+rule)
         process.exitCode=1
