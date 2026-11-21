@@ -64,9 +64,22 @@ try {
   const [operator,reviewer,moderator,target]=await Promise.all([
     person('operator'),person('reviewer'),person('moderator'),person('target',false),
   ])
-  sql(`insert into sectalk_private.st_v7_account_operators(user_id,capability) values
-    ('${operator.id}','operator'),('${reviewer.id}','reviewer');
-    insert into sectalk_private.staff(user_id) values('${moderator.id}');`)
+  function provision(person, capability, email=person.email) {
+    return sql(`select sectalk_private.st_v8_provision_operator(
+      '${person.id}','${email}','${capability}','Local operator test ${suffix}');`)
+  }
+  assert.throws(()=>provision(operator,'account_operator','different@example.invalid'),/exact active, confirmed account/)
+  assert.throws(()=>provision(target,'moderation'),/enroll and verify a TOTP/)
+  assert.equal(provision(operator,'account_operator'),'t')
+  assert.equal(provision(operator,'account_operator'),'f')
+  assert.throws(()=>provision(operator,'account_reviewer'),/other account-administration role/)
+  assert.equal(provision(reviewer,'account_reviewer'),'t')
+  assert.equal(provision(moderator,'moderation'),'t')
+  assert.equal(sql(`select count(*) from sectalk_private.st_v8_operator_provisioning_audit
+    where account in ('${operator.id}','${reviewer.id}','${moderator.id}');`),'3')
+  assert.equal(sql(`select exists(select 1 from unnest(array['anon','authenticated','service_role']) role
+    where has_function_privilege(role,'sectalk_private.st_v8_provision_operator(uuid,text,text,text)','EXECUTE')
+    or has_table_privilege(role,'sectalk_private.st_v8_operator_provisioning_audit','SELECT'));`),'f')
   const reason='QA '+suffix+' native session close'
   const action={p_user:target.id,p_action:'force_logout',p_reason:reason}
   for (const denied of [reviewer.client,moderator.client,target.client]) {
@@ -99,12 +112,13 @@ try {
   assert.equal((await operator.client.rpc('st_v7_account_admin_directory')).error?.code,'42501')
   await operatorPage.getByRole('heading',{name:'Access unavailable'}).waitFor({timeout:20000})
   assert.equal(await directory.count(),0)
-  console.log('PASS standalone account role isolation, actual native session revocation, audit attribution and role removal')
+  console.log('PASS audited named operator provisioning, standalone role isolation, native session revocation and role removal')
 } finally {
   await browser?.close()
   for (const id of users) {
     sql(`delete from sectalk_private.st_v7_account_operators where user_id='${id}';
-      delete from sectalk_private.staff where user_id='${id}';`)
+      delete from sectalk_private.staff where user_id='${id}';
+      delete from sectalk_private.st_v8_operator_provisioning_audit where account='${id}';`)
     data(await service.auth.admin.deleteUser(id))
   }
 }

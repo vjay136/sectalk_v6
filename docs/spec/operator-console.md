@@ -4,6 +4,23 @@
 
 Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to the intended release project and `SECTALK_APP_URL` to the operator origin. For consented evidence downloads, configure the existing server-only `SECTALK_FILE_STORAGE_KEY` and a distinct `SECTALK_FILE_TICKET_SECRET` for this origin. Use `npm run build --workspace @sectalk/admin` for the standalone build and `npm run dev --workspace @sectalk/admin -- --hostname 127.0.0.1 --port 3597` to start it locally.
 
+## Provision named operators
+
+Use the separate v6 Supabase project. The owner first creates a SecTalk account, confirms the email address, completes the profile and enrolls a TOTP authenticator in Profile → Security. In that project's SQL Editor, a database administrator finds the exact account UUID in Authentication → Users and records the approved scope. Provision one capability at a time using the approved account and reference.
+
+```sql
+select sectalk_private.st_v8_provision_operator(
+  '<verified-account-uuid>'::uuid,
+  '<confirmed-email>',
+  'moderation',
+  '<approval-reference>'
+);
+```
+
+Use `account_operator` for the account-management role or `account_reviewer` for independent approval of eligible authenticator resets. An account can hold only one of those two account-management roles. Other console capabilities retain their separate assignments. The function checks the UUID, confirmed email and enrollment, then records the granted capability and approval reference in the private database audit. Repeating the same grant returns false and keeps the original audit entry.
+
+Share the separate Admin URL with the named operator. They sign in with their own SecTalk credentials and enter a current authenticator code. Before handing over the URL, verify the assigned tabs, denial for an ordinary account, and an action against a disposable test account. Remove the exact grant from its native assignment table to revoke it and check that the console closes on its next access refresh.
+
 Moderation requires active staff and a verified authenticator. The standalone portal admits the operator with signed TOTP proof from the last ten minutes. The reused moderation queue includes filters, deadlines, consented evidence, decisions, staff collaboration, case escalation, eligible SOC response actions, and case history. Existing database functions enforce each action’s staff and case permissions. Queue operations additionally require the queue-operator assignment and a fresh native database TOTP record on each queue read and action. The console updates role access on its next check and signs out an idle browser view after fifteen minutes. The existing Safety center reuses its moderation queue and retains its own native access checks.
 
 When resolving or dismissing a direct-message report, enter a private staff reason and a separate summary for the person who filed the report. The reporter sees the shared summary in Safety → My reports. The staff reason stays in the restricted audit log.
