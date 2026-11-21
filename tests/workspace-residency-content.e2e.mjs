@@ -1348,7 +1348,7 @@ try {
         const manifestAction=(client,p_action='status',p_packet)=>client.rpc('st_v8_residency_rollback_manifest',{
           p_workspace:workspace,p_action,p_confirmation:workspace,p_packet,
         })
-        let rollbackPacket,rollbackPacketBytes,recoverySigner,boardPacket,boardPacketBytes,channelPacket,channelPacketBytes
+        let rollbackPacket,rollbackPacketBytes,recoverySigner,boardPacket,boardPacketBytes,channelPacket,channelPacketBytes,rollbackFileCopy
         const channelAction=(client,p_action='status',p_packet)=>client.rpc('st_v8_residency_rollback_channels',{
           p_workspace:workspace,p_action,p_confirmation:workspace,p_packet,
         })
@@ -1477,6 +1477,7 @@ try {
             const browserFile=await download
             assert.equal(browserFile.suggestedFilename(),'sectalk-file-recovery-'+rollbackFile.id+'.json')
             const copy=JSON.parse(await readFile(await browserFile.path(),'utf8'))
+            rollbackFileCopy=copy
             assert.equal(copy.format,'sectalk-residency-file-copy-v1')
             assert.equal(copy.proof.signature,createHmac('sha256',recoverySigner).update(copy.proof.payload).digest('hex'))
             assert.deepEqual(Buffer.from(copy.contentBase64,'base64'),rollbackFile.bytes)
@@ -1606,6 +1607,33 @@ try {
           assert.equal(sourceSql(`select count(*) from public.st_v2_workspace_audit where workspace_id='${workspace}'
             and event='workspace.residency_rollback_manifest_received' and target='${handoffId}';`),'1')
           console.log('Edge transferred a signed recovery manifest and the held source rejected tampering, expiry, and mismatched plans before one durable receipt.')
+          if(checkRollbackFileCopy){
+            const fileBytes=Buffer.from(rollbackFileCopy.contentBase64,'base64')
+            const sha256=createHash('sha256').update(fileBytes).digest('hex')
+            const proof=rollbackFileCopy.proof
+            const claim=JSON.parse(proof.payload)
+            const admit=(client,overrides={})=>client.rpc('st_v8_residency_source_file_admission',{
+              p_workspace:workspace,p_file:rollbackFile.id,p_proof:proof,p_sha256:sha256,p_bytes:fileBytes.length,...overrides,
+            })
+            const sign=changes=>{
+              const payload=JSON.stringify({...claim,...changes})
+              return {payload,signature:createHmac('sha256',recoverySigner).update(payload).digest('hex')}
+            }
+            assert.equal((await admit(proofClient(sourceMemberProof))).error?.code,'42501')
+            assert.equal((await admit(verifiedOwner,{p_sha256:'0'.repeat(64)})).error?.code,'42501')
+            assert.equal((await admit(verifiedOwner,{p_bytes:fileBytes.length+1})).error?.code,'42501')
+            assert.equal((await admit(verifiedOwner,{p_proof:{...proof,payload:proof.payload+' '}})).error?.code,'42501')
+            assert.equal((await admit(verifiedOwner,{p_proof:sign({objectRevision:'0'.repeat(64)})})).error?.code,'42501')
+            assert.equal((await admit(verifiedOwner,{p_proof:sign({ownerTag:'0'.repeat(64)})})).error?.code,'42501')
+            assert.equal((await admit(verifiedOwner,{p_proof:sign({expires:claim.expires-600})})).error?.code,'42501')
+            const result=data(await admit(verifiedOwner))
+            assert.deepEqual({...result,proofSha256:undefined},{state:'proof_verified',handoff:handoffId,
+              file:rollbackFile.id,filename:rollbackFile.name,sha256,bytes:fileBytes.length,review:claim.review,proofSha256:undefined})
+            assert.match(result.proofSha256,/^[0-9a-f]{64}$/)
+            assert.equal(sourceSql(`select count(*) from sectalk_private.st_v6_workspace_files where (workspace,id)=('${workspace}','${rollbackFile.id}');`),'0')
+            assert.equal(sourceSql(`select count(*) from storage.objects where (bucket_id,name)=('sectalk-workspace-files','${workspace}/${rollbackFile.id}');`),'0')
+            console.log('The held source verified the signed file proof and exact browser-computed hash without publishing a file.')
+          }
           let sourceChatAuthor
           if(checkChannelReplay){
             assert.equal((await channelAction(verifiedOwner,'stage',{...channelPacket,payload:channelPacket.payload+' '})).error?.code,'42501')
