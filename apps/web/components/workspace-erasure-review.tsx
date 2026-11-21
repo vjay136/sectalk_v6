@@ -6,6 +6,9 @@ import {db,formatError} from '../lib/data'
 
 const labels:Record<string,string>={
   workspace:'Workspace record',members:'Workspace members',channels:'Channels',rooms:'Rooms',
+  impersonationWatchEntries:'Impersonation watch entries',delegatedBillingAccounts:'Delegated billing accounts',
+  workspaceGroupMembers:'Workspace group memberships',schoolClassPeople:'School class roster entries',
+  customRoleAssignments:'Custom role assignments',
   workspaceItems:'Workspace items',channelPosts:'Channel posts',roomPosts:'Room messages',roomTasks:'Room tasks',
   managedChannelPayloads:'Managed channel payloads',managedRoomPayloads:'Managed room payloads',
   roomReports:'Room reports',channelReports:'Channel reports',managedRoomEvidence:'Managed room evidence',

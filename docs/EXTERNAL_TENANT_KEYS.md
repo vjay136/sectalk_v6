@@ -48,6 +48,8 @@ Run the image with an ECS task role or an EKS IAM role for a service account. Us
 
 Run `node --test tests/tenant-dek-aws-adapter.test.mjs tests/tenant-artifact-key-custody.test.mjs` to check the adapter with local synthetic keys. The test covers the application rotation probe, per-record envelopes, distinct key bindings and failure when a key becomes unavailable. On Linux, it also checks that the subprocess can open and read the binary pipe. The hosted check requires the deployed image, a customer-approved test key, a real workload role and a recorded rotation and recovery drill.
 
+The local Node 24 Linux Docker run passed all eight tests with networking disabled, including the binary pipe check and loopback custody service.
+
 ## Hosted custody checks
 
 The adapter image includes `/srv/tenant-dek/verify-custody.mjs`. Select one customer-approved disposable binding using `--workspace`, `--version` and `--reference`. Load the approved app and adapter maps through `SECTALK_EXTERNAL_KMS_KEYS` and `SECTALK_TENANT_DEK_AWS_KEYS`. Supply the independently approved immutable ARN in `SECTALK_CUSTODY_EXPECTED_KEY_ARN`. The tool checks these three inputs agree before making any request.

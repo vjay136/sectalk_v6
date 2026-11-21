@@ -1,6 +1,7 @@
 begin;
 
 do $$
+<<fixture>>
 declare
   owner_id uuid:=gen_random_uuid(); reviewer_id uuid:=gen_random_uuid(); actor uuid; session_id uuid; factor_id uuid;
   claims jsonb:='{}'; workspace_id uuid;
@@ -15,6 +16,7 @@ declare
   workspace_path text; room_path text;
   residency_handoff uuid:=gen_random_uuid(); residency_review uuid:=gen_random_uuid();
   residency_receipt uuid:=gen_random_uuid(); recovery_object uuid:=gen_random_uuid(); recovery_path text;
+  group_id uuid:=gen_random_uuid(); custom_role uuid:=gen_random_uuid(); classroom uuid:=gen_random_uuid();
 
 begin
   foreach actor in array array[owner_id,reviewer_id] loop
@@ -48,6 +50,24 @@ begin
     (workspace_task,workspace_id,'task',owner_id,'Disposable workspace task');
   insert into sectalk_private.st_v7_tenant_key_state(workspace,current_version) values(workspace_id,1);
   insert into sectalk_private.st_v7_tenant_key_versions(workspace,version,custody,wrapped) values(workspace_id,1,'managed',repeat('a',80));
+  insert into sectalk_private.st_v6_impersonation_watch(workspace_id,member_id,tier)
+    values(workspace_id,reviewer_id,'vip');
+  insert into sectalk_private.st_v7_billing_admins(workspace,account,assigned_by)
+    values(workspace_id,reviewer_id,owner_id);
+  insert into public.st_v6_workspace_groups(workspace_id,id,kind,name)
+    values(workspace_id,group_id,'group','Disposable class group');
+  insert into public.st_v6_workspace_group_members(workspace_id,group_id,user_id)
+    values(workspace_id,group_id,reviewer_id);
+  insert into public.st_v6_rooms(id,workspace_id,name,kind,template,creator)
+    values(classroom,workspace_id,'Disposable classroom','public','blank',owner_id);
+  insert into sectalk_private.st_v7_school_classes(workspace,id,room)
+    values(workspace_id,group_id,classroom);
+  insert into sectalk_private.st_v7_school_class_people(workspace,class,person,role)
+    values(workspace_id,group_id,reviewer_id,'teacher');
+  insert into sectalk_private.st_v7_custom_role_heads(workspace,id,revision)
+    values(workspace_id,custom_role,1);
+  insert into sectalk_private.st_v7_custom_role_assignments(workspace,role_id,account)
+    values(workspace_id,custom_role,reviewer_id);
   set local role authenticated;
   perform public.st_v6_task_create(room_task,room_id,null,'Disposable room task');
   perform public.st_v8_workspace_offboarding_change(workspace_id,request_id,'requested',workspace_id::text,'Disposable batch approval');
@@ -103,6 +123,13 @@ begin
     or first_review#>>'{summary,storageMetadata,workspaceRetiredPathsPresent}'<>'0'
     or first_review#>>'{summary,storageMetadata,roomRetiredPathsPresent}'<>'0'
     or first_review#>>'{summary,storageMetadata,residencyRecoveryPaths}'<>'0'
+    or first_review#>>'{summary,nativeRows,impersonationWatchEntries}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,delegatedBillingAccounts}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,workspaceGroupMembers}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,schoolClassPeople}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,customRoleAssignments}' is distinct from '1'
+    or first_review::text like '%'||group_id::text||'%'
+    or first_review::text like '%'||custom_role::text||'%'
     or first_review::text like '%'||room_path||'%'
     or first_review::text like '%'||workspace_copy::text||'%'
     or first_review::text like '%'||provider_version||'%' then
@@ -112,6 +139,41 @@ begin
     (first_review->>'plan')::uuid,first_review->>'sha256');
   if current_review->>'reviewedAt' is null or current_review->>'current'<>'true' then
     raise exception 'Independent reviewed snapshot was not current'; end if;
+  reset role;
+  insert into public.st_v2_workspaces(id,name,owner) values(other_workspace,'Disposable unrelated workspace',owner_id);
+  insert into public.st_v2_members(workspace_id,user_id,role) values(other_workspace,reviewer_id,'admin');
+  insert into sectalk_private.st_v6_impersonation_watch(workspace_id,member_id,tier)
+    values(other_workspace,reviewer_id,'executive');
+  set local role authenticated;
+  current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
+  if current_review->>'current' is distinct from 'true'
+    or current_review#>>'{summary,nativeRows,impersonationWatchEntries}' is distinct from '1' then
+    raise exception 'An unrelated impersonation watch entry changed the workspace review';
+  end if;
+  reset role;
+  update sectalk_private.st_v6_impersonation_watch w set tier='executive'
+    where (w.workspace_id,w.member_id)=(fixture.workspace_id,reviewer_id);
+  set local role authenticated;
+  current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
+  if current_review->>'current' is distinct from 'false'
+    or current_review#>>'{summary,nativeRows,impersonationWatchEntries}' is distinct from '1'
+    or current_review::text like '%"tier"%'
+    or current_review::text like '%"executive"%' then
+    raise exception 'A watch tier change must stale the review and return only the count';
+  end if;
+  begin
+    perform public.st_v8_offboarding_reconciliation(workspace_id,'confirm',workspace_id::text,
+      (first_review->>'plan')::uuid,first_review->>'sha256');
+    raise exception 'Reviewer confirmed stale impersonation watch evidence';
+  exception when sqlstate 'PT409' then null; end;
+  perform set_config('request.jwt.claims',claims->>owner_id::text,true);
+  first_review:=public.st_v8_offboarding_reconciliation(workspace_id,'capture',workspace_id::text);
+  perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
+  current_review:=public.st_v8_offboarding_reconciliation(workspace_id,'confirm',workspace_id::text,
+    (first_review->>'plan')::uuid,first_review->>'sha256');
+  if current_review->>'current' is distinct from 'true' or current_review->>'reviewedAt' is null then
+    raise exception 'Independent review did not accept the updated watch snapshot';
+  end if;
   reset role;
   recovery_path:=workspace_id::text||'/'||residency_handoff::text||'/'||workspace_file::text||'/'||file_sha;
   insert into storage.objects(bucket_id,name,version,metadata) values
@@ -188,5 +250,5 @@ begin
   exception when sqlstate 'PT409' then null; end;
 end $$;
 
-select 'passed: joined copy/recovery/retirement/thread exact counts, isolation, no scope disclosure, stale receipt on reappearance';
+select 'passed: exact recovery receipts and member dependencies, same-count drift and tenant isolation';
 rollback;
