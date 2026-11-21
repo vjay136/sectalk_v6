@@ -16,6 +16,8 @@ For a single SQL file, run `node scripts/build-supabase-schema.mjs sectalk-schem
 
 For an existing project, generate `node scripts/build-supabase-schema.mjs sectalk-upgrade.sql --after APPLIED_VERSION` using its last applied migration version. Run the file in one `psql` connection with `ON_ERROR_STOP` enabled. The upgrade checks all recorded migration versions and names against the release checkout before each step. If execution stops partway, inspect the error and the database history before generating a new bundle from the last committed version.
 
+For a bounded upgrade that must commit together, pass `--after APPLIED_VERSION --through TARGET_VERSION --atomic`. The file wraps schema changes and migration history in one transaction. Rehearse the exact range locally before submitting the complete SQL as one query in Supabase SQL Editor. Check the target project and the resulting migration history before enabling traffic.
+
 Add `--through TARGET_VERSION` to a fresh-install or upgrade command to stop at the last migration included in the deployment you are preparing.
 
 The browser uses the Supabase publishable key and the signed-in user's JWT. The hosted server needs its own server-only credentials for enabled operations such as signup admission and protected file delivery. A replacement Supabase project needs its own schema migration, email templates, SMTP settings and environment variables. Database state and login sessions stay with the old project. Revoke any shared secret keys for projects you retain.

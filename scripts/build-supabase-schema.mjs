@@ -37,15 +37,18 @@ alter table supabase_migrations.schema_migrations enable row level security;
 revoke all on supabase_migrations.schema_migrations from public, anon, authenticated, service_role;
 commit;`
 
-function upgradeManifest(files){
+function upgradeManifest(files,atomic){
   const values=files.map(name=>{
     const [,version,description]=name.match(pattern)
     return `('${version}','${description}')`
   })
+  const instructions=atomic
+    ? '-- Run this complete upgrade as one query. The schema and its history commit together.'
+    : '-- Upgrade one existing Supabase database with psql -v ON_ERROR_STOP=1.'
   return `-- SecTalk by Eagle Security
--- Upgrade one existing Supabase database with psql -v ON_ERROR_STOP=1.
+${instructions}
 -- Run the entire file in one connection. The exact migration prefix is checked before every change.
-
+${atomic?'\nbegin;\n':''}
 create temporary table sectalk_expected_migrations(version text primary key, name text not null);
 insert into pg_temp.sectalk_expected_migrations(version,name) values
 ${values.join(',\n')};`
@@ -76,16 +79,19 @@ $sectalk_upgrade_preflight$;
 const [output,...options]=process.argv.slice(2)
 
 try{
-  const usage='Usage: node scripts/build-supabase-schema.mjs OUTPUT [--after MIGRATION_VERSION] [--through MIGRATION_VERSION]'
-  if(!output||options.length%2!==0)throw new Error(usage)
+  const usage='Usage: node scripts/build-supabase-schema.mjs OUTPUT [--after MIGRATION_VERSION] [--through MIGRATION_VERSION] [--atomic]'
+  const atomic=options.includes('--atomic')
+  const boundOptions=options.filter(name=>name!=='--atomic')
+  if(!output||boundOptions.length%2!==0||options.length-boundOptions.length>1)throw new Error(usage)
   const bounds=new Map()
-  for(let index=0;index<options.length;index+=2){
-    const [name,version]=options.slice(index,index+2)
+  for(let index=0;index<boundOptions.length;index+=2){
+    const [name,version]=boundOptions.slice(index,index+2)
     if(!['--after','--through'].includes(name)||bounds.has(name)||!/^\d{12,14}$/.test(version))throw new Error(usage)
     bounds.set(name,version)
   }
   const baseline=bounds.get('--after')
   const target=bounds.get('--through')
+  if(atomic&&baseline===undefined)throw new Error('--atomic requires an installed baseline specified with --after.')
   const files=(await readdir(migrations,{withFileTypes:true})).filter(entry=>entry.isFile()&&entry.name.endsWith('.sql'))
     .map(entry=>entry.name).sort()
   if(!files.length||files.some(name=>!pattern.test(name))||new Set(files.map(name=>name.match(pattern)[1])).size!==files.length){
@@ -106,16 +112,18 @@ try{
     let body=leadingTransaction?source.replace(/\ncommit;$/i,''):'begin;\n'+source
     if(start){
       const previous=versions[start+index-1]
-      body=body.replace(/^(\s*(?:--[^\n]*\n\s*)*begin;)/i,`$1\n${verifyUpgradePrefix(previous)}`)
+      body=body.replace(/^(\s*(?:--[^\n]*\n\s*)*)begin;/i,
+        (_,comments)=>comments+(atomic?'':'begin;\n')+verifyUpgradePrefix(previous))
     }
     return '-- Migration '+name+'\n'+body+'\n\n'+
-      `insert into supabase_migrations.schema_migrations(version,name) values('${version}','${description}');\ncommit;\n`
+      `insert into supabase_migrations.schema_migrations(version,name) values('${version}','${description}');\n`+
+      (atomic?'':'commit;\n')
   }))
-  const header=start?upgradeManifest(files.slice(0,end)):preflight
-  const cleanup=start?'\ndrop table pg_temp.sectalk_expected_migrations;\n':''
+  const header=start?upgradeManifest(files.slice(0,end),atomic):preflight
+  const cleanup=start?'\ndrop table pg_temp.sectalk_expected_migrations;\n'+(atomic?'commit;\n':''):''
   const bundle=header+'\n\n'+sections.join('\n')+cleanup
   await writeFile(resolve(output),bundle,{encoding:'utf8',mode:0o600,flag:'wx'})
-  console.log(JSON.stringify({migrations:sections.length,...(start?{after:baseline}:{}),
+  console.log(JSON.stringify({migrations:sections.length,...(start?{after:baseline}:{}),...(atomic?{atomic:true}:{}),
     ...(target?{through:target}:{}),sha256:createHash('sha256').update(bundle).digest('hex')}))
 }catch(error){
   console.error(error?.code==='EEXIST'?'Choose a new output path. The schema bundle already exists.':error.message)
