@@ -16,6 +16,7 @@ type ManifestState={
 }
 type RetirementState={state:'inactive'|'review_required'|'admission_required'|'review_changed'|'ready'|'retired';
   retired?:boolean;receipt?:string;packet?:{payload:string;signature:string}}
+type ReactivationState={state:'inactive'|'review_required'|'ready'|'reopened';receipt?:string}
 
 export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string}) {
   const [manifest,setManifest]=useState<ManifestState>()
@@ -24,6 +25,7 @@ export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string
   const [issued,setIssued]=useState(false)
   const [staged,setStaged]=useState('')
   const [retirement,setRetirement]=useState<RetirementState>()
+  const [reactivation,setReactivation]=useState<ReactivationState>()
   const refresh=useCallback(async (signal?:AbortSignal)=>{
     const query=db!.rpc('st_v8_residency_rollback_manifest',{p_workspace:workspace})
     const result=await (signal?query.abortSignal(signal):query)
@@ -35,6 +37,11 @@ export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string
       const destination=await (signal?token.abortSignal(signal):token)
       if(!signal?.aborted&&!destination.error)setRetirement(destination.data as RetirementState)
     }else setRetirement(undefined)
+    if(next.side==='source'&&next.state==='received'){
+      const request=db!.rpc('st_v8_residency_reactivate_source',{p_workspace:workspace})
+      const source=await (signal?request.abortSignal(signal):request)
+      if(!signal?.aborted&&!source.error)setReactivation(source.data as ReactivationState)
+    }else setReactivation(undefined)
   },[workspace])
 
   useEffect(()=>{
@@ -124,6 +131,32 @@ export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string
     window.setTimeout(()=>URL.revokeObjectURL(url),1000)
   }
 
+  async function reopenSource(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if(busy||reactivation?.state!=='ready')return
+    const form=event.currentTarget
+    const fields=new FormData(form)
+    const confirmation=String(fields.get('workspace')||'')
+    setBusy(true);setError('')
+    try {
+      if(confirmation!==workspace)throw new Error('Enter the exact workspace ID shown above.')
+      const file=fields.get('retirement')
+      if(!(file instanceof File)||!file.size||file.size>3072)throw new Error('Choose the signed retirement proof JSON file.')
+      let packet
+      try{packet=JSON.parse(await file.text())}catch{throw new Error('Choose a valid retirement proof JSON file.')}
+      await verifyCredential(fields)
+      const result=await db!.rpc('st_v8_residency_reactivate_source',{
+        p_workspace:workspace,p_action:'reopen',p_confirmation:confirmation,p_packet:packet,
+      })
+      if(result.error)throw result.error
+      const next=result.data as ReactivationState
+      if(next.state!=='reopened'||!next.receipt)throw new Error('The source reactivation receipt could not be verified.')
+      setReactivation(next)
+      form.reset()
+    }catch(cause){setError(formatError(cause,'Could not reopen source writes.'))}
+    finally{setBusy(false)}
+  }
+
   async function transfer(event:FormEvent<HTMLFormElement>){
     event.preventDefault()
     if(busy||manifest?.state!=='ready')return
@@ -173,6 +206,19 @@ export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string
       </form>}
       {staged&&<p role="status">File copy <code>{staged}</code> was staged in private storage. Workspace writes remain held.</p>}
     </>}
+    {manifest.state==='received'&&!destination&&<section aria-label="Source reactivation">
+      <h5>Source reactivation</h5>
+      {reactivation?.state==='reopened'?<p role="status">Source write authority was restored. Destination writes remain retired.</p>:<>
+        {reactivation?.state==='ready'?<form className="release-form" onSubmit={event=>void reopenSource(event)}>
+          <p>Use the destination retirement proof within five minutes of downloading it. SecTalk rechecks the source sign-off before reopening writes.</p>
+          <label>Confirm source reactivation workspace ID<input name="workspace" autoComplete="off" required disabled={busy}/></label>
+          <label>Signed destination retirement proof<input name="retirement" type="file" accept=".json,application/json" required disabled={busy}/></label>
+          <label>Authenticator code for source reactivation if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" disabled={busy}/></label>
+          <button className="secondary" type="submit" disabled={busy}>Reopen source writes</button>
+        </form>:<p>Complete independent source sign-off before reopening writes.</p>}
+        <button className="secondary" disabled={busy} onClick={()=>void refresh()}>Refresh source reactivation status</button>
+      </>}
+    </section>}
     {manifest.state==='ready'&&<form className="release-form" onSubmit={event=>void transfer(event)}>
       <p>{destination?'Download the signed manifest and transfer it to the source owner within five minutes.':
         'Choose the signed manifest from the reviewed destination. Verification records the evidence while source writes stay held.'}</p>

@@ -43,6 +43,7 @@ const checkExistingChannelReplay = process.env.SECTALK_RESIDENCY_EXISTING_CHANNE
 const checkDefaultChannelReplay = process.env.SECTALK_RESIDENCY_DEFAULT_CHANNEL_QA === '1'
 const checkRollbackFileCopy = process.env.SECTALK_RESIDENCY_ROLLBACK_FILE_QA === '1'
 const checkDestinationRetirement = process.env.SECTALK_RESIDENCY_RETIRE_DESTINATION_QA === '1'
+const checkSourceReactivation = process.env.SECTALK_RESIDENCY_REOPEN_SOURCE_QA === '1'
 const existingChannelName = checkDefaultChannelReplay?'general':'approved-channel'
 assert.ok(!checkComparisonReceipt||checkDestinationComparison)
 assert.ok(!checkBothFileScopes||(checkDestinationComparison&&checkRoomFileImport))
@@ -61,6 +62,7 @@ assert.ok(!checkExistingChannelReplay||(checkCutover&&checkChannelReplay&&checkS
 assert.ok(!checkDefaultChannelReplay||(checkExistingChannelReplay&&checkSourceSignoff))
 assert.ok(!checkRollbackFileCopy||checkRollbackManifest)
 assert.ok(!checkDestinationRetirement||checkRollbackManifest)
+assert.ok(!checkSourceReactivation||(checkDestinationRetirement&&checkSourceSignoff))
 if(checkDestinationComparison)assert.ok(checkChannelHistory&&checkRoomTaskImport&&sourceApp&&targetApp)
 if(checkRoomTaskImport)assert.ok(checkRoomImport)
 if(checkRoomFileImport)assert.ok(sourceApp&&targetApp&&checkRoomImport)
@@ -1351,6 +1353,9 @@ try {
         const retirement=(client,p_action='status')=>client.rpc('st_v8_residency_retire_destination',{
           p_workspace:workspace,p_action,p_confirmation:workspace,
         })
+        const reopen=(client,p_action='status',p_packet)=>client.rpc('st_v8_residency_reactivate_source',{
+          p_workspace:workspace,p_action,p_confirmation:workspace,p_packet,
+        })
         if(checkDestinationRetirement){
           assert.equal(data(await retirement(verifiedDestination)).state,'inactive')
           assert.equal((await retirement(verifiedDestination,'issue')).error?.code,'42501')
@@ -1358,7 +1363,7 @@ try {
         const manifestAction=(client,p_action='status',p_packet)=>client.rpc('st_v8_residency_rollback_manifest',{
           p_workspace:workspace,p_action,p_confirmation:workspace,p_packet,
         })
-        let rollbackPacket,rollbackPacketBytes,recoverySigner,boardPacket,boardPacketBytes,channelPacket,channelPacketBytes,rollbackFileCopy
+        let rollbackPacket,rollbackPacketBytes,recoverySigner,boardPacket,boardPacketBytes,channelPacket,channelPacketBytes,rollbackFileCopy,retirementPacket
         const channelAction=(client,p_action='status',p_packet)=>client.rpc('st_v8_residency_rollback_channels',{
           p_workspace:workspace,p_action,p_confirmation:workspace,p_packet,
         })
@@ -1534,6 +1539,7 @@ try {
               const file=await download
               assert.equal(file.suggestedFilename(),'sectalk-retired-destination-'+workspace+'.json')
               const packet=JSON.parse(await readFile(await file.path(),'utf8'))
+              retirementPacket=packet
               const proof=JSON.parse(packet.payload)
               assert.equal(packet.signature,createHmac('sha256',recoverySigner).update(packet.payload).digest('hex'))
               assert.deepEqual({...proof,expires:undefined,receipt:undefined},{format:'sectalk-residency-retired-destination-v1',
@@ -1645,6 +1651,10 @@ try {
           const recorded=data(await manifestAction(verifiedOwner,'receive',rollbackPacket))
           assert.equal(recorded.digest,JSON.parse(rollbackPacket.payload).digest)
           assert.equal(recorded.changeCount,JSON.parse(rollbackPacket.payload).changes.length)
+          if(checkSourceReactivation){
+            assert.equal(data(await reopen(verifiedOwner)).state,'review_required')
+            assert.equal((await reopen(verifiedOwner,'reopen',retirementPacket)).error?.code,'PT409')
+          }
           assert.equal((await manifestAction(verifiedOwner,'receive',{...rollbackPacket,signature:'0'.repeat(64)})).error?.code,'PT409')
           assert.equal(sourceSql(`select count(*) from public.st_v2_workspace_audit where workspace_id='${workspace}'
             and event='workspace.residency_rollback_manifest_received' and target='${handoffId}';`),'1')
@@ -2027,13 +2037,49 @@ try {
                   sourceSql(`update sectalk_private.st_v6_workspace_files set filename='Drifted source name.txt' ${fileFilter};`)
                   try { await assertFileChanged() }
                   finally { sourceSql(`update sectalk_private.st_v6_workspace_files set filename='${rollbackFile.name}' ${fileFilter};`) }
-                  const liveFilter=`where (bucket_id,name)=('sectalk-workspace-files','${workspace}/${rollbackFile.id}')`
-                  sourceSql(`update storage.objects set metadata=metadata||'{"fixturePostSignoffDrift":true}'::jsonb ${liveFilter};`)
-                  try { await assertFileChanged() }
-                  finally { sourceSql(`update storage.objects set metadata=metadata-'fixturePostSignoffDrift' ${liveFilter};`) }
-                  console.log('The exact file and storage records were included in final sign-off. Later file or Storage drift withdrew coverage for both records.')
+                  if(!checkSourceReactivation){
+                    const liveFilter=`where (bucket_id,name)=('sectalk-workspace-files','${workspace}/${rollbackFile.id}')`
+                    sourceSql(`update storage.objects set metadata=metadata||'{"fixturePostSignoffDrift":true}'::jsonb ${liveFilter};`)
+                    try { await assertFileChanged() }
+                    finally { sourceSql(`update storage.objects set metadata=metadata-'fixturePostSignoffDrift' ${liveFilter};`) }
+                    console.log('The exact file and storage records were included in final sign-off. Later file or Storage drift withdrew coverage for both records.')
+                  }
                 }
                 console.log('Edge recorded and independently signed the exact source evidence, with both write holds preserved.')
+                if(checkSourceReactivation){
+                  const currentToken=data(await retirement(verifiedDestination,'issue')).packet
+                  const original=JSON.parse(currentToken.payload)
+                  const sign=changes=>{
+                    const payload=JSON.stringify({...original,...changes})
+                    return {payload,signature:createHmac('sha256',recoverySigner).update(payload).digest('hex')}
+                  }
+                  assert.equal((await reopen(verifiedReviewer,'reopen',currentToken)).error?.code,'42501')
+                  assert.equal((await reopen(verifiedOwner,'reopen',{...currentToken,payload:currentToken.payload+' '})).error?.code,'42501')
+                  assert.equal((await reopen(verifiedOwner,'reopen',sign({plan:'0'.repeat(64)}))).error?.code,'42501')
+                  assert.equal((await reopen(verifiedOwner,'reopen',sign({expires:original.expires-600}))).error?.code,'42501')
+                  if(checkRollbackFileCopy){
+                    const filter=`where (workspace,id)=('${workspace}','${rollbackFile.id}')`
+                    sourceSql(`update sectalk_private.st_v6_workspace_files set filename='Drift before reactivation.txt' ${filter};`)
+                    try {assert.equal((await reopen(verifiedOwner,'reopen',currentToken)).error?.code,'PT409')}
+                    finally {sourceSql(`update sectalk_private.st_v6_workspace_files set filename='${rollbackFile.name}' ${filter};`)}
+                  }
+                  assert.equal(data(await reopen(verifiedOwner)).state,'ready')
+                  const reactivation=sourceReviewPage.getByRole('region',{name:'Source reactivation',exact:true})
+                  await reactivation.getByRole('button',{name:'Refresh source reactivation status',exact:true}).click()
+                  await reactivation.getByLabel('Confirm source reactivation workspace ID').fill(workspace)
+                  await reactivation.getByLabel('Signed destination retirement proof').setInputFiles({
+                    name:'retired-destination.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(currentToken)),
+                  })
+                  await reactivation.getByRole('button',{name:'Reopen source writes',exact:true}).click()
+                  await sourceReviewPage.getByText(/Source write authority was restored\./).first().waitFor()
+                  const replay=data(await reopen(verifiedOwner,'reopen',currentToken))
+                  assert.equal(replay.state,'reopened')
+                  assert.equal(replay.receipt,original.receipt)
+                  assert.equal((await reopen(verifiedOwner,'reopen',sign({receipt:randomUUID()}))).error?.code,'PT409')
+                  assert.equal(sourceSql(`select count(*) from public.st_v2_workspace_audit where workspace_id='${workspace}'
+                    and event='workspace.residency_rollback_source_reopened' and target='${original.receipt}';`),'1')
+                  console.log('Edge reopened the signed-off source with one retirement receipt and denied stale, foreign, expired, and tampered proof.')
+                }
               }else{
                 await sourcePanel.getByText(reportedPost,{exact:true}).waitFor()
                 assert.equal(await sourcePanel.getByRole('button',{name:'Sign off on source evidence',exact:true}).count(),0)
@@ -2054,11 +2100,19 @@ try {
         }
         assert.equal((await memberLink()).status,404)
         assert.equal((await routing(verifiedOwner,'publish',destinationRouteProof)).error?.code,'PT409')
-        assert.equal((await verifiedOwner.rpc('st_v2_post',{p_channel:general(sourceSql),p_id:randomUUID(),p_body:'Source must remain held'})).error?.code,'PT423')
-        assert.equal(data(await rollback(verifiedOwner,'suspend_source_route')).state,'held')
+        const sourceWrite=await verifiedOwner.rpc('st_v2_post',{p_channel:general(sourceSql),p_id:randomUUID(),p_body:'Source write authority check'})
+        if(checkSourceReactivation){
+          assert.ifError(sourceWrite.error)
+          assert.equal((await verifiedDestination.rpc('st_v2_post',{p_channel:general(targetSql),p_id:randomUUID(),p_body:'Retired destination stays held'})).error?.code,'PT423')
+          assert.equal((await rollback(verifiedOwner,'suspend_source_route')).error?.code,'42501')
+          console.log('The source could post normally after reactivation. Destination writes and the old routing link remained blocked.')
+        }else{
+          assert.equal(sourceWrite.error?.code,'PT423')
+          assert.equal(data(await rollback(verifiedOwner,'suspend_source_route')).state,'held')
+        }
         assert.equal(sourceSql(`select count(*) from public.st_v2_workspace_audit where workspace_id='${workspace}'
           and event='workspace.residency_rollback_route_suspended' and target='${handoffId}';`),'1')
-        console.log('Edge verified both rollback preparations after credential expiry: target writes paused, source link suspended, and source writes still held.')
+        if(!checkSourceReactivation)console.log('Edge verified both rollback preparations after credential expiry: target writes paused, source link suspended, and source writes still held.')
       }
     }
   }
