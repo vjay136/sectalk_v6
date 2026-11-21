@@ -19,6 +19,7 @@ declare
   residency_receipt uuid:=gen_random_uuid(); recovery_object uuid:=gen_random_uuid(); recovery_path text;
   group_id uuid:=gen_random_uuid(); custom_role uuid:=gen_random_uuid(); classroom uuid:=gen_random_uuid();
   destination_cell uuid:=gen_random_uuid(); transfer_approval uuid:=gen_random_uuid(); claim_nonce uuid:=gen_random_uuid();
+  history_vault_id uuid:=gen_random_uuid(); other_history_vault_id uuid:=gen_random_uuid();
   staged_revision text;
 
 begin
@@ -261,6 +262,10 @@ begin
     from sectalk_private.st_v8_offboarding_requests r where r.id=request_id) then
     raise exception 'Publishing a staged regional file did not change the offboarding digest';
   end if;
+  insert into sectalk_private.st_v8_residency_history_links
+    (workspace,approval,source_project,destination_project,side,vault_id,expires_at)
+  values (workspace_id,transfer_approval,'fixture-source','fixture-dest','source',history_vault_id,now()+interval '1 hour'),
+    (other_workspace,transfer_approval,'fixture-source','fixture-dest','destination',other_history_vault_id,now()+interval '1 hour');
   set local role authenticated;
   perform set_config('request.jwt.claims',claims->>owner_id::text,true);
   first_review:=public.st_v8_offboarding_reconciliation(workspace_id,'capture',workspace_id::text);
@@ -279,6 +284,7 @@ begin
     or first_review#>>'{summary,nativeRows,residencyContentAdmissions}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyStagedContent}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyWorkspaceClaims}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyHistoryLinks}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyRoomFileImports}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyRoomTaskImports}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyRoomMemberInvites}' is distinct from '1'
@@ -286,6 +292,8 @@ begin
     or first_review::text like '%'||residency_receipt::text||'%'
     or first_review::text like '%'||recovery_vault_id::text||'%'
     or first_review::text like '%'||claim_nonce::text||'%'
+    or first_review::text like '%'||history_vault_id::text||'%'
+    or first_review::text like '%'||other_history_vault_id::text||'%'
     or first_review::text like '%synthetic private recovery content%' then
     raise exception 'The residency receipt census is missing, unclassified or exposed'; end if;
   perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
@@ -300,11 +308,24 @@ begin
     set revoked_at=now() where handoff=other_handoff;
   update sectalk_private.st_v8_residency_staged_content b set records='[{"value":"other workspace"}]'
     where b.workspace=other_workspace;
+  update sectalk_private.st_v8_residency_history_links h set expires_at=now()
+    where h.workspace=other_workspace;
   set local role authenticated;
   current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
   if current_review->>'current' is distinct from 'true' then
     raise exception 'Another workspace changed this regional recovery review'; end if;
   reset role;
+  select sectalk_private.st_v8_offboarding_reconcile_workspace_root(r)->>'revision' into staged_revision
+    from sectalk_private.st_v8_offboarding_requests r where r.id=request_id;
+  update sectalk_private.st_v8_residency_history_links h set expires_at=now()
+    where h.workspace=workspace_id;
+  select sectalk_private.st_v8_offboarding_reconcile_workspace_root(r) into current_review
+    from sectalk_private.st_v8_offboarding_requests r where r.id=request_id;
+  if current_review->>'revision' is not distinct from staged_revision
+    or current_review#>>'{summary,nativeRows,residencyHistoryLinks}' is distinct from '1' then
+    raise exception 'Regional history link expiration must change the digest without changing its count'; end if;
+  update sectalk_private.st_v8_residency_history_links h set expires_at=now()+interval '1 hour'
+    where h.workspace=workspace_id;
   update sectalk_private.st_v8_residency_board_author_consents
     set revoked_at=now() where handoff=residency_handoff;
   set local role authenticated;
@@ -361,10 +382,16 @@ begin
   )
   insert into sectalk_private.st_v8_offboarding_room_thread_decisions(deletion,action,actor)
     select e.id,x.action,x.actor from extra e cross join (values ('approved',reviewer_id),('deleted',owner_id)) x(action,actor);
+  insert into sectalk_private.st_v8_residency_history_links
+    (workspace,approval,source_project,destination_project,side,vault_id,expires_at)
+  select workspace_id,gen_random_uuid(),'fixture-source','fixture-dest','source',gen_random_uuid(),now()+interval '1 hour'
+    from generate_series(1,500);
   set local role authenticated;
   perform set_config('request.jwt.claims',claims->>owner_id::text,true);
   current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
-  if not (current_review#>'{summary,overflow}') @> '["roomThreadReceipts"]'::jsonb or current_review->>'current'<>'false' then
+  if not (current_review#>'{summary,overflow}') @> '["roomThreadReceipts","residencyHistoryLinks"]'::jsonb
+    or current_review#>>'{summary,nativeRows,residencyHistoryLinks}' is distinct from '501'
+    or current_review->>'current'<>'false' then
     raise exception 'New receipt family cap was not enforced'; end if;
   begin
     perform public.st_v8_offboarding_reconciliation(workspace_id,'capture',workspace_id::text);
