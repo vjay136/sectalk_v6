@@ -11,24 +11,25 @@ export async function checkSignupServiceReadiness(config: DatabaseProbeConfig, r
   return checkDatabaseProbe(config, 'st_v8_signup_service_ready', {}, request)
 }
 
-export async function checkAttachmentReadiness(
+export async function attachmentReadinessStatus(
   config: DatabaseProbeConfig & { publishableKey?: string; ticketSecret?: string }, request: typeof fetch = fetch,
 ) {
   const {url, key, publishableKey, ticketSecret}=config
-  if (!url || !key || key===publishableKey || key.startsWith('sb_publishable_') ||
-    !ticketSecret || Buffer.byteLength(ticketSecret)<32 || ticketSecret===key) return false
+  if (!ticketSecret || Buffer.byteLength(ticketSecret)<32 || ticketSecret===key) return 'invalid_ticket_secret'
+  if (!url || !key || key===publishableKey || key.startsWith('sb_publishable_')) return 'invalid_storage_configuration'
   try {
     const endpoint=new URL('/storage/v1/bucket/sectalk-chat-files',url)
-    if (!['http:','https:'].includes(endpoint.protocol)) return false
+    if (!['http:','https:'].includes(endpoint.protocol)) return 'invalid_storage_configuration'
     const response=await supabaseApiFetch(key,request)(endpoint,{
       method:'GET',cache:'no-store',headers:{apikey:key,Authorization:`Bearer ${key}`},
       signal:AbortSignal.timeout(2500),
     })
-    if (!response.ok) return false
+    if (response.status===401 || response.status===403) return 'storage_key_rejected'
+    if (!response.ok) return 'storage_unavailable'
     const bucket=await response.json()
-    return bucket?.id==='sectalk-chat-files' && bucket.public===false
+    return bucket?.id==='sectalk-chat-files' && bucket.public===false ? 'ready' : 'private_bucket_not_verified'
   } catch {
-    return false
+    return 'storage_unavailable'
   }
 }
 
