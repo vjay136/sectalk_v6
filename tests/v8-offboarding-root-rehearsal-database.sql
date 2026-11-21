@@ -188,12 +188,22 @@ begin
     or not exists(select 1 from sectalk_private.st_v7_compliance_cases x where x.id=inventory_id)
     or not exists(select 1 from sectalk_private.st_v8_offboarding_audit_custody_manifest(w) x
       where x.valid and x.sha256=before_audit) then raise exception 'Native removal did not preserve the exact retained evidence'; end if;
+  begin
+    insert into sectalk_private.st_v8_residency_history_links
+      (workspace,approval,source_project,destination_project,side,vault_id,expires_at)
+    values(w,gen_random_uuid(),'synthetic-origin','synthetic-destination','destination',gen_random_uuid(),now()+interval '1 hour');
+    raise exception 'A transfer link was allowed to reattach to a removed workspace';
+  exception when sqlstate 'PT409' then
+    if sqlerrm is distinct from 'The workspace has an existing native removal receipt.' then raise; end if;
+  end;
   if exists(select 1 from unnest(array['anon','authenticated','service_role']) r
     where has_function_privilege(r,'sectalk_private.st_v8_offboarding_root_mutation(uuid,text,uuid,text,boolean)','EXECUTE')
       or has_function_privilege(r,'sectalk_private.st_v8_approve_offboarding_native_root(uuid,text,uuid,text)','EXECUTE')
+      or has_function_privilege(r,'sectalk_private.st_v8_guard_residency_history_link()','EXECUTE')
+      or has_function_privilege(r,'sectalk_private.st_v8_guard_native_root_receipt_snapshot()','EXECUTE')
       or has_table_privilege(r,'sectalk_private.st_v8_offboarding_native_root_receipts','SELECT,INSERT,UPDATE,DELETE')) then
     raise exception 'A production API role can access the private executor or receipt'; end if;
 end $$;
 
-select 'passed: rollback-only rehearsal, separate approval, exact private native removal, stale-hook rejection, custody preservation and idempotent receipt';
+select 'passed: rollback-only rehearsal, independent approval, exact native removal, preserved custody, idempotency and regional-link reattachment denial';
 rollback;
