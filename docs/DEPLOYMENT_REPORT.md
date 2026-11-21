@@ -12,7 +12,7 @@ Local production builds passed for Web, Admin and Workers with loopback fixture 
 | --- | --- |
 | AUTH-05 Enterprise SSO | Native OIDC and signed SAML have local evidence. Configure enterprise providers only after hosted gateway verification. |
 | ORG-08 Regional residency | Approved transfer and several rollback workflows have local evidence. Regional placement, full restoration and live cutover require separately verified installations. |
-| ORG-09 Tenant erasure | Offboarding exports, custody, review and the rollback-only database rehearsal are available. Permanent removal requires verified provider erasure and a terminal executor. |
+| ORG-09 Tenant erasure | Offboarding exports, custody, review and the rollback-only database rehearsal are available. The private native removal transaction passed local verification. Hosted provider and backup erasure and application activation remain open. |
 | SEC-04 Tenant key lifecycle | Managed key features and synthetic provider checks have local evidence. Enable hosted BYOK only after scoped provider and recovery verification. |
 | PLAT-13 Effective legal documents | Public pages and versioned acceptance are implemented. Terms and Privacy render as drafts until the actual operator approves and configures the effective documents. |
 

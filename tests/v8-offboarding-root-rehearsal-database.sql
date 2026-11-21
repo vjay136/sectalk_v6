@@ -11,6 +11,7 @@ declare
   owner_id uuid:=gen_random_uuid(); reviewer_id uuid:=gen_random_uuid();
   actor uuid; sid uuid; factor uuid; claims jsonb:='{}'; w uuid; request_id uuid:=gen_random_uuid(); inventory_id uuid;
   audit_plan jsonb; source_plan jsonb; workflow_plan jsonb; terminal_plan jsonb; receipt jsonb;
+  removal jsonb; approved_at timestamptz;
   channel_id uuid; before_audit text; after_audit text; verified boolean;
 begin
   foreach actor in array array[owner_id,reviewer_id] loop
@@ -139,7 +140,60 @@ begin
     or has_schema_privilege('authenticated','sectalk_private','USAGE') then
     raise exception 'The rehearsal exposed private access or a non-user RPC grant';
   end if;
+
+  begin
+    perform sectalk_private.st_v8_offboarding_root_mutation(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256',true);
+    raise exception 'A rehearsal receipt authorized native removal by itself';
+  exception when sqlstate 'PT409' then
+    if sqlerrm is distinct from 'Independent approval for native root removal is required' then raise; end if;
+  end;
+  begin
+    perform sectalk_private.st_v8_approve_offboarding_native_root(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256');
+    raise exception 'The owner approved their own native root removal';
+  exception when insufficient_privilege then null; end;
+  perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
+  begin
+    perform sectalk_private.st_v8_approve_offboarding_native_root(w,w::text,(terminal_plan->>'plan')::uuid,repeat('0',64));
+    raise exception 'Native root approval accepted a different digest';
+  exception when sqlstate 'PT409' then null; end;
+  approved_at:=sectalk_private.st_v8_approve_offboarding_native_root(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256');
+  if approved_at is null or approved_at is distinct from sectalk_private.st_v8_approve_offboarding_native_root(
+    w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256') then raise exception 'Native root approval was not idempotent'; end if;
+  begin
+    perform sectalk_private.st_v8_offboarding_root_mutation(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256',true);
+    raise exception 'The reviewer executed native root removal';
+  exception when insufficient_privilege then null; end;
+  perform set_config('request.jwt.claims',claims->>owner_id::text,true);
+  create trigger offboarding_root_rehearsal_fixture after delete on public.st_v2_channels
+    for each row execute function sectalk_private.offboarding_root_rehearsal_fixture_trigger();
+  begin
+    perform sectalk_private.st_v8_offboarding_root_mutation(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256',true);
+    raise exception 'Native root removal accepted a later unreviewed hook';
+  exception when sqlstate 'PT409' then
+    if sqlerrm is distinct from 'Workspace root rehearsal encountered an unreviewed delete hook' then raise; end if;
+  end;
+  drop trigger offboarding_root_rehearsal_fixture on public.st_v2_channels;
+  if not exists(select 1 from public.st_v2_workspaces x where x.id=w)
+    or exists(select 1 from sectalk_private.st_v8_offboarding_native_root_receipts x where x.workspace=w) then
+    raise exception 'A failed removal changed the workspace or wrote a closure receipt'; end if;
+  removal:=sectalk_private.st_v8_offboarding_root_mutation(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256',true);
+  if removal->>'nativeRecordRemoved' is distinct from 'true' or removal->>'removedAt' is null
+    or removal->>'providerBytes' is distinct from 'unverified' or removal->>'backupErasure' is distinct from 'unverified'
+    or removal is distinct from sectalk_private.st_v8_offboarding_root_mutation(w,w::text,(terminal_plan->>'plan')::uuid,terminal_plan->>'sha256',true)
+    or exists(select 1 from public.st_v2_workspaces x where x.id=w)
+    or exists(select 1 from public.st_v2_channels x where x.id=channel_id)
+    or exists(select 1 from public.st_v2_members x where x.workspace_id=w)
+    or exists(select 1 from sectalk_private.st_v8_offboarding_root_rehearsal_roster x where x.workspace=w)
+    or not exists(select 1 from sectalk_private.st_v8_offboarding_requests x where x.id=request_id)
+    or not exists(select 1 from sectalk_private.st_v7_compliance_cases x where x.id=inventory_id)
+    or not exists(select 1 from sectalk_private.st_v8_offboarding_audit_custody_manifest(w) x
+      where x.valid and x.sha256=before_audit) then raise exception 'Native removal did not preserve the exact retained evidence'; end if;
+  if exists(select 1 from unnest(array['anon','authenticated','service_role']) r
+    where has_function_privilege(r,'sectalk_private.st_v8_offboarding_root_mutation(uuid,text,uuid,text,boolean)','EXECUTE')
+      or has_function_privilege(r,'sectalk_private.st_v8_approve_offboarding_native_root(uuid,text,uuid,text)','EXECUTE')
+      or has_table_privilege(r,'sectalk_private.st_v8_offboarding_native_root_receipts','SELECT,INSERT,UPDATE,DELETE')) then
+    raise exception 'A production API role can access the private executor or receipt'; end if;
 end $$;
 
-select 'passed: exact independently reviewed native root DELETE and cascades within mandatory rollback, retained custody, rejected transitive rows, unknown hooks and permit reuse';
+select 'passed: rollback-only rehearsal, separate approval, exact private native removal, stale-hook rejection, custody preservation and idempotent receipt';
 rollback;
