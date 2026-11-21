@@ -146,6 +146,8 @@ The census also covers regional rollback authorizations, admitted manifests, and
 
 The reconciliation includes regional rollback baselines, rollback reviews, source recovery evidence, and Board and channel author approvals. Changes such as revoking an author approval require a new capture and independent review. The output displays counts and a digest while keeping snapshots and author identifiers private.
 
+The preflight also counts destination content admissions, staged content, workspace claims, room file and task imports, and room invitations. These records can remain in the destination workflow without a direct foreign key to the workspace record. A change to a staged or imported item changes the digest even when its row count stays the same.
+
 The reconciliation separates complete thread and file registration removal receipts from verified file copies and independent recovery reviews. If a retired file path appears in Storage metadata again, the original cleanup receipt remains on record and the reconciliation becomes stale. The current metadata section counts reappearing workspace and room paths separately.
 
 Archived channel, archived message, and archived room removals appear in **Verified scoped deletion receipts** after SecTalk checks the exact copy, independent approval, retained archive records, and matching native audit entries. Archive findings appear separately. A missing link or a removed message still present in live data or search blocks capture and confirmation. Once an archive finding has been observed, resolving it requires a fresh capture and independent review.

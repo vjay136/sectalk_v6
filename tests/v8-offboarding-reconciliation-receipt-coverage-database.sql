@@ -18,6 +18,8 @@ declare
   other_handoff uuid:=gen_random_uuid(); recovery_vault_id uuid:=gen_random_uuid();
   residency_receipt uuid:=gen_random_uuid(); recovery_object uuid:=gen_random_uuid(); recovery_path text;
   group_id uuid:=gen_random_uuid(); custom_role uuid:=gen_random_uuid(); classroom uuid:=gen_random_uuid();
+  destination_cell uuid:=gen_random_uuid(); transfer_approval uuid:=gen_random_uuid(); claim_nonce uuid:=gen_random_uuid();
+  staged_revision text;
 
 begin
   foreach actor in array array[owner_id,reviewer_id] loop
@@ -226,6 +228,39 @@ begin
   insert into sectalk_private.st_v8_residency_rollback_channel_batches(handoff,packet_sha256,records,staged_by) values
     (residency_handoff,file_sha,'[{"body":"synthetic private recovery content"}]',owner_id),
     (other_handoff,file_sha,'[]',owner_id);
+  insert into sectalk_private.st_v8_residency_cells(id,region,project_reference,label,environment)
+    values(destination_cell,'eu','offboard-fixture-destination','Disposable destination','fixture');
+  insert into sectalk_private.st_v8_residency_content_admissions
+    (cell,workspace,source_project,approval,manifest_sha256,record_count,expires_at) values
+    (destination_cell,workspace_id,'fixture-source',transfer_approval,file_sha,1,now()+interval '1 hour'),
+    (destination_cell,other_workspace,'fixture-source',transfer_approval,file_sha,1,now()+interval '1 hour');
+  insert into sectalk_private.st_v8_residency_staged_content(cell,workspace,source_project,approval,records) values
+    (destination_cell,workspace_id,'fixture-source',transfer_approval,'[{"body":"synthetic private recovery content"}]'),
+    (destination_cell,other_workspace,'fixture-source',transfer_approval,'[]');
+  insert into sectalk_private.st_v8_residency_workspace_claims
+    (cell,workspace,source_project,approval,owner_id,name,manifest_sha256,installation_nonce,expires_at)
+    values(destination_cell,workspace_id,'fixture-source',transfer_approval,owner_id,'Unclaimed regional workspace',
+      file_sha,claim_nonce,now()+interval '1 hour');
+  insert into sectalk_private.st_v8_residency_room_imports
+    (cell,workspace,source_project,approval,room,room_name,actor,evidence_count)
+    values(destination_cell,workspace_id,'fixture-source',transfer_approval,room_id,'Imported room',owner_id,1);
+  insert into sectalk_private.st_v8_residency_room_file_imports
+    (cell,workspace,source_project,approval,room,file,actor)
+    values(destination_cell,workspace_id,'fixture-source',transfer_approval,room_id,room_file,owner_id);
+  insert into sectalk_private.st_v8_residency_room_task_imports
+    (cell,workspace,source_project,approval,room,actor,task_count)
+    values(destination_cell,workspace_id,'fixture-source',transfer_approval,room_id,owner_id,1);
+  insert into sectalk_private.st_v8_residency_room_member_invites
+    (cell,workspace,source_project,approval,room,member,challenge,identity,expires_at)
+    values(destination_cell,workspace_id,'fixture-source',transfer_approval,room_id,reviewer_id,file_sha,file_sha,now()+interval '1 hour');
+  select sectalk_private.st_v8_offboarding_reconcile_workspace_root(r)->>'revision' into staged_revision
+    from sectalk_private.st_v8_offboarding_requests r where r.id=request_id;
+  update sectalk_private.st_v8_residency_room_file_imports f set published_at=now()
+    where f.workspace=workspace_id and f.file=room_file;
+  if staged_revision is not distinct from (select sectalk_private.st_v8_offboarding_reconcile_workspace_root(r)->>'revision'
+    from sectalk_private.st_v8_offboarding_requests r where r.id=request_id) then
+    raise exception 'Publishing a staged regional file did not change the offboarding digest';
+  end if;
   set local role authenticated;
   perform set_config('request.jwt.claims',claims->>owner_id::text,true);
   first_review:=public.st_v8_offboarding_reconciliation(workspace_id,'capture',workspace_id::text);
@@ -241,9 +276,16 @@ begin
     or first_review#>>'{summary,nativeRows,residencyChannelAuthorConsents}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyRecoveryBoardBatches}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyRecoveryChannelBatches}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyContentAdmissions}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyStagedContent}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyWorkspaceClaims}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyRoomFileImports}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyRoomTaskImports}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyRoomMemberInvites}' is distinct from '1'
     or first_review#>>'{summary,workspaceRootDependencies,unclassifiedConstraints}'<>'0'
     or first_review::text like '%'||residency_receipt::text||'%'
     or first_review::text like '%'||recovery_vault_id::text||'%'
+    or first_review::text like '%'||claim_nonce::text||'%'
     or first_review::text like '%synthetic private recovery content%' then
     raise exception 'The residency receipt census is missing, unclassified or exposed'; end if;
   perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
@@ -256,6 +298,8 @@ begin
     set applied_by=reviewer_id,applied_at=now() where handoff=other_handoff;
   update sectalk_private.st_v8_residency_board_author_consents
     set revoked_at=now() where handoff=other_handoff;
+  update sectalk_private.st_v8_residency_staged_content b set records='[{"value":"other workspace"}]'
+    where b.workspace=other_workspace;
   set local role authenticated;
   current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
   if current_review->>'current' is distinct from 'true' then
