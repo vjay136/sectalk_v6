@@ -209,6 +209,17 @@ begin
     (handoff,workspace,review,review_sha256,packet_sha256,plan_sha256,changes) values
     (residency_handoff,workspace_id,residency_review,file_sha,file_sha,file_sha,'[]'),
     (other_handoff,other_workspace,gen_random_uuid(),file_sha,file_sha,file_sha,'[]');
+  insert into sectalk_private.st_v8_residency_rollback_baselines(handoff,snapshot) values
+    (residency_handoff,'{"content":"synthetic private recovery content"}'),
+    (other_handoff,'{}');
+  insert into sectalk_private.st_v8_residency_rollback_reviews(id,handoff,requester,digest,changes)
+    values(residency_review,residency_handoff,owner_id,file_sha,'[]');
+  insert into sectalk_private.st_v8_residency_source_evidence(handoff,digest,requester)
+    values(residency_handoff,file_sha,owner_id);
+  insert into sectalk_private.st_v8_residency_board_author_consents(handoff,actor,email_tag,local_identity)
+    values(residency_handoff,owner_id,file_sha,file_sha),(other_handoff,owner_id,file_sha,file_sha);
+  insert into sectalk_private.st_v8_residency_channel_author_consents(handoff,actor,email_tag,local_identity)
+    values(residency_handoff,owner_id,file_sha,file_sha);
   insert into sectalk_private.st_v8_residency_rollback_board_batches(handoff,packet_sha256,tasks,staged_by) values
     (residency_handoff,file_sha,'[{"title":"synthetic private recovery content"}]',owner_id),
     (other_handoff,file_sha,'[]',owner_id);
@@ -223,6 +234,11 @@ begin
     or first_review#>>'{summary,nativeRows,residencySourceReactivations}'<>'1'
     or first_review#>>'{summary,nativeRows,residencyRollbackAdmissions}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyRollbackManifests}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyRollbackBaselines}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyRollbackReviews}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencySourceEvidence}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyBoardAuthorConsents}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyChannelAuthorConsents}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyRecoveryBoardBatches}' is distinct from '1'
     or first_review#>>'{summary,nativeRows,residencyRecoveryChannelBatches}' is distinct from '1'
     or first_review#>>'{summary,workspaceRootDependencies,unclassifiedConstraints}'<>'0'
@@ -238,10 +254,25 @@ begin
   reset role;
   update sectalk_private.st_v8_residency_rollback_channel_batches
     set applied_by=reviewer_id,applied_at=now() where handoff=other_handoff;
+  update sectalk_private.st_v8_residency_board_author_consents
+    set revoked_at=now() where handoff=other_handoff;
   set local role authenticated;
   current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
   if current_review->>'current' is distinct from 'true' then
     raise exception 'Another workspace changed this regional recovery review'; end if;
+  reset role;
+  update sectalk_private.st_v8_residency_board_author_consents
+    set revoked_at=now() where handoff=residency_handoff;
+  set local role authenticated;
+  current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
+  if current_review->>'current' is distinct from 'false'
+    or current_review#>>'{summary,nativeRows,residencyBoardAuthorConsents}' is distinct from '1' then
+    raise exception 'Author approval revocation must stale a review even when the row count is unchanged'; end if;
+  perform set_config('request.jwt.claims',claims->>owner_id::text,true);
+  first_review:=public.st_v8_offboarding_reconciliation(workspace_id,'capture',workspace_id::text);
+  if first_review->>'current' is distinct from 'true' then
+    raise exception 'Owner could not recapture the updated offboarding census'; end if;
+  perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
   reset role;
   update sectalk_private.st_v8_residency_rollback_channel_batches
     set applied_by=reviewer_id,applied_at=now() where handoff=residency_handoff;
