@@ -22,6 +22,7 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
   const [loadError,setLoadError]=useState('')
+  const [ssoRequired,setSsoRequired]=useState<boolean>()
   const pending=useRef<{key:string;id:string}|null>(null)
   const loadVersion=useRef(0)
   const selected=items?.find(item=>item.id===active)
@@ -30,13 +31,15 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
     const groups=db!.from('st_v6_workspace_groups').select('id,name,description,archived_at')
       .eq('workspace_id',workspace).eq('kind',kind).order('name').order('id')
       .range(page*pageSize,page*pageSize+pageSize)
-    const [directory,members,delegation]=await Promise.all([
+    const [directory,members,delegation,access]=await Promise.all([
       (archived?groups.not('archived_at','is',null):groups.is('archived_at',null)).returns<Group[]>(),
       active?db!.from('st_v6_workspace_group_members').select('user_id').eq('workspace_id',workspace).eq('group_id',active):null,
       !manager&&active?db!.rpc('st_v7_custom_group_access',{p_workspace:workspace,p_group:active}):null,
+      db!.rpc('st_v8_workspace_groups_requires_sso',{p_workspace:workspace}),
     ])
-    if(directory.error||members?.error) throw new Error('Could not load the workspace directory.')
-    return {directory:directory.data,roster:members?.data?.map(row=>row.user_id)??null,permissions:(delegation?.data??[]) as string[]}
+    if(directory.error||members?.error||access.error) throw new Error('Could not load the workspace directory.')
+    return {directory:directory.data,roster:members?.data?.map(row=>row.user_id)??null,
+      permissions:(delegation?.data??[]) as string[],ssoRequired:access.data===true}
   },[active,archived,kind,manager,page,workspace])
 
   useEffect(()=>{
@@ -46,10 +49,13 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
       const current=++loadVersion.current
       try{
         const result=await load()
-        if(currentView&&current===loadVersion.current){setItems(result.directory);setRoster(result.roster);setDelegate({group:activeId,permissions:result.permissions});setLoadError('')}
+        if(currentView&&current===loadVersion.current){
+          setItems(result.directory);setRoster(result.roster);setSsoRequired(result.ssoRequired)
+          setDelegate({group:activeId,permissions:result.permissions});setLoadError('')
+        }
       }catch(error){
         if(currentView&&current===loadVersion.current){
-          setItems(null);setRoster(null);setLoadError(formatError(error,'Could not load the workspace directory.'))
+          setItems(null);setRoster(null);setSsoRequired(undefined);setLoadError(formatError(error,'Could not load the workspace directory.'))
         }
       }
     }
@@ -83,7 +89,7 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
       form.reset()
       const version=++loadVersion.current
       const refreshed=await load()
-      if(version===loadVersion.current){setItems(refreshed.directory);setLoadError('')}
+      if(version===loadVersion.current){setItems(refreshed.directory);setSsoRequired(refreshed.ssoRequired);setLoadError('')}
       setRoster(null);setActive(data)
     }catch(error){setError(formatError(error,'Could not create the directory entry.'))}
     finally{setBusy(false)}
@@ -97,7 +103,7 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
       if(error)throw error
       const version=++loadVersion.current
       const refreshed=await load()
-      if(version===loadVersion.current){setItems(refreshed.directory);setRoster(refreshed.roster);setLoadError('')}
+      if(version===loadVersion.current){setItems(refreshed.directory);setRoster(refreshed.roster);setSsoRequired(refreshed.ssoRequired);setLoadError('')}
       if(action==='archive'||action==='restore')setActive('')
     }catch(error){setError(formatError(error,'Could not update the directory entry.'))}
     finally{setBusy(false)}
@@ -105,6 +111,12 @@ export function WorkspaceGroups({workspace,manager,people,profiles}:{
 
   const can=(permission:string)=>manager||(delegate?.group===selected?.id&&delegate?.permissions.includes(permission))
   const available=people.filter(person=>!(roster||[]).includes(person.user_id))
+  if(ssoRequired!==false)return <section className="release-section" aria-label="Workspace groups and teams">
+    <h2>Workspace directory</h2>
+    {loadError?<p role="alert" className="error">{loadError}</p>:<p role="status">{ssoRequired
+      ?'Sign in through your workspace provider to view or manage groups and teams.'
+      :'Loading directory…'}</p>}
+  </section>
   return <section className="release-section" aria-label="Workspace groups and teams">
     <h2>Workspace directory</h2>
     <SectionTabs label="Directory sections" value={kind} onChange={next=>{if(!busy&&next!==kind)reset(next,archived)}} options={[

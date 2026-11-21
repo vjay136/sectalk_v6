@@ -1,3 +1,5 @@
+import { liveKitControlUrl } from '../../../../lib/livekit-control-url'
+import { meetingBindingAttribute, meetingMediaIdentity } from '../../../../lib/meeting-media-identity'
 import { createClient } from '@supabase/supabase-js'
 import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk'
 
@@ -25,13 +27,20 @@ export async function POST(request:Request) {
     const client=createClient(settings.url,settings.key,{auth,global:{headers:{Authorization:'Bearer '+jwt}}})
     const {data,error}=await client.auth.getUser(jwt)
     if (error || !data.user) return fail(401)
+    const mediaSession=()=>client.rpc('st_v8_workspace_member_media_allowed',{p_meeting:meeting})
+    const session=await mediaSession()
+    if (session.error) return fail(503)
+    if (session.data!==true) return fail(403)
     if (action==='start') {
       const managed='sectalk-v3-'+meeting.toLowerCase()
-      const rooms=new RoomServiceClient(settings.livekit.replace(/^ws/,'http'),settings.apiKey,settings.secret,{requestTimeout:5})
+      const rooms=new RoomServiceClient(liveKitControlUrl(settings.livekit),settings.apiKey,settings.secret,{requestTimeout:5})
       let active:Awaited<ReturnType<typeof rooms.listParticipants>>=[]
       try { active=await rooms.listParticipants(managed) }
       catch(error) { if (!(error instanceof Error && 'status' in error && error.status===404)) throw error }
       if (active?.length) return fail(409)
+      const current=await mediaSession()
+      if (current.error) return fail(503)
+      if (current.data!==true) return fail(403)
       const db=createClient(settings.url,settings.service,{auth})
       const result=await db.rpc('st_v6_create_protected_meeting',{p_meeting:meeting,p_actor:data.user.id})
       if (result.error) return fail(503)
@@ -39,9 +48,16 @@ export async function POST(request:Request) {
     }
     const result=await client.rpc('st_v6_protected_meeting_exchange',{p_meeting:meeting,p_device:device,p_action:'token'})
     if (result.error || !result.data?.ready) return fail(403)
-    const profile=await client.from('st_profiles').select('name').eq('id',data.user.id).maybeSingle()
-    const token=new AccessToken(settings.apiKey,settings.secret,{identity:data.user.id,name:profile.data?.name || 'SecTalk member',ttl:30})
+    const [profile,binding]=await Promise.all([
+      client.from('st_profiles').select('name').eq('id',data.user.id).maybeSingle(),
+      client.rpc('st_v8_livekit_bind_member',{p_meeting:meeting,p_kind:'protected'}),
+    ])
+    if (binding.error) return fail(503)
+    if (typeof binding.data!=='string') return fail(403)
+    const token=new AccessToken(settings.apiKey,settings.secret,{identity:meetingMediaIdentity(data.user.id,binding.data),
+      name:profile.data?.name || 'SecTalk member',ttl:30,attributes:{[meetingBindingAttribute]:binding.data}})
     token.addGrant({roomJoin:true,room:'sectalk-protected-'+meeting.toLowerCase(),canPublish:true,canSubscribe:true,canPublishData:false,
+      canUpdateOwnMetadata:false,
       canPublishSources:[TrackSource.CAMERA,TrackSource.MICROPHONE]})
     return Response.json({url:settings.livekit,token:await token.toJwt()},{headers})
   } catch { return fail(503) }

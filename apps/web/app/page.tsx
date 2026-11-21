@@ -12,6 +12,8 @@ import { DeviceLockScreen, useDeviceProtection } from '../components/device-lock
 import { AccountLockdownScreen, type AccountLock } from '../components/login-anomalies'
 import { LoginStepUp } from '../components/login-step-up'
 import { unsubscribeBrowserPush } from '../components/web-push-settings'
+import { CommunityRulesGate } from '../components/community-rules-gate'
+import { clearWorkspaceLink, workspaceLink } from '../lib/workspace-link'
 
 type Access = { user: string; state: 'allowed' | 'challenge' | 'error'; lockdown?: AccountLock; risk?: 'email' | 'refresh' }
 
@@ -29,12 +31,15 @@ export default function Home() {
   const protection = useDeviceProtection(user)
   useEffect(() => {
     if (!db) return
+    let hadSession = false
     const { data } = db.auth.onAuthStateChange((event, value) => {
       if (event === 'PASSWORD_RECOVERY') setRecovering(true)
       if (event === 'SIGNED_OUT') {
         setRecovering(false)
+        if (hadSession) clearWorkspaceLink()
         void unsubscribeBrowserPush().catch(() => undefined)
       }
+      hadSession = Boolean(value)
       if (!value) setAccess(null)
       else if (event === 'SIGNED_IN') {setAuthenticatorReset(false);setStartRecovery(false)}
       setSession(value)
@@ -120,5 +125,10 @@ export default function Home() {
     hasLocalDevice={Boolean(protection.value&&!protection.value.locked&&!protection.value.unavailable)} complete={retry}/>
   if (protection.value && (protection.value.locked || protection.value.unavailable))
     return <DeviceLockScreen device={protection.value.device} unavailable={protection.value.unavailable} refresh={protection.refresh}/>
-  return <WorkspaceContextProvider key={user} user={user}><Inbox user={user} /></WorkspaceContextProvider>
+  const requestedWorkspace=workspaceLink(window.location.search)
+  return <CommunityRulesGate key={user}>
+    <WorkspaceContextProvider user={user} requestedWorkspace={requestedWorkspace}>
+      <Inbox user={user} openWorkspaces={requestedWorkspace!==null}/>
+    </WorkspaceContextProvider>
+  </CommunityRulesGate>
 }

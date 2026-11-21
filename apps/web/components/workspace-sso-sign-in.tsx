@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
+import { rememberWorkspaceSsoLink } from '../lib/workspace-link'
 
-export function WorkspaceSsoSignIn() {
+export function WorkspaceSsoSignIn({workspace}:{workspace?:string}={}) {
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
   async function start(event:FormEvent<HTMLFormElement>){
@@ -15,6 +16,7 @@ export function WorkspaceSsoSignIn() {
         body:JSON.stringify({action:'start',domain})})
       const result=await response.json()
       if(!response.ok||typeof result.destination!=='string')throw new Error()
+      rememberWorkspaceSsoLink(workspace?new URLSearchParams({workspace}).toString():window.location.search)
       window.location.assign(result.destination)
     }catch{setError('Workspace sign-in is unavailable. Check the domain or contact your administrator.');setBusy(false)}
   }

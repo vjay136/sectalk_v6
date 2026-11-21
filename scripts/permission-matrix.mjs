@@ -31,6 +31,12 @@ export const permissions={
   'workspace.member.invite':'Active workspace manager, recipient/domain policy and available seat.',
   'workspace.read_api':'Scoped, active API key with current tenant entitlement.',
   'workspace.organization.manage':'Current workspace owner with fresh native assurance for settings, verified domains and invitation templates.',
+  'workspace.residency.verify':'Independently assigned residency reviewer with fresh native MFA and an exact project-bound ticket.',
+  'workspace.residency.routing':'Current workspace member with a published activation or an active, independently approved routing rehearsal.',
+  'workspace.offboarding.room_file_cleanup':'Current exact offboarding owner or reviewer with fresh native MFA, approved retained bytes, current room policy and confirmed Storage-path absence.',
+  'workspace.offboarding.workspace_file_cleanup':'Current exact offboarding owner or reviewer with fresh native MFA, approved retained bytes, current workspace file policy and confirmed Storage-path absence.',
+  'workspace.keys.rotate':'Enterprise workspace owner with fresh native MFA and a short-lived rotation ticket.',
+  'workspace.keys.verify_erasure':'Independent offboarding and key destruction reviewer with fresh native MFA, exact staged workspace scope and clear holds.',
   'workspace.managed_account':'Current Family or School membership and separately accepted, revocable oversight authority.',
   'admin.user.role.write':'Workspace owner with fresh native MFA; target hierarchy still applies.',
   'admin.user.suspend':'Verified workspace owner or admin; admins can act on members only.',
@@ -40,6 +46,7 @@ export const permissions={
   'compliance.export.review':'Independent workspace owner with fresh native MFA and live evidence scope.',
   'compliance.export.download':'Requester or reviewer within a live approved case capability and access conditions.',
   'messaging.message.send':'Authorized conversation participants or an eligible room member under current posting policy.',
+  'messaging.message.read':'Current conversation entitlement and a final access check before delivering decrypted managed content.',
   'messaging.message.report':'Current message visibility and explicit evidence consent. Private notes stay within Platform review.',
   'messaging.message.delete_any':'Existing room moderation for eligible scoped posts; no global arbitrary message deletion.',
   'room.member.remove':'Room owner or moderator; target hierarchy and live workspace membership still apply.',
@@ -72,10 +79,11 @@ export const permissions={
   'billing.trial':'Current workspace owner. Starting a trial requires fresh native proof and the tenant’s unused eligibility.',
   'billing.invoice.refund':'Explicit workspace billing authority, owned invoice scope and fresh native proof.',
   'soc.queue.read':'Verified authorized platform moderation staff.',
+  'security.disclosure.review':'Assigned disclosure reviewer with a current session and fresh native MFA.',
   'soc.action.quarantine':'Pending. Automatic scanner quarantine has its own policy.',
   'soc.siem.export':'Enterprise workspace owner with fresh native MFA.',
   'soc.report.export':'Verified authorized staff with fresh native MFA.',
-  'soc.evidence.access':'Scoped evidence ticket and current authorized case action.',
+  'soc.evidence.access':'Scoped evidence authorization and a current authorized case action, with fresh native assurance for protected evidence.',
   'safety.url.inspect':'Current eligible account session and rate-limited URL inspection.',
   'platform.account.read':'Explicitly assigned account operator or independent reviewer with fresh native MFA.',
   'platform.session.revoke':'Explicit account operator, fresh native MFA and eligible target.',
@@ -116,6 +124,7 @@ signed('billing/reconcile','POST','Private Stripe reconciliation worker bearer.'
 signed('billing/renewal-mail','POST','Private transactional renewal mail worker bearer.','notificationDrainAuthorized','rpc:st_v7_renewal_mail_claim','rpc:st_v7_renewal_mail_confirm','rpc:st_v7_renewal_mail_finish')
 account('compliance-exports/[caseId]','GET,POST','compliance.export.download','operationalReportViewer','rpc:st_v7_begin_compliance_operation')
 account('evidence-vault','GET,POST','soc.evidence.access','operationalReportViewer','rpc:st_v7_begin_evidence_operation')
+account('e2ee/device','POST','account.device.manage','getUser','rpc:st_v8_olm_device_proof','verify','rpc:st_v8_olm_register_device')
 account('exports/[artifact]','GET','audit.log.export,soc.report.export','operationalReportViewer','rpc:st_v7_sensitive_action_status','rpc:st_v6_get_export_object')
 signed('exports/purge','POST','Private cleanup bearer.','timingSafeEqual','rpc:st_v6_claim_export_cleanup')
 account('files/download','GET,POST','file.download','authenticateFileRequest','rpc:st_v6_file_can_read')
@@ -137,6 +146,14 @@ account('ice/diagnostics','POST','call.network.test','getUser','rpc:st_v6_networ
 account('integrations/keys','POST','integration.key.manage','integrationIdentity','rpc:st_v6_create_integration_key','rpc:st_v6_revoke_integration_key')
 account('integrations/webhooks','POST','integration.webhook.manage','integrationIdentity','rpc:st_v6_revoke_webhook')
 signed('integrations/webhooks/drain','POST','Private webhook worker bearer.','timingSafeEqual','rpc:st_v6_webhook_lease_active')
+signed('internal/livekit-admission','POST','Gateway bearer, signed LiveKit join token and current native room and session authorization.','timingSafeEqual','verify','rpc:st_v8_livekit_bound_admission')
+signed('internal/livekit-admission','PUT','Gateway bearer and exact bound authorization for connected managed and protected participants.','timingSafeEqual','rpc:st_v8_livekit_bound_admission','removeParticipant')
+account('managed-channel/[channel]','GET','messaging.message.read','operationalReportViewer','rpc:st_v8_managed_channel_ticket','rpc:st_v8_managed_channel_still_readable')
+account('managed-channel/[channel]','POST','messaging.message.send,messaging.message.read','operationalReportViewer','rpc:st_v8_managed_channel_ticket','rpc:st_v8_finish_managed_channel_send')
+account('managed-channel/[channel]/report','POST','messaging.message.report','operationalReportViewer','rpc:st_v8_begin_managed_channel_report','rpc:st_v8_finish_managed_channel_report')
+account('managed-room-evidence/[report]','GET','soc.evidence.access','operationalReportViewer','rpc:st_v8_managed_room_evidence_access','rpc:st_v8_managed_room_evidence_envelope')
+account('managed-room/[room]','GET','messaging.message.read','operationalReportViewer','rpc:st_v8_managed_room_ticket','rpc:st_v8_managed_room_readable')
+account('managed-room/[room]','POST','messaging.message.send,messaging.message.read','operationalReportViewer','rpc:st_v8_managed_room_ticket','rpc:st_v8_managed_room_work','rpc:st_v8_managed_room_readable')
 publicly('meetings/captions','GET','Caption capability boolean only.')
 account('meetings/captions','POST,PUT','meeting.caption.manage','getUser','rpc:st_v6_meeting_caption_command')
 publicly('meetings/guests','GET','Guest capability and site key only.')
@@ -144,12 +161,12 @@ capability('meetings/guests','POST','meeting.guest.access','rpc:st_v6_meeting_gu
 account('meetings/moderate','POST','meeting.moderate','getUser','rpc:st_v6_moderate_meeting')
 publicly('meetings/protected','GET','Protected media capability boolean only.')
 account('meetings/protected','POST','call.media.join','getUser','rpc:st_v6_create_protected_meeting')
-account('meetings/recordings','GET','call.record.read','getUser','command')
-account('meetings/recordings','POST','call.record.start','getUser','command')
+account('meetings/recordings','GET','call.record.read','viewer','appCommand')
+account('meetings/recordings','POST','call.record.start','viewer','appCommand')
 signed('meetings/recordings/webhook','POST','LiveKit receiver signature and event scope.','receive','command')
 account('meetings/screen-share','POST','meeting.presenter.manage','getUser','rpc:st_v6_screen_presenter')
 publicly('meetings/summaries','GET','Summary capability boolean only.')
-account('meetings/summaries','POST','meeting.summary.read','getUser','rpc:st_v6_meeting_summary_command')
+account('meetings/summaries','POST','meeting.summary.read','meetingArtifactViewer','rpc:st_v8_app_meeting_summary_command')
 publicly('meetings/token','GET','Media capability boolean only.')
 account('meetings/token','POST','call.media.join','getUser','rpc:st_v3_media_access')
 publicly('notification-email/drain','GET','Email capability boolean only.')
@@ -163,28 +180,46 @@ publicly('preferences/language','POST','Browser-local language cookie. The app r
 signed('push/dispatch','POST','Private Web Push worker bearer.','dispatchAuthorized','rpc:st_v6_claim_web_push')
 account('push/subscription','GET,POST,DELETE','account.notification.manage','authenticatePush','rpc:st_v6_push_subscription')
 publicly('ready','GET','Read-only readiness.')
-account('room-files','GET','file.download','authenticateFileRequest','rpc:st_v6_room_file_command')
-account('room-files','POST','file.upload','authenticateFileRequest','rpc:st_v6_room_file_command')
-account('room-files','DELETE','file.delete','authenticateFileRequest','rpc:st_v6_room_file_command')
+account('room-files','GET','file.download','authenticateFileRequest','scopedFileSession','rpc:st_v8_app_file_command','rpc:st_v8_scoped_file_command',
+  'rpc:st_v8_residency_file_verification_snapshot','rpc:st_v8_record_residency_file_verification',
+  'rpc:st_v8_begin_offboarding_room_storage_copy','rpc:st_v8_finish_offboarding_room_storage_copy')
+account('room-files','POST','file.upload','authenticateFileRequest','scopedFileSession','rpc:st_v8_app_file_command','rpc:st_v8_scoped_file_command',
+  'rpc:st_v8_residency_room_file_import_access','rpc:st_v8_residency_room_file_import_command')
+account('room-files','DELETE','file.delete','authenticateFileRequest','scopedFileSession','rpc:st_v8_app_file_command')
 publicly('rooms/guests','GET','Room guest capability boolean only.')
 capability('rooms/guests','POST','room.guest.access','getUser','rpc:st_v6_room_guest_command')
 account('rooms/thread-summary','POST','room.thread.summarize','getUser','rpc:st_v6_room_thread_summary_command')
 account('safety/url-inspection','POST','safety.url.inspect','rpc:st_v7_authorize_url_inspection')
+publicly('security/disclosure','POST','Anonymous encrypted vulnerability intake with same-origin validation, bounded fields and a native submission quota.')
+account('security/disclosure/queue','POST','security.disclosure.review','disclosureQueue')
 account('security-reports/export','GET','soc.report.export','operationalReportViewer','rpc:st_v7_sensitive_action_status','rpc:st_v6_security_report')
 account('siem','GET','soc.siem.export','operationalReportViewer','rpc:st_v7_siem_batch_read')
 account('siem','POST','soc.siem.export','operationalReportViewer','rpc:st_v7_siem_batch_read','rpc:st_v7_siem_batch')
 signed('siem/drain','POST','Private SIEM worker bearer.','notificationDrainAuthorized','rpc:st_v7_siem_claim','rpc:st_v7_siem_finish')
 publicly('status','GET','Read-only status.')
+account('tenant-keys','POST','workspace.keys.rotate','operationalReportViewer','rpc:st_v7_begin_tenant_key_rotation','rpc:st_v7_commit_tenant_key_rotation')
+account('tenant-keys/provider-erasure','POST','workspace.keys.verify_erasure','operationalReportViewer','rpc:st_v8_begin_tenant_provider_erasure','rpc:st_v8_commit_tenant_provider_erasure')
+signed('tenant-keys/rotate-due','GET','Private Vercel Cron bearer and a compare-and-swap against the live managed-key schedule.',
+  'notificationDrainAuthorized','rpc:st_v8_due_tenant_key_rotations','rpc:st_v8_commit_scheduled_tenant_key_rotation')
+signed('tenant-keys/rewrap','POST','Dedicated private worker bearer and managed channel or room scope checks at discovery and commit.',
+  'notificationDrainAuthorized','rpc:st_v8_due_managed_channel_rewrap','rpc:st_v8_commit_managed_channel_rewrap',
+  'rpc:st_v8_due_managed_channel_rewrap_after','rpc:st_v8_due_managed_room_rewrap','rpc:st_v8_commit_managed_room_rewrap')
 capability('v1/[resource]','GET','workspace.read_api','apiKeyHash','rpc:st_v6_integration_read')
 capability('scim/v2/[...resource]','GET,POST,PATCH,PUT,DELETE','integration.key.manage','createHash','rpc:st_v8_scim_request')
 account('voice-notes','GET','file.download','getUser','rpc:st_v6_voice_note_command')
 account('voice-notes','POST','file.upload','getUser','rpc:st_v6_voice_note_command')
 signed('workspace-files/maintenance','POST','Private cleanup bearer.','timingSafeEqual')
-account('workspace-files','GET','file.download','authenticateFileRequest','rpc:st_v6_workspace_file_command')
-account('workspace-files','POST','file.upload,file.share_external','authenticateFileRequest','rpc:st_v6_workspace_file_command','rpc:st_v6_record_workspace_file_access')
-account('workspace-files','DELETE','file.delete','authenticateFileRequest','rpc:st_v6_workspace_file_command')
+account('workspace-files','GET','file.download','authenticateFileRequest','scopedFileSession','rpc:st_v8_app_file_command','rpc:st_v8_scoped_file_command',
+  'rpc:st_v8_residency_file_verification_snapshot','rpc:st_v8_record_residency_file_verification','rpc:st_v8_residency_rollback_file_copy',
+  'rpc:st_v8_begin_offboarding_storage_copy','rpc:st_v8_finish_offboarding_storage_copy')
+account('workspace-files','POST','file.upload,file.share_external','authenticateFileRequest','scopedFileSession','rpc:st_v8_app_file_command','rpc:st_v8_scoped_file_command','rpc:st_v8_residency_file_import_access')
+account('workspace-files','DELETE','file.delete','authenticateFileRequest','scopedFileSession','rpc:st_v8_app_file_command')
 account('workspaces/invitations','POST','workspace.member.invite','getUser','rpc:st_v6_workspace_link_create','rpc:st_v7_workspace_email_template')
 account('workspaces/organization','POST','workspace.organization.manage','rpc:st_v7_org_settings','rpc:st_v7_finish_org_domain')
+account('workspaces/offboarding/room-file-cleanup','POST','workspace.offboarding.room_file_cleanup','handleFileRegistrationCleanup')
+account('workspaces/offboarding/workspace-file-cleanup','POST','workspace.offboarding.workspace_file_cleanup','handleFileRegistrationCleanup')
+account('workspaces/residency/verify','POST','workspace.residency.verify','operationalReportViewer','rpc:st_v8_begin_residency_provider_check','rpc:st_v8_finish_residency_provider_check')
+account('workspaces/residency/route-link','GET','workspace.residency.routing','operationalReportViewer','rpc:st_v8_residency_active_route','rpc:st_v8_residency_routing_rehearsal')
 account('workspaces/rule-registry','POST','policy.rule.evaluate','getUser','rpc:st_v7_workspace_rule_registry')
 account('workspaces/trial','GET','billing.trial','billingIdentity','rpc:st_v7_workspace_trial_status')
 account('workspaces/trial','POST','billing.trial','billingIdentity','rpc:st_v7_sensitive_action_status','rpc:st_v7_start_workspace_trial')
@@ -192,6 +227,8 @@ account('workspaces/trial','POST','billing.trial','billingIdentity','rpc:st_v7_s
 export const entrypoints=entries.sort((a,b)=>a.path.localeCompare(b.path)||a.method.localeCompare(b.method))
 
 export const databaseEntryPoints={
+  'workspace.offboarding.room_file_cleanup':'st_v8_begin_room_file_cleanup',
+  'workspace.offboarding.workspace_file_cleanup':'st_v8_begin_workspace_file_cleanup',
   'messaging.message.report':'st_v7_submit_channel_report',
   'workspace.organization.manage':'st_v7_org_settings',
   'workspace.managed_account':'st_v7_managed_account',

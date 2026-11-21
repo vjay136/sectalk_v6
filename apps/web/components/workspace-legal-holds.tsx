@@ -17,8 +17,11 @@ type Hold = {
   released_at: string | null
   release_reason: string | null
 }
-type Access = { access: 'mfa' } | { access: 'verified'; holds: Hold[] }
+type Access = { access: 'mfa' } |
+  { access: 'verified'; hold_sso_required?: false; holds: Hold[] } |
+  { access: 'verified'; hold_sso_required: true }
 type Choice = { id: string; name: string }
+const holdSignInMessage = 'Sign in with workspace single sign-on to manage legal holds.'
 
 function iso(value: FormDataEntryValue | null) {
   return value ? new Date(String(value)).toISOString() : null
@@ -55,11 +58,15 @@ export function WorkspaceLegalHolds({ workspace, members, owner }: { workspace: 
       if (version !== current.current) return
       if (factors.error) setError('Could not read your authenticator settings.')
       else setFactor(factors.data.totp.find(item => item.status === 'verified')?.id || '')
-    } else {
+    } else if (!access.hold_sso_required) {
       const list = await db!.from('st_v6_rooms').select('id,name').eq('workspace_id', workspace).order('name').limit(200)
       if (version !== current.current) return
       if (list.error) setError('Could not load rooms for preservation.')
       else setRooms(list.data)
+    } else {
+      setRooms([])
+      setRelease(null)
+      request.current = null
     }
   }, [workspace])
 
@@ -112,7 +119,9 @@ export function WorkspaceLegalHolds({ workspace, members, owner }: { workspace: 
       }
       await load()
     } catch (cause) {
-      setError(formatError(cause, 'Could not update the preservation hold.'))
+      const failure = formatError(cause, 'Could not update the preservation hold.')
+      if (failure === holdSignInMessage) await load()
+      else setError(failure)
     } finally {
       setBusy(false)
     }
@@ -140,6 +149,9 @@ export function WorkspaceLegalHolds({ workspace, members, owner }: { workspace: 
         {showEmergency && <EmergencyAccess workspace={workspace}/>}
       </details>}
       <EvidenceVault key={workspace} workspace={workspace}/>
+    </>}
+    {state?.access === 'verified' && state.hold_sso_required && <p>{holdSignInMessage}</p>}
+    {state?.access === 'verified' && !state.hold_sso_required && <>
       <p>Preserve matching workspace posts and protected versions during edits or removal. Date boundaries use your device’s time zone.</p>
       <details className="release-create">
         <summary>Place a preservation hold</summary>

@@ -7,6 +7,8 @@ import {WorkspaceSeats} from '../../../components/workspace-seats'
 import {WorkspaceInvoiceAdjustments} from '../../../components/workspace-invoice-adjustments'
 import {WorkspaceEnterpriseOrders} from '../../../components/workspace-enterprise-orders'
 import {formatBillingAmount, isBillingCurrency} from '../../../lib/billing'
+import {useWorkspaceBillingAccess} from '../../../components/workspace-billing-access'
+import {workspaceBillingSsoMessage} from '../../../lib/workspace-billing-access'
 
 type Scope = {id: string; name: string; manages: boolean; delegated: boolean}
 type Member = {id: string; name: string; handle: string; granted: boolean; eligible: boolean}
@@ -36,6 +38,8 @@ export default function WorkspaceBilling() {
   const [busy, setBusy] = useState(false)
   const {authorize, confirmation} = useSensitiveAction()
   const selected = scopes?.find(scope => scope.id === workspace)
+  const usesStandardBilling=Boolean(selected?.manages||selected?.delegated)
+  const billingAccess=useWorkspaceBillingAccess(usesStandardBilling?selected?.id:undefined)
 
   useEffect(() => {
     if (!db) {setScopes([]); return}
@@ -56,7 +60,7 @@ export default function WorkspaceBilling() {
   }, [])
 
   useEffect(() => {
-    if (!selected?.delegated || !db) return
+    if (!selected?.delegated || billingAccess!=='allowed' || !db) return
     const controller = new AbortController()
     const supabase = db
     void supabase.rpc('st_v7_billing_admin_view', {p_workspace: selected.id})
@@ -77,10 +81,10 @@ export default function WorkspaceBilling() {
       if (!controller.signal.aborted) setProvider({workspace: selected.id, data: {provider: 'unavailable'}})
     })
     return () => controller.abort()
-  }, [selected])
+  }, [billingAccess, selected])
 
   async function manage(enabled?: boolean) {
-    if (!selected?.manages || !db) return
+    if (!selected?.manages || billingAccess!=='allowed' || !db) return
     const id = selected.id
     const target = selectedMember
     const supabase = db
@@ -100,7 +104,7 @@ export default function WorkspaceBilling() {
     })
   }
 
-  const current = summary?.workspace === workspace ? summary.data : null
+  const current = billingAccess==='allowed' && summary?.workspace === workspace ? summary.data : null
   const billingProvider = provider?.workspace === workspace ? provider.data : null
   const members = access?.workspace === workspace ? access.members : null
   const member = members?.find(row => row.id === selectedMember)
@@ -121,10 +125,13 @@ export default function WorkspaceBilling() {
         {scopes?.map(scope => <option key={scope.id} value={scope.id}>{scope.name}</option>)}
       </select>
     </>}
-    {selected&&(selected.manages||selected.delegated)&&<WorkspaceSeats key={selected.id} workspace={selected.id}/>}
+    {usesStandardBilling&&billingAccess===undefined&&<p role="status">Checking workspace billing access…</p>}
+    {usesStandardBilling&&billingAccess==='required'&&<p role="status">{workspaceBillingSsoMessage}</p>}
+    {usesStandardBilling&&billingAccess==='unavailable'&&<p role="alert">Billing access is unavailable for this workspace.</p>}
+    {selected&&usesStandardBilling&&billingAccess==='allowed'&&<WorkspaceSeats key={selected.id} workspace={selected.id}/>}
     {selected&&<WorkspaceEnterpriseOrders key={'enterprise-'+selected.id} workspace={selected.id} name={selected.name}/>}
-    {selected?.delegated&&<WorkspaceInvoiceAdjustments key={'adjustments-'+selected.id} workspace={selected.id}/>}
-    {selected?.manages && <section aria-label="Billing administrator access" className="panel release-panel">
+    {selected?.delegated&&billingAccess==='allowed'&&<WorkspaceInvoiceAdjustments key={'adjustments-'+selected.id} workspace={selected.id}/>}
+    {selected?.manages && billingAccess==='allowed' && <section aria-label="Billing administrator access" className="panel release-panel">
       <h2>Billing administrator access</h2>
       <p>A billing administrator can see this workspace’s plan, seats and usage, and a summary of invoices from your linked subscription.</p>
       {!members && <button type="button" disabled={busy} onClick={() => void manage()}>Manage billing access</button>}
@@ -139,7 +146,7 @@ export default function WorkspaceBilling() {
       </>}
       {confirmation}
     </section>}
-    {selected?.delegated && !current && !error && <p role="status">Loading billing details…</p>}
+    {selected?.delegated && billingAccess==='allowed' && !current && !error && <p role="status">Loading billing details…</p>}
     {current && <section aria-label="Plan, seats and usage" className="panel release-panel">
       <h2>Plan, seats and usage</h2>
       <dl>

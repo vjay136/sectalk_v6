@@ -3,6 +3,7 @@ import {isBillingCurrency} from './billing'
 import {readBoundedText} from './request-body'
 import {billingIdentity,billingWriter,stripe,stripeLiveMode} from './stripe-server'
 import {stripeBillingUuid} from './stripe-reconciliation'
+import {workspaceBillingAccess} from './workspace-billing-access'
 import {finalizedInvoice,invoiceId,stripeReference} from './stripe-invoice-documents'
 
 type Identity=NonNullable<Awaited<ReturnType<typeof billingIdentity>>>
@@ -124,6 +125,7 @@ export async function invoiceAdjustmentAction(request:Request,identity:Identity)
       const current=await ledger('scope')
       if (!current || current.customer!==binding.customer || current.subscription!==binding.subscription)
         return fail('Workspace billing access changed.',403)
+      if (await workspaceBillingAccess(identity.client,workspace)!=='allowed') return fail('Workspace billing access changed.',403)
       return reply({invoices:invoices.data.map(invoice=>eligibleInvoice(invoice,binding)).filter(invoice=>invoice&&invoice.limit>0),
         history:current.history.map(publicHistory)})
     }
@@ -136,6 +138,7 @@ export async function invoiceAdjustmentAction(request:Request,identity:Identity)
       const terms:Terms={invoice,kind,reason,amount,currency}
       const document=binding.subscription?await providerQuote(terms,binding):null
       if (!document) return fail('The invoice is unavailable or the amount exceeds its remaining balance.',409)
+      if (await workspaceBillingAccess(identity.client,workspace)!=='allowed') return fail('Workspace billing access changed.',403)
       const quote=await ledger('quote',null,{...terms,subscription:binding.subscription})
       return quote?reply({id:quote.id,number:document.number,kind,reason,amount,currency}):fail('The invoice scope changed.',409)
     }
@@ -143,6 +146,7 @@ export async function invoiceAdjustmentAction(request:Request,identity:Identity)
     if (typeof id!=='string'||!stripeBillingUuid.test(id)) return fail('Review the adjustment first.',400)
     const job=await ledger('inspect',id)
     if (!job) return fail('The adjustment preview is unavailable.',409)
+    if (await workspaceBillingAccess(identity.client,workspace)!=='allowed') return fail('Workspace billing access changed.',403)
     const claim=await ledger('claim',id)
     if (!claim) return fail('The preview expired or an adjustment is processing.',409)
     if (claim.state) return reply({state:claim.state})

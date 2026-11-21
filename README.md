@@ -65,7 +65,7 @@ The staff member can open **Safety center → Staff console** and enroll a TOTP 
 
 ## Deploy on Vercel
 
-Import `vjay136/sectalk_ver2`, select **Next.js**, and set the project's Root Directory to `apps/web`. Keep access to files outside the Root Directory enabled so Vercel can read the npm workspace and lockfile. Set the two public variables from [the template](apps/web/.env.example) before building. Use a separate Supabase project for preview environments holding test data.
+After the scoped [v6 verification](docs/DEPLOYMENT_REPORT.md) and isolated backend setup, import [`vjay136/sectalk_v6`](https://github.com/vjay136/sectalk_v6) into a new project in `silent-soldier-vjay`. Use **Next.js**, set the web project's Root Directory to `apps/web`, and keep access to files outside the Root Directory enabled for the shared npm workspace and lockfile. Use the v6 Supabase project and the [web environment template](apps/web/.env.example). The Admin and Workers use separate Vercel projects.
 
 Calls use Supabase for signaling and WebRTC for media. With no TURN configured, browsers attempt direct connections using STUN. Direct connections can disclose network information to the other participant and can fail across restrictive networks. Configure a Coturn deployment with a shared secret and quotas before a public release. Set `TURN_URLS` with the relay endpoints and `TURN_SHARED_SECRET` as a server-only secret. The ICE API issues short-lived credentials to authenticated users and enables relay-only mode when TURN is configured. Validate UDP and TLS relay paths on separate networks.
 

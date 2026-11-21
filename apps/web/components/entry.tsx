@@ -300,7 +300,7 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
     </section>
     <footer className="site-footer"><Brand />
       <nav aria-label="Public information">
-        <a href="/about">Overview</a><a href="/pricing">Pricing</a><a href="/docs">Docs</a><a href="/legal/privacy">Privacy</a>
+        <a href="/about">Overview</a><a href="/pricing">Pricing</a><a href="/docs">Docs</a><a href="/legal">Legal</a><a href="/legal/privacy">Privacy</a>
         <a href="/status">{t('serviceStatus')}</a><a href="/security">{t('securityDisclosures')}</a><a href="#account">{t('accountAccess')} <Send size={14}/></a>
       </nav>
     </footer>

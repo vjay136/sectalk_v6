@@ -38,9 +38,26 @@ export function parseSecurityDisclosure({ origin, contact, expires }: Disclosure
 }
 
 export function getSecurityDisclosure() {
+  const origin=process.env.SECTALK_APP_URL
+  const override=process.env.SECTALK_SECURITY_CONTACT
+  const intake=vulnerabilityIntakeContact()
+  const site=origin?webUrl(origin):null
+  if (site&&override&&webUrl(override)?.href===new URL('/security/report',site).href&&!intake) return null
   return parseSecurityDisclosure({
-    origin: process.env.SECTALK_APP_URL,
-    contact: process.env.SECTALK_SECURITY_CONTACT,
+    origin,
+    contact: override ?? intake ?? undefined,
     expires: process.env.SECTALK_SECURITY_CONTACT_EXPIRES,
   })
+}
+
+export function vulnerabilityIntakeContact() {
+  const origin=process.env.SECTALK_APP_URL
+  const key=process.env.SECTALK_DISCLOSURE_ENCRYPTION_KEY
+  if (!origin||!process.env.NEXT_PUBLIC_SUPABASE_URL||!process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY||
+    !process.env.SECTALK_DISCLOSURE_SERVICE_KEY||!key||!/^[-_A-Za-z0-9]{43}$/.test(key)||
+    Buffer.from(key,'base64url').toString('base64url')!==key) return null
+  const site=webUrl(origin)
+  if (!site) return null
+  return parseSecurityDisclosure({origin,contact:new URL('/security/report',site).href,
+    expires:process.env.SECTALK_SECURITY_CONTACT_EXPIRES})?.contact??null
 }

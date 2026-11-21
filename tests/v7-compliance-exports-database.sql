@@ -121,13 +121,19 @@ begin
   wrong_artifact:=public.st_v6_begin_export_object(admin_id,'compliance',case_identifier,null,'fake-compliance.json',
     'application/json',(material->>'bytes')::integer,repeat('f',64));
   insert into storage.objects(bucket_id,name) values('sectalk-exports',wrong_artifact::text);
-  perform public.st_v6_finish_export_object(wrong_artifact);
-  if public.st_v7_finish_compliance_operation(ticket_id,wrong_artifact) then
+  if public.st_v6_finish_export_object(wrong_artifact)
+    or public.st_v7_export_key_context(ticket_id,wrong_artifact,'write') is not null
+    or public.st_v7_finish_compliance_operation(ticket_id,wrong_artifact) then
     raise exception 'An artifact with different bytes was attached';
   end if;
   artifact_id:=public.st_v6_begin_export_object(admin_id,'compliance',case_identifier,null,'proof-compliance.json',
     'application/json',(material->>'bytes')::integer,material->>'sha256');
   insert into storage.objects(bucket_id,name) values('sectalk-exports',artifact_id::text);
+  if public.st_v6_finish_export_object(artifact_id)
+    or not public.st_v7_provision_export_key(ticket_id,artifact_id,repeat('a',80))
+    or not public.st_v7_bind_export_envelope(ticket_id,artifact_id,1,repeat('b',80),repeat('c',16),repeat('d',22)) then
+    raise exception 'Managed artifact was not bound to its exact key context';
+  end if;
   if not public.st_v6_finish_export_object(artifact_id) or not public.st_v7_finish_compliance_operation(ticket_id,artifact_id) then
     raise exception 'Matched artifact could not be attached';
   end if;

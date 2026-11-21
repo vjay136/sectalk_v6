@@ -18,8 +18,9 @@ function Media({ stream, muted, label }: { stream: MediaStream; muted?: boolean;
   </div>
 }
 
-export function CallPanel({ state, self, name, openChat, reportContact }: {
-  state: ReturnType<typeof useCalling>; self:string; name:string; openChat:(chat:string)=>void; reportContact:(chat:string)=>void
+export function CallPanel({ state, self, name, openChat, reportContact, enableSounds }: {
+  state: ReturnType<typeof useCalling>; self:string; name:string; openChat:(chat:string)=>void; reportContact:(chat:string)=>void;
+  enableSounds?:()=>void
 }) {
   const [muted, setMuted] = useState(false)
   const [camera, setCamera] = useState(true)
@@ -36,7 +37,7 @@ export function CallPanel({ state, self, name, openChat, reportContact }: {
     : connection === 'connected' ? 'Connected' : connection === 'disconnected' || connection === 'failed' ? 'Reconnecting…' : 'Connecting…'
   return <section className="call-panel" aria-label={secure ? 'Protected '+mode.toLowerCase()+' call' : mode+' call'}>
     <div className="card-icon">{call.video ? <Video size={22} /> : <Phone size={21} />}</div>
-    <div className="call-title"><h2>{name}</h2><p role="status">{mode} · {status}</p></div>
+    <div className="call-title"><h2>{name}</h2><p role={incoming ? undefined : 'status'}>{mode} · {status}</p></div>
     {secure && protection && <div>
       <p>Verification code <output aria-label="Call verification code">{protection.code}</output></p>
       {!protection.verified && <>
@@ -47,6 +48,7 @@ export function CallPanel({ state, self, name, openChat, reportContact }: {
     {remote && <Media stream={remote} label="Remote participant" />}
     {local && call.video && <div className="self-media"><Media stream={screen || local} label={screen ? 'Your shared screen' : 'Your camera preview'} muted /></div>}
     <div className="action-row">
+      {enableSounds && <button type="button" className="secondary" onClick={enableSounds}>Enable call sounds</button>}
       <details className="call-menu">
         <summary className="secondary" aria-label="Call menu"><MoreHorizontal size={18}/> Call menu</summary>
         <div className="message-menu-panel">

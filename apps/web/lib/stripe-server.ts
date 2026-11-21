@@ -17,8 +17,9 @@ function localStripeOptions() {
     || target.hostname !== '127.0.0.1' || !target.port) return {}
   return {host: target.hostname, port: Number(target.port), protocol: 'http' as const}
 }
-export const stripe = stripeKey && webhookSecret && dbUrl && dbSecret && origin
+export const stripeReconciliationClient = stripeKey && dbUrl && dbSecret && origin
   ? new Stripe(stripeKey, {timeout: 10000, maxNetworkRetries: 1, ...localStripeOptions()}) : null
+export const stripe = webhookSecret ? stripeReconciliationClient : null
 export const billingWriter = dbUrl && dbSecret ? createClient(dbUrl, dbSecret, options) : null
 const catalogReader = dbUrl && publishable ? createClient(dbUrl, publishable, options) : null
 const stripePrices = {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
 import {useSensitiveAction} from './sensitive-action'
 
@@ -8,6 +8,7 @@ export type AuditWorkspace={id:string;name:string}
 type AuditResult={source:'workspace'|'room';id:number;event:string;actor:string;target:string|null;room_name:string|null;at:string}
 type Integrity={state:'empty'|'matched'|'unavailable';last_local_checkpoint:string|null;can_export:boolean}
 type Filters={workspace:string;query:string;source:string|null;from:string|null;before:string|null}
+const workspaceSignIn = 'Sign in through your workspace provider to access audit logs.'
 
 function auditDate(value:FormDataEntryValue|null,exclusiveEnd=false){
   if(!value)return null
@@ -24,9 +25,20 @@ export function AuditSearch({workspaces}:{workspaces:AuditWorkspace[]}){
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
 
-  function clearResults(){
+  const clearResults=useCallback(()=>{
     setRows(null);setIntegrity(null);setFilters(null);setError('')
-  }
+  },[])
+
+  const visibleWorkspace=filters?.workspace
+  useEffect(()=>{
+    if(!visibleWorkspace)return
+    let current=true
+    const timer=window.setInterval(async()=>{
+      const status=await db!.rpc('st_v8_workspace_audit_requires_sso',{p_workspace:visibleWorkspace})
+      if(current&&status.data===true){clearResults();setError(workspaceSignIn)}
+    },10000)
+    return()=>{current=false;window.clearInterval(timer)}
+  },[clearResults,visibleWorkspace])
 
   async function submit(event:FormEvent<HTMLFormElement>){
     event.preventDefault()
@@ -42,13 +54,17 @@ export function AuditSearch({workspaces}:{workspaces:AuditWorkspace[]}){
       const {data,error}=await db!.rpc('st_v6_audit_search',{
         p_workspace:scope.workspace,p_query:scope.query,p_source:scope.source,p_from:from,p_before:before,
       })
+      if(error?.code==='42501'){
+        const status=await db!.rpc('st_v8_workspace_audit_requires_sso',{p_workspace:scope.workspace})
+        if(status.data===true){setError(workspaceSignIn);return}
+      }
       if(error)throw error
       const matches=data as AuditResult[]
-      setRows(matches)
       const status=await db!.rpc('st_v6_audit_integrity_status',{
         p_workspace:scope.workspace,p_rows:matches.map(({id,source})=>({id,source})),
       })
       if(status.error){setError('Could not verify the selected audit entries.');return}
+      setRows(matches)
       setIntegrity(status.data as Integrity)
       setFilters(scope)
     } catch {setError('Could not search audit logs for this workspace.')}

@@ -3,9 +3,9 @@ name: SecTalk v6 accessibility
 on:
   workflow_dispatch:
   push:
-    branches: [codex/release-v6.0.0]
+    branches: [main, codex/release-v6.0.0]
   pull_request:
-    branches: [codex/release-v6.0.0]
+    branches: [main, codex/release-v6.0.0]
 
 permissions:
   contents: read

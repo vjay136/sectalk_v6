@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Fingerprint } from 'lucide-react'
 import { db } from '../lib/data'
-import { contactSafetyNumber, type ManifestEntry } from '../lib/contact-key-verification'
+import { contactKeyStorage, contactSafetyNumber, type ManifestEntry } from '../lib/contact-key-verification'
 import { Dialog } from './inbox'
 
 type SafetyNumber = NonNullable<Awaited<ReturnType<typeof contactSafetyNumber>>>
@@ -15,7 +15,7 @@ async function currentNumber(owner: string, peer: string) {
 }
 
 export function ContactKeyVerification({ owner, peer, name, hints }: { owner: string; peer: string; name: string; hints: EventTarget }) {
-  const storageKey = 'sectalk:verified-contact-keys:v1:' + owner + ':' + peer
+  const storageKey = contactKeyStorage(owner,peer)
   const [comparison, setComparison] = useState(false)
   const [number, setNumber] = useState<SafetyNumber | null>(null)
   const [pending, setPending] = useState(true)

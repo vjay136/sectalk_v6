@@ -1,0 +1,9 @@
+.operator-shell { min-height: 100dvh; max-width: 1120px; padding: clamp(1rem, 5vw, 4rem); margin-inline: auto; }
+.operator-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
+.operator-header h1 { margin: 0.2rem 0 0; }
+.operator-brand { margin: 0; color: #95c9ef; }
+.operator-card { max-width: 35rem; display: grid; gap: 1rem; }
+.operator-card h2, .operator-card p { margin: 0; }
+.operator-card form { display: grid; gap: 1rem; }
+.operator-card form label { display: grid; gap: 0.4rem; }
+.operator-card form button { justify-self: start; }

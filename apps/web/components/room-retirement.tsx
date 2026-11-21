@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
+import { organizationSsoMessage, useWorkspaceOrganizationAccess } from './workspace-organization-access'
 
 type Retirement = {
   retention_days: number
@@ -67,7 +68,9 @@ export function RoomRetentionPolicy({ workspace, onSaved }: { workspace: string;
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const organizationAccess=useWorkspaceOrganizationAccess(workspace)
   useEffect(() => {
+    if(organizationAccess!=='allowed')return
     let live = true
     void db!.rpc('st_v6_room_retention_policy', { p_workspace: workspace }).then(result => {
       if (!live) return
@@ -75,10 +78,11 @@ export function RoomRetentionPolicy({ workspace, onSaved }: { workspace: string;
       else setDays(String(result.data))
     })
     return () => { live = false }
-  }, [workspace])
+  }, [organizationAccess, workspace])
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if(organizationAccess!=='allowed')return
     setBusy(true)
     setError('')
     setMessage('')
@@ -97,9 +101,11 @@ export function RoomRetentionPolicy({ workspace, onSaved }: { workspace: string;
 
   return <section className="release-section" aria-labelledby="room-retention-heading">
     <h2 id="room-retention-heading">Room retention</h2>
+    {organizationAccess==='required'&&<p role="status">{organizationSsoMessage}</p>}
+    {organizationAccess==='unavailable'&&<p role="alert">Could not check room retention access.</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {message && <p role="status">{message}</p>}
-    {days !== null && <form className="release-form" onSubmit={event => void save(event)}>
+    {organizationAccess==='allowed'&&days !== null && <form className="release-form" onSubmit={event => void save(event)}>
       <label>Minimum days before scheduled room deletion<input type="number" min="7" max="3650" required value={days}
         onChange={event => setDays(event.target.value)} /></label>
       <p>This applies to scheduled deletions across the workspace. Preservation holds take priority.</p>

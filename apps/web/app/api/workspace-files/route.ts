@@ -4,8 +4,8 @@ import { readAttachmentUpload, readUploadFilename } from '../../../lib/attachmen
 import { allowedFileType, attachmentDocumentFormat, officeFormatPattern } from '../../../lib/file-type-policy'
 import { attachmentInspectionLabel, inspectAttachment } from '../../../lib/attachment-inspection'
 import { scanAttachment } from '../../../lib/attachment-scan-server'
-import { checkFileEgress } from '../../../lib/file-egress'
-import { digestWorkspaceBytes, workspaceFileBucket, workspaceFileFingerprint, workspaceFileMaximum, workspaceFilePath } from '../../../lib/workspace-file-storage'
+import { checkFileEgress, scopedFileSession } from '../../../lib/file-egress'
+import { digestWorkspaceBytes, workspaceFileBucket, workspaceFileFingerprint, workspaceFileMaximum, workspaceFilePath, workspaceFileReadOnlyMessage } from '../../../lib/workspace-file-storage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 40
@@ -16,19 +16,33 @@ async function handle(request: Request) {
   const workspace = query.get('workspace')?.toLowerCase()
   const file = query.get('file')?.toLowerCase()
   const action = query.get('action')
+  const exportId = query.get('offboarding')?.toLowerCase()
+  const storagePlan = query.get('offboarding-storage-plan')?.toLowerCase()
+  const importId = query.get('residency-import')?.toLowerCase()
+  const verificationId = query.get('residency-verify')?.toLowerCase()
+  const rollbackReview = query.get('residency-rollback')?.toLowerCase()
   const filename = readUploadFilename(request)
   const mime = request.headers.get('content-type') || ''
   if (!validFileId(workspace) || (file !== undefined && !validFileId(file))) return fileFailure(400, 'Choose a valid workspace file.')
+  if (exportId !== undefined && (!validFileId(exportId) || !file || request.method !== 'GET')) return forbidden()
+  if (storagePlan !== undefined && (!validFileId(storagePlan) || !exportId || action !== null || request.method !== 'GET')) return forbidden()
+  if (importId !== undefined && (!validFileId(importId) || !file || action !== null || request.method !== 'POST')) return forbidden()
+  if (verificationId !== undefined && (!validFileId(verificationId) || !file || action !== null || exportId || request.method !== 'GET')) return forbidden()
+  if (rollbackReview !== undefined && (!validFileId(rollbackReview) || !file || action !== null ||
+    exportId || storagePlan || importId || verificationId || request.method !== 'GET')) return forbidden()
   const auth = await authenticateFileRequest(request,{type:'workspace',id:workspace})
   if (auth instanceof Response) return auth
-  const command = (action: string, size: number | null = null, hash: string | null = null) =>
-    auth.storage.rpc('st_v6_workspace_file_command', {
-      p_workspace: workspace, p_actor: auth.actor, p_action: action, p_id: file ?? null,
-      p_filename: filename ?? null, p_bytes: size, p_hash: hash,
-    })
-  const record = (event: 'view' | 'download' | 'share') => auth.storage.rpc('st_v6_record_workspace_file_access', {
-    p_workspace: workspace, p_file: file, p_actor: auth.actor, p_event: event,
-  })
+  // The three specialized flows must each prove their own exact approval below.
+  const separateWorkflow = Boolean(exportId || importId || verificationId)
+  const session = await scopedFileSession(auth.client, 'workspace', workspace, separateWorkflow)
+  if (session instanceof Response) return session
+  const command = (action: string, size: number | null = null, hash: string | null = null) => {
+    const params = {
+      p_scope_type:'workspace', p_scope:workspace, p_actor:auth.actor, p_session:session,
+      p_action:action, p_id:file ?? null, p_name:filename ?? null, p_bytes:size, p_hash:hash,
+    }
+    return separateWorkflow ? auth.storage.rpc('st_v8_scoped_file_command', params) : auth.storage.rpc('st_v8_app_file_command', params)
+  }
   const bucket = auth.storage.storage.from(workspaceFileBucket)
   if (request.method === 'GET' && !file) {
     const result = await command('list')
@@ -43,7 +57,7 @@ async function handle(request: Request) {
       const denied = await checkFileEgress(auth.client, 'workspace', workspace, file, 'share')
       if (denied) return denied
     }
-    const result = await record(action)
+    const result = await command(action)
     if (result.error) return fileFailure(503, 'Workspace file access could not be recorded.')
     if (!result.data) return forbidden()
     return Response.json(action === 'share' ? { path: '/workspace-file/' + object } : result.data, { headers: fileHeaders })
@@ -54,27 +68,66 @@ async function handle(request: Request) {
     return result.data ? new Response(null, { status: 204, headers: fileHeaders }) : forbidden()
   }
   if (request.method === 'GET') {
+    const exportAccess = (hash?:string) => auth.client.rpc('st_v8_offboarding_file_access',{
+      p_workspace:workspace,p_export:exportId,p_file:file,...(hash?{p_hash:hash}:{}),
+    })
+    const pinned = exportId ? await exportAccess() : null
+    if (exportId && (!pinned?.data || pinned.error)) return forbidden()
     const denied = await checkFileEgress(auth.client, 'workspace', workspace, file, 'download')
     if (denied) return denied
+    const rollbackArgs = {p_workspace:workspace, p_review:rollbackReview, p_file:file}
+    const rollbackSnapshot = rollbackReview ? await auth.client.rpc('st_v8_residency_rollback_file_copy',rollbackArgs) : null
+    if (rollbackReview && (rollbackSnapshot?.error || !rollbackSnapshot?.data)) return forbidden()
+    const proof = storagePlan ? await auth.client.rpc('st_v8_begin_offboarding_storage_copy',{
+      p_workspace:workspace, p_plan:storagePlan, p_export:exportId, p_file:file,
+    }) : null
+    if (storagePlan && (proof?.error || !validFileId(proof?.data))) return forbidden()
     const metadata = await command('get')
     if (metadata.error) return fileFailure(503, 'Workspace files are unavailable.')
     if (!metadata.data) return forbidden()
+    const verification = {p_kind:'workspace',p_scope:workspace,p_approval:verificationId,p_file:file}
+    const snapshot = verificationId ? await auth.client.rpc('st_v8_residency_file_verification_snapshot',verification) : null
+    if (verificationId && (snapshot?.error || !snapshot?.data)) return forbidden()
     const downloaded = await bucket.download(object)
     if (downloaded.error || !downloaded.data || downloaded.data.size !== metadata.data.size_bytes ||
       downloaded.data.size > workspaceFileMaximum) return forbidden()
     const bytes = Buffer.from(await downloaded.data.arrayBuffer())
+    const hash = digestWorkspaceBytes(bytes)
     const current = await command('get')
     if (current.error || !current.data || current.data.size_bytes !== bytes.length ||
-      (current.data.fingerprint && current.data.fingerprint !== workspaceFileFingerprint(workspace, digestWorkspaceBytes(bytes)))) {
+      (current.data.fingerprint && current.data.fingerprint !== workspaceFileFingerprint(workspace, hash)) ||
+      (pinned && (pinned.data.bytes!==bytes.length || pinned.data.fingerprint!==workspaceFileFingerprint(workspace,hash)))) {
       return forbidden()
     }
     const changed = await checkFileEgress(auth.client, 'workspace', workspace, file, 'download')
     if (changed) return changed
-    const logged = await record('download')
+    if (exportId) {
+      const allowed=await exportAccess(hash)
+      if(allowed.error||!allowed.data||allowed.data.fingerprint!==pinned?.data.fingerprint||
+        allowed.data.publishedAt!==pinned?.data.publishedAt) return forbidden()
+    }
+    const rollback = rollbackSnapshot?.data ? await auth.client.rpc('st_v8_residency_rollback_file_copy',{
+      ...rollbackArgs, p_sha256:hash,
+    }) : null
+    if (rollbackSnapshot?.data && (rollback?.error || !rollback?.data?.proof ||
+      rollback.data.stamp !== rollbackSnapshot.data.stamp || rollback.data.bytes !== bytes.length)) return forbidden()
+    const logged = await command('download')
     if (logged.error) return fileFailure(503, 'Workspace file access could not be recorded.')
     if (!logged.data) return forbidden()
+    const receipt = proof ? await auth.storage.rpc('st_v8_finish_offboarding_storage_copy',{
+      p_ticket:proof.data, p_sha256:hash, p_bytes:bytes.length,
+    }) : null
+    if (proof && (receipt?.error || !validFileId(receipt?.data))) return forbidden()
+    if(snapshot?.data){
+      const result=await auth.storage.rpc('st_v8_record_residency_file_verification',{
+        ...verification,p_actor:auth.actor,p_session:session,p_snapshot:snapshot.data,p_sha256:hash,p_bytes:bytes.length,
+      })
+      return result.error||!result.data?forbidden():Response.json({verified:true},{headers:fileHeaders})
+    }
     return new Response(Uint8Array.from(bytes), { headers: { ...fileHeaders, 'Content-Type': 'application/octet-stream',
-      'Content-Disposition': 'attachment' } })
+      'Content-Disposition': 'attachment', ...(exportId?{'X-SecTalk-File-SHA256':hash}:{}),
+      ...(rollback?.data?.proof?{'X-SecTalk-Rollback-File-Proof':Buffer.from(JSON.stringify(rollback.data.proof)).toString('base64url')}:{}),
+      ...(receipt?{'X-SecTalk-Storage-Copy-Receipt':receipt.data}:{}) } })
   }
   if (!filename || [...filename].length > 140 || /[\/\\\p{Cc}]/u.test(filename) || mime.length > 100) {
     return fileFailure(400, 'Choose a supported workspace file.')
@@ -85,12 +138,20 @@ async function handle(request: Request) {
   if (!access.data) return forbidden()
   const payment = await auth.client.rpc('st_v7_workspace_payment_state', {p_workspace:workspace})
   if (payment.error) return fileFailure(payment.error.code === '42501' ? 403 : 503, 'Workspace upload status is unavailable.')
-  if (payment.data?.mode === 'read_only') return fileFailure(423, 'This workspace is read-only until payment is restored.')
+  if (payment.data?.mode === 'read_only') return fileFailure(423,workspaceFileReadOnlyMessage(payment.data.reason))
   const bytes = await readAttachmentUpload(request, workspaceFileMaximum).catch(() => null)
   if (bytes === undefined) return fileFailure(413, 'Choose a file up to 4 MiB.')
   if (!bytes?.length) return fileFailure(400, 'Choose a file that contains data.')
   if (!allowedFileType(filename, mime, bytes)) return fileFailure(415, 'The file contents do not match a supported attachment type.')
   const hash = digestWorkspaceBytes(bytes)
+  const importApproved = async () => {
+    if (!importId) return true
+    const result = await auth.client.rpc('st_v8_residency_file_import_access', {
+      p_workspace:workspace, p_approval:importId, p_file:file, p_filename:filename, p_bytes:bytes.length, p_hash:hash,
+    })
+    return result.data === true && !result.error
+  }
+  if (!await importApproved()) return forbidden()
   const blocked = await auth.storage.rpc('st_v7_upload_digest_blocked', { p_hash: hash })
   if (blocked.error) return fileFailure(503, 'The platform file policy could not be checked.')
   if (blocked.data === true) return fileFailure(422, 'The workspace file was blocked by platform policy.')
@@ -126,6 +187,7 @@ async function handle(request: Request) {
     digestWorkspaceBytes(Buffer.from(await stored.data.arrayBuffer())) !== hash) {
     return fileFailure(409, 'The workspace file in Storage could not be verified.')
   }
+  if (!await importApproved()) return forbidden()
   const publication = await command('publish', bytes.length, hash)
   if (publication.error?.code === 'PT423') return fileFailure(423, 'This workspace is read-only until payment is restored.')
   if (publication.error?.code === 'PT422') return fileFailure(422, 'The workspace file was blocked by security scanning.')

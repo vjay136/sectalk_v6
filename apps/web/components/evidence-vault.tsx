@@ -10,7 +10,7 @@ type Snapshot = {
   id: string; case_reference: string | null; report_id: string; hold_id: string; sha256: string
   captured_at: string; held: boolean; can_download: boolean; custody: Custody[]
 }
-type Data = { access: 'none' | 'mfa' } | { access: 'owner' | 'admin'; options: Option[]; snapshots: Snapshot[] }
+type Data = { access: 'none' | 'mfa' | 'sso' } | { access: 'owner' | 'admin'; options: Option[]; snapshots: Snapshot[] }
 const labels: Record<string,string> = { captured: 'Preserved', downloaded: 'Downloaded',
   hold_released: 'Hold released', hold_removed: 'Hold removed' }
 const optionKey = (option: Option) => [option.case_id,option.report_id,option.hold_id].join(':')
@@ -83,6 +83,7 @@ function Vault({ workspace }: { workspace: string }) {
     <p>Preserve an exact room report approved in a compliance case and covered by an active legal hold. The case and continuing report consent govern downloads.</p>
     {!data && !error && <p role="status">Loading evidence vault…</p>}
     {data?.access === 'none' && <p>Evidence vault access is unavailable.</p>}
+    {data?.access === 'sso' && <p>Sign in with workspace single sign-on to access evidence custody.</p>}
     {data?.access === 'mfa' && <StaffMfa refresh={refresh} explanation="Enter a current authenticator code to review evidence custody or preserve a report."/>}
     {data?.access === 'admin' && (data.options.length ? <form className="release-form" onSubmit={capture}>
       <label>Approved report and matching hold<select name="selection" aria-label="Approved report and matching hold" defaultValue="" required>

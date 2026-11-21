@@ -2,6 +2,7 @@ import type Stripe from 'stripe'
 import {readBoundedText} from './request-body'
 import {billingIdentity,billingWriter,stripe,stripeLiveMode} from './stripe-server'
 import {stripeBillingUuid} from './stripe-reconciliation'
+import {workspaceBillingAccess} from './workspace-billing-access'
 
 type Identity=NonNullable<Awaited<ReturnType<typeof billingIdentity>>>
 type Status={linked:boolean;owner:string;base:string;customer:string;currency:string;cadence:string;
@@ -40,9 +41,9 @@ export async function renewWorkspaceSeats(subscription:Stripe.Subscription,paidI
   return !error
 }
 
-export async function closeWorkspaceSeatSubscriptions() {
-  if (!stripe||!billingWriter) return
-  const provider=stripe,store=billingWriter
+export async function closeWorkspaceSeatSubscriptions(provider:Stripe) {
+  if (!billingWriter) return
+  const store=billingWriter
   const jobs=await store.rpc('st_v8_workspace_seat_closures')
   if (jobs.error) return
   await Promise.allSettled((jobs.data as {workspace:string;customer:string;subscription:string;lease:string}[]).map(async job=>{
@@ -89,9 +90,12 @@ export async function workspaceSeatAction(request:Request,identity:Identity) {
       || price.recurring.usage_type!=='licensed' || price.unit_amount===null || price.unit_amount<=0)
       return fail('Stripe returned different terms for the seat offer.',409)
     const trueUp=Math.min(state.cap,state.occupied+state.awaiting)
-    if (input.stage==='status') return reply({configured:true,quantity:state.quantity,occupied:state.occupied,cap:state.cap,
-      awaiting:state.awaiting,trueUp,amount:price.unit_amount,currency:state.currency,cadence:state.cadence,
-      until:state.until,pending:state.pending,intent:state.intent})
+    if (input.stage==='status') {
+      if (await workspaceBillingAccess(identity.client,workspace)!=='allowed') return fail('Workspace billing access changed.',403)
+      return reply({configured:true,quantity:state.quantity,occupied:state.occupied,cap:state.cap,
+        awaiting:state.awaiting,trueUp,amount:price.unit_amount,currency:state.currency,cadence:state.cadence,
+        until:state.until,pending:state.pending,intent:state.intent})
+    }
     const quantity=input.quantity, intent=input.intent
     if (!Number.isInteger(quantity) || quantity<Math.max(1,state.occupied) || quantity>state.cap ||
       !['manual','true_up'].includes(intent) || (!state.pending&&intent==='true_up'&&(state.awaiting<1||quantity!==trueUp)) ||
@@ -107,6 +111,7 @@ export async function workspaceSeatAction(request:Request,identity:Identity) {
     if (existing && (!current || current.workspace!==workspace || current.customer!==state.customer ||
       current.price!==priceId || !current.active || (!state.pending&&current.quantity!==state.quantity)))
       return fail('The linked seat subscription needs reconciliation before changing quantity.',409)
+    if (await workspaceBillingAccess(identity.client,workspace)!=='allowed') return fail('Workspace billing access changed.',403)
     const claim=await ledger('claim',{quantity,intent,price:priceId})
     if (!claim) return fail('A seat change is processing or capacity changed. Refresh to review.',409)
     const idempotencyKey='sectalk-workspace-seats-'+claim.id

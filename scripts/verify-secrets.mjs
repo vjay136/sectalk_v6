@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseEnv } from 'node:util'
 
-const browserVariables = new Set(['NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'])
+const browserVariables = new Set(['NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY','NEXT_PUBLIC_SECTALK_PASSKEYS_ENABLED'])
 const credentialPatterns = [
   ['Supabase secret key', /\bsb_(?:secret_[a-z0-9_-]{16,}|access_[a-z0-9_-]{20,})\b/i],
   ['Supabase access token', /\bsbp_[a-f0-9]{30,}\b/i],
@@ -14,7 +14,7 @@ const credentialPatterns = [
   ['Private key material', /-----BEGIN (?:ENCRYPTED |RSA |EC |OPENSSH )?PRIVATE KEY-----/],
   ['Database URL with password', /\bpostgres(?:ql)?:\/\/[^\s:@/]+:[^\s@/]{8,}@[^\s/]+/i],
 ]
-const sensitiveEnvironment = /(?:SECRET|TOKEN|PASSWORD|PRIVATE_KEY|SERVICE_ROLE|DATABASE_URL|STORAGE_KEY|SERVER_KEY|API_KEY|WEBHOOK_KEY)/
+const sensitiveEnvironment = /(?:SECRET|TOKEN|PASSWORD|PRIVATE_KEY|SERVICE_ROLE|DATABASE_URL|STORAGE_KEY|SERVER_KEY|API_KEY|WEBHOOK_KEY|ENCRYPTION_KEY|WRAPPING_KEY)/
 const credentialsIn = text => [...text.matchAll(/\beyJ[a-zA-Z0-9_-]{7,}\.(eyJ[a-zA-Z0-9_-]{7,})\.[a-zA-Z0-9_-]{10,}\b/g)]
 
 export function secretFindings(text,{source=false,privateValues=[]}={}){
@@ -52,27 +52,31 @@ function textFile(file){
   return bytes.subarray(0,1024).includes(0)?null:bytes.toString('utf8')
 }
 
-export function verifySecrets({root=fileURLToPath(new URL('..',import.meta.url)),build=false}={}){
+export function verifySecrets({root=fileURLToPath(new URL('..',import.meta.url)),build=false,buildAll=false}={}){
   const tracked=execFileSync('git',['ls-files','-z'],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean)
   const findings=[]
   for(const file of tracked){
     const text=textFile(resolve(root,file))
     if(text===null)continue
-    const source=/^apps\/web\/(?:app|components|lib)\/.+\.(?:ts|tsx|js|mjs)$/.test(file)
+    const source=/^apps\/(?:web|admin|workers)\/(?:app|components|lib)\/.+\.(?:ts|tsx|js|mjs)$/.test(file)
     for(const rule of secretFindings(text,{source}))findings.push({file,rule})
     if(/(^|\/)\.env(?:\.|$)/.test(file)&&!file.endsWith('.env.example'))findings.push({file,rule:'Tracked environment file'})
   }
-  if(build){
-    const vars={...process.env}
+  const projects=buildAll?['web','admin','workers']:build?['web']:[]
+  for(const project of projects){
+    const appRoot=join(root,'apps',project)
+    const variables=[...Object.entries(process.env)]
     for(const file of ['.env','.env.production','.env.local','.env.production.local']){
-      try{Object.assign(vars,parseEnv(readFileSync(join(root,'apps/web',file),'utf8')))}
+      try{variables.push(...Object.entries(parseEnv(readFileSync(join(appRoot,file),'utf8'))))}
       catch(error){if(error.code!=='ENOENT')throw new Error('Could not read a local environment file')}
     }
-    const privateValues=Object.entries(vars).filter(([key,value])=>!key.startsWith('NEXT_PUBLIC_')
+    const privateValues=variables.filter(([key,value])=>!key.startsWith('NEXT_PUBLIC_')
       &&sensitiveEnvironment.test(key)&&typeof value==='string'&&value.length>=16).map(([,value])=>value)
-    const assets=browserAssets(join(root,'apps/web/.next/static'))
-    if(!assets.length)throw new Error('Build the app before scanning browser assets')
-    for(const path of [...assets,...browserAssets(join(root,'apps/web/public'))]){
+    const assets=browserAssets(join(appRoot,'.next/static'))
+    if(!assets.length)throw new Error('Build '+project+' before scanning browser assets')
+    const publicRoot=join(appRoot,'public')
+    if(existsSync(publicRoot))assets.push(...browserAssets(publicRoot))
+    for(const path of assets){
       const text=textFile(path)
       if(text===null)continue
       for(const rule of secretFindings(text,{privateValues}))findings.push({file:relative(root,path),rule})
@@ -84,11 +88,12 @@ export function verifySecrets({root=fileURLToPath(new URL('..',import.meta.url))
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   try{
     const build=process.argv.includes('--build')
-    const findings=verifySecrets({build})
+    const buildAll=process.argv.includes('--build-all')
+    const findings=verifySecrets({build,buildAll})
     if(findings.length){
       for(const {file,rule} of findings)console.error(file+' — '+rule)
       process.exitCode=1
-    }else console.log(build?'Tracked source and browser assets passed secret checks.':'Tracked source passed secret checks.')
+    }else console.log(build||buildAll?'Tracked source and browser assets passed secret checks.':'Tracked source passed secret checks.')
   }catch{
     console.error('Secret checks could not complete. Check the Git checkout and, if requested, the production build.')
     process.exitCode=1

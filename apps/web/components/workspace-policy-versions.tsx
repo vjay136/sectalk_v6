@@ -15,6 +15,7 @@ type Proposal = {
 const categories: Record<string, string> = {
   mention: 'Room mentions', thread: 'Followed thread replies', task: 'Room task updates', admin: 'Admin room updates',
 }
+const ssoRequired = 'Sign in with workspace single sign-on to manage policies.'
 
 function describe(policy: Policy, settings: Settings) {
   if (policy === 'retention') return settings.days + ' retention days'
@@ -46,7 +47,10 @@ function PolicyEditor({ workspace, policy, onChanged }: { workspace: string; pol
     void db!.rpc('st_v6_workspace_policy_versions', { p_workspace: workspace, p_policy: policy }).then(result => {
       if (!active) return
       setBusy(false)
-      if (result.error) { setError('Could not load policy versions.'); setSnapshot(null) }
+      if (result.error) {
+        setError(result.error.message === ssoRequired ? ssoRequired : 'Could not load policy versions.')
+        setSnapshot(null)
+      }
       else { setSnapshot(result.data as Snapshot); setError('') }
     })
     return () => { active = false }
@@ -69,7 +73,9 @@ function PolicyEditor({ workspace, policy, onChanged }: { workspace: string; pol
         onChanged()
       }
     } catch (cause) {
-      setError(formatError(cause, 'Could not complete the policy action.'))
+      const failure = formatError(cause, 'Could not complete the policy action.')
+      setError(failure)
+      if (failure === ssoRequired) setSnapshot(null)
       setReview(null)
     } finally {
       setBusy(false)

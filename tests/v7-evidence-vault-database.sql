@@ -88,6 +88,11 @@ begin
   artifact_id:=public.st_v6_begin_export_object(admin_id,'evidence',fixture_snapshot,null,'fixture-snapshot.json','application/json',
     (material->>'bytes')::integer,material->>'sha256');
   insert into storage.objects(bucket_id,name) values('sectalk-exports',artifact_id::text);
+  if public.st_v6_finish_export_object(artifact_id)
+    or not public.st_v7_provision_export_key(ticket_id,artifact_id,repeat('a',80))
+    or not public.st_v7_bind_export_envelope(ticket_id,artifact_id,1,repeat('b',80),repeat('c',16),repeat('d',22)) then
+    raise exception 'Evidence artifact was not bound to its exact key context';
+  end if;
   if not public.st_v6_finish_export_object(artifact_id) or not public.st_v7_finish_evidence_operation(ticket_id,artifact_id) then
     raise exception 'Exact approved artifact could not be retained';
   end if;

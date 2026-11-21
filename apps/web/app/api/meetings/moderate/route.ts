@@ -1,6 +1,8 @@
+import { liveKitControlUrl } from '../../../../lib/livekit-control-url'
 import { createClient } from '@supabase/supabase-js'
 import { RoomServiceClient, TrackSource } from 'livekit-server-sdk'
 import { logProviderFailure } from '../../../../lib/provider-log.mjs'
+import { parseMeetingMediaIdentity } from '../../../../lib/meeting-media-identity'
 
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control': 'no-store' }
@@ -50,16 +52,20 @@ export async function POST(request: Request) {
   const success = (affected = 0) => Response.json({ affected }, { headers })
   if (!url || !apiKey || !secret) return success()
   const room = (mode?.media_protection ? 'sectalk-protected-' : 'sectalk-v3-') + meeting
-  const service = new RoomServiceClient(url.replace(/^ws/, 'http'), apiKey, secret, { requestTimeout: 5 })
+  const service = new RoomServiceClient(liveKitControlUrl(url), apiKey, secret, { requestTimeout: 5 })
   try {
     if (action === 'end') {
       await service.deleteRoom(room)
     } else if (action === 'remove') {
-      await service.removeParticipant(room, target.toLowerCase())
+      const participants = await service.listParticipants(room)
+      await Promise.all(participants.filter(person => parseMeetingMediaIdentity(person.identity)?.actor === target.toLowerCase())
+        .map(person => service.removeParticipant(room, person.identity).catch(error => {
+          if (!missing(error)) throw error
+        })))
     } else if (action === 'mute' || action === 'mute_all') {
       const targets = new Set<string>(result.data)
       const participants = await service.listParticipants(room)
-      const microphones = participants.filter(person => targets.has(person.identity)).flatMap(person =>
+      const microphones = participants.filter(person => targets.has(parseMeetingMediaIdentity(person.identity)?.actor ?? '')).flatMap(person =>
         person.tracks.filter(track => track.source === TrackSource.MICROPHONE && !track.muted)
           .map(track => service.mutePublishedTrack(room, person.identity, track.sid, true).then(() => true).catch(error => {
             if (missing(error)) return false

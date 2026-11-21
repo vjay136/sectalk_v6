@@ -10,7 +10,7 @@ import { WorkspaceSsoSettings } from './workspace-sso-settings'
 
 type CredentialTab = 'keys' | 'webhooks'
 type IntegrationTab = CredentialTab | 'sso' | 'scim'
-type Status = 'none' | 'upgrade' | 'mfa' | 'verified'
+type Status = 'none' | 'upgrade' | 'sso' | 'mfa' | 'verified'
 type Key = { id: string; label: string; display_prefix: string; scopes: string[]; expires_at: string; revoked_at: string | null }
 type Endpoint = { id: string; label: string; destination: string; topics: string[]; revoked_at: string | null
   deliveries: { id: string; type: string; created_at: string; state: string; attempts: number; status: number | null }[] }
@@ -112,6 +112,7 @@ function WorkspaceIntegrationCredentials({workspace, tab}: {workspace: string; t
     {!status && !error && <p role="status">Checking integration access…</p>}
     {status === 'none' && <p>Integration access is unavailable.</p>}
     {status === 'upgrade' && <p>Workspace APIs and webhooks are available with Team and Enterprise.</p>}
+    {status === 'sso' && <p role="status">Sign in with workspace single sign-on to manage API keys and webhooks.</p>}
     {status === 'verified' && <>
       {revealed && <div className="release-board-item">
         <p>Copy this credential now. The app shows it once.</p>

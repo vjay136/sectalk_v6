@@ -7,7 +7,7 @@ import { ThreatPlaybooks } from './threat-playbooks'
 import { SocResponseActions } from './soc-response-actions'
 
 type Signal = 'detection' | 'attachment_inspection' | 'malware'
-type Access = { status: 'none' } | { status: 'mfa' } | { status: 'verified'; scopes: Signal[] }
+export type ThreatTriageAccess = { status: 'none' } | { status: 'mfa' } | { status: 'verified'; scopes: Signal[] }
 type QueueItem = {
   id: string; signal_type: Signal; severity: 'low' | 'medium' | 'high'
   confidence: 'heuristic' | 'supported' | 'confirmed'; state: 'open' | 'reviewing' | 'confirmed' | 'dismissed'
@@ -38,10 +38,10 @@ const events: Record<string,string> = { received:'Signal received',reviewing:'Ma
 const initialFilters = { state:'open',type:'all',severity:'all',confidence:'all' }
 
 export function useThreatTriageAccess() {
-  const [access,setAccess] = useState<Access>({ status:'none' })
+  const [access,setAccess] = useState<ThreatTriageAccess>({ status:'none' })
   const refresh = useCallback(async () => {
     const { data,error } = await db!.rpc('st_v7_threat_triage_access')
-    setAccess(!error && (data?.status==='verified' || data?.status==='mfa') ? data as Access : { status:'none' })
+    setAccess(!error && (data?.status==='verified' || data?.status==='mfa') ? data as ThreatTriageAccess : { status:'none' })
   },[])
   useEffect(() => {
     void refresh()
@@ -51,13 +51,16 @@ export function useThreatTriageAccess() {
   return { access,refresh }
 }
 
-export function ThreatTriage({ access,refresh }: { access: Access; refresh: () => Promise<void> }) {
+export function ThreatTriage({ access,refresh,showResponseActions=true }: {
+  access: ThreatTriageAccess; refresh: () => Promise<void>; showResponseActions?: boolean
+}) {
   if (access.status==='none') return null
   if (access.status==='mfa') return <StaffMfa refresh={refresh} explanation="Enter a current authenticator code to review your assigned signal types."/>
-  return <Queue scopes={access.scopes} onAccessChanged={refresh}/>
+  return <Queue scopes={access.scopes} onAccessChanged={refresh} showResponseActions={showResponseActions}/>
 }
 
-function Queue({ scopes,onAccessChanged }: { scopes: Signal[]; onAccessChanged: () => Promise<void> }) {
+function Queue({ scopes,onAccessChanged,showResponseActions }: { scopes: Signal[]; onAccessChanged: () => Promise<void>;
+  showResponseActions: boolean }) {
   const [filter,setFilter] = useState<Filter>(initialFilters)
   const [rows,setRows] = useState<QueueItem[] | null>(null)
   const [cursor,setCursor] = useState<{ at: string; id: string } | null>(null)
@@ -185,7 +188,7 @@ function Queue({ scopes,onAccessChanged }: { scopes: Signal[]; onAccessChanged: 
     {message && <p role="status">{message}</p>}
     {error && <p role="alert" className="error">{error}</p>}
     <ThreatPlaybooks signals={visible ?? []} refreshQueue={load}/>
-    <SocResponseActions/>
+    {showResponseActions && <SocResponseActions/>}
   </section>
 }
 

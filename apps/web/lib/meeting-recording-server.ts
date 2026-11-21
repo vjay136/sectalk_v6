@@ -1,3 +1,5 @@
+import { liveKitControlUrl } from './livekit-control-url'
+import { meetingArtifactViewer } from './meeting-artifact-viewer'
 import { createClient } from '@supabase/supabase-js'
 import {
   AudioCodec, EgressClient, EgressStatus, EncodedFileType, ParticipantInfo_State,
@@ -33,8 +35,7 @@ export function recordingServices() {
   const storageHeaders = { Authorization: 'Bearer '+serviceKey, apikey: serviceKey }
   const authOptions = { persistSession: false, autoRefreshToken: false }
   const storage = createClient(authUrl, serviceKey, { auth: authOptions })
-  const auth = createClient(authUrl, publicKey, { auth: authOptions })
-  const provider = livekit.replace(/^ws/, 'http')
+  const provider = liveKitControlUrl(livekit)
   const rooms = new RoomServiceClient(provider, apiKey, secret, { requestTimeout: 5 })
   const egress = new EgressClient(egressOverride?.trim() || provider, apiKey, secret, { requestTimeout: 8 })
   const verifier = new WebhookReceiver(apiKey, secret)
@@ -44,6 +45,15 @@ export function recordingServices() {
     const result = await storage.rpc('st_v6_recording_command', {
       p_meeting: meeting, p_actor: actor, p_action: action, p_recording: id ?? null, p_roster: roster ?? null,
       p_egress: egressId ?? null, p_capture: capture ?? null,
+    })
+    if (result.error) throw new Error('Recording state unavailable')
+    return result.data as State | null
+  }
+
+  async function appCommand(meeting: string, viewer: {actor:string;session:string}, action: string, id?: string, roster?: Roster, capture?: Capture) {
+    const result = await storage.rpc('st_v8_app_recording_command', {
+      p_meeting: meeting, p_actor: viewer.actor, p_session: viewer.session, p_action: action,
+      p_recording: id ?? null, p_roster: roster ?? null, p_capture: capture ?? null,
     })
     if (result.error) throw new Error('Recording state unavailable')
     return result.data as State | null
@@ -156,7 +166,8 @@ export function recordingServices() {
       cache: 'no-store', signal,
     })
   }
-  return { auth, command, participants, reconcile, start, settle, verifier, download }
+  return { viewer: (token:string) => meetingArtifactViewer(authUrl,publicKey,token),
+    command, appCommand, participants, reconcile, start, settle, verifier, download }
 }
 
 export function recordingView(state: State, actor: string) {

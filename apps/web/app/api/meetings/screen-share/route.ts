@@ -1,7 +1,9 @@
+import { liveKitControlUrl } from '../../../../lib/livekit-control-url'
 import { createHmac } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { RoomServiceClient, TrackSource, type ParticipantInfo } from 'livekit-server-sdk'
 import { logProviderFailure } from '../../../../lib/provider-log.mjs'
+import { meetingMediaIdentity } from '../../../../lib/meeting-media-identity'
 
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control': 'no-store' }
@@ -45,7 +47,7 @@ export async function POST(request: Request) {
   const userId = data.user.id
   const digest = createHmac('sha256', secret).update('sectalk-screen-share:' + meetingId + ':' + userId + ':' + leaseId).digest('hex')
   const room = 'sectalk-v3-' + meetingId
-  const service = new RoomServiceClient(url.replace(/^ws/, 'http'), apiKey, secret, { requestTimeout: 5 })
+  const service = new RoomServiceClient(liveKitControlUrl(url), apiKey, secret, { requestTimeout: 5 })
 
   async function lease(operation: string) {
     const result = await client.rpc('st_v6_screen_presenter', { p_meeting: meetingId, p_lease_digest: digest, p_action: operation })
@@ -65,6 +67,12 @@ export async function POST(request: Request) {
     }
   }
 
+  async function presenterIdentity() {
+    const binding = await client.rpc('st_v8_livekit_bind_member', { p_meeting: meetingId, p_kind: 'managed' })
+    if (binding.error) throw binding.error
+    return typeof binding.data === 'string' ? meetingMediaIdentity(userId, binding.data) : null
+  }
+
   try {
     if (action === 'renew') return await lease(action)
       ? Response.json({ sharing: true }, { headers }) : fail('Screen sharing permission has ended.', 403)
@@ -72,8 +80,11 @@ export async function POST(request: Request) {
     if (action === 'release') {
       if (!await lease('closing')) return Response.json({ sharing: false }, { headers })
       try {
-        const participant = await service.getParticipant(room, userId)
-        if (allowsScreen(participant)) await setScreenPermission(participant, false)
+        const identity = await presenterIdentity()
+        if (identity) {
+          const participant = await service.getParticipant(room, identity)
+          if (allowsScreen(participant)) await setScreenPermission(participant, false)
+        }
       } catch (error) {
         if (!isMissingParticipant(error)) throw error
       }
@@ -87,7 +98,9 @@ export async function POST(request: Request) {
     const policy = await client.from('st_v3_meetings').select('screen_share_disabled').eq('id', meetingId).single()
     if (policy.error) throw policy.error
     if (policy.data.screen_share_disabled) return fail('Screen sharing is disabled for this meeting.', 403)
-    const participant = await service.getParticipant(room, userId).catch(error => {
+    const identity = await presenterIdentity()
+    if (!identity) return fail('Connect to meeting media before sharing your screen.', 403)
+    const participant = await service.getParticipant(room, identity).catch(error => {
       if (!isMissingParticipant(error)) throw error
       return undefined
     })
@@ -96,7 +109,7 @@ export async function POST(request: Request) {
 
     // Remove stale source permissions before granting the new presenter access.
     const participants = await service.listParticipants(room)
-    await Promise.all(participants.filter(person => person.identity !== userId && allowsScreen(person))
+    await Promise.all(participants.filter(person => person.identity !== identity && allowsScreen(person))
       .map(person => setScreenPermission(person, false)))
     if (!await lease('renew')) return fail('Screen sharing permission has ended.', 403)
     await setScreenPermission(participant, true)

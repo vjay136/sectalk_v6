@@ -25,4 +25,8 @@ Explain who could reach the affected code, the permissions required, whose data 
 
 ## Deployment setup
 
-Set `SECTALK_APP_URL` to the deployment’s stable HTTPS origin. Set `SECTALK_SECURITY_CONTACT` to a verified, monitored `mailto:` address or HTTPS private reporting form. Set `SECTALK_SECURITY_CONTACT_EXPIRES` to a UTC timestamp such as `2027-03-01T00:00:00Z`, in the future and less than 365 days away. Reverify that the contact accepts reports before renewing the expiry. Once configured, confirm that `/.well-known/security.txt` and the visible contact on `/security` agree. A missing or expired configuration returns HTTP 503 for the machine-readable file.
+Set `SECTALK_APP_URL` to the deployment’s stable HTTPS origin and `SECTALK_SECURITY_CONTACT_EXPIRES` to a future UTC timestamp less than 365 days away. To publish the first-party intake, set the server-only `SECTALK_DISCLOSURE_SERVICE_KEY` and a randomly generated, canonical base64url `SECTALK_DISCLOSURE_ENCRYPTION_KEY` containing 32 bytes. Keep the encryption key in managed secret storage and preserve it securely for existing reports. Coordinate rotation with migration of existing encrypted records. No mailbox is required.
+
+Provision eligible staff separately in `sectalk_private.st_v8_disclosure_operators`. Staff open **Safety center → Vulnerability disclosures** after fresh TOTP verification. Report submission returns a receipt. Operators can review and close reports in-app. The service does not send acknowledgments or email follow-ups.
+
+An optional `SECTALK_SECURITY_CONTACT` sets a verified, monitored `mailto:` or HTTPS private reporting form as the advertised contact. An explicit override takes precedence. Confirm that `/.well-known/security.txt` and `/security` agree, and test submission and operator access before renewing the expiry. A missing or expired publication configuration returns HTTP 503 for the machine-readable file.

@@ -5,6 +5,7 @@ import { CalendarDays, ListChecks } from 'lucide-react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { WorkspaceSwitcher, useWorkspaceContext } from './workspace-context'
+import { WorkspacePlannerAccess } from './workspace-planner-access'
 import { useFeature } from '../lib/use-feature'
 
 export type TaskScope={kind:'chat'|'room';id:string}
@@ -40,6 +41,10 @@ type ScopedTaskProps={
 }
 
 export function ScopedTasks(props:ScopedTaskProps){
+  const {active}=useWorkspaceContext()
+  if(props.scope?.kind==='room'&&active) return <WorkspacePlannerAccess workspace={active.id}>
+    <ScopedTaskList key={props.scope.id} {...props}/>
+  </WorkspacePlannerAccess>
   return props.scope?<ScopedTaskList {...props}/>:<TaskOverview {...props}/>
 }
 
@@ -50,7 +55,9 @@ function TaskOverview(props:ScopedTaskProps){
     <SectionTabs label="Task workspace scope" value={view} onChange={setView} options={[['workspace','Workspace room tasks'],['direct','Direct chat tasks']]}/>
     {view==='direct'?<ScopedTaskList key="direct" {...props}/>:
       <><WorkspaceSwitcher/>
-        {active?<ScopedTaskList key={active.id+active.role} {...props} workspace={active.id}/>:
+        {active?<WorkspacePlannerAccess workspace={active.id}>
+          <ScopedTaskList key={active.id+active.role} {...props} workspace={active.id}/>
+        </WorkspacePlannerAccess>:
           workspaces?.length===0&&<p>Join or create a workspace to see room tasks.</p>}
       </>}
   </>
@@ -289,7 +296,8 @@ function TaskDetail({task,user,people,links,moderator,reload,close}:{
         {source.edited&&<details><summary>Current message</summary><blockquote>{source.currentText}</blockquote></details>}
       </figure>:<p>The source message is no longer available. The task record remains.</p>)}
     {view==='audit'&&(!audit?<p role="status">Loading audit trail…</p>:<ol className="audit">{audit.map(entry=><li key={entry.id}>
-      <strong>{entry.action}</strong> <span>{people[entry.actor_id]?.name||(entry.actor_id===user?'You':'Participant')}</span>
+      <strong>{entry.action==='residency_restored'?'Restored from approved transfer':entry.action}</strong>{' '}
+      <span>{people[entry.actor_id]?.name||(entry.actor_id===user?'You':'Participant')}</span>
       {typeof entry.detail.to==='string'&&<span> · {entry.detail.to.replaceAll('_',' ')}</span>}
       <time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString()}</time>
     </li>)}</ol>)}

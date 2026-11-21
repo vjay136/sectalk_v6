@@ -18,13 +18,18 @@ export async function GET(request: Request) {
   if (!services || !meeting || !recording || !recordingId.test(meeting) || !recordingId.test(recording)) return fail('Recording unavailable.',404)
   const jwt = request.headers.get('Authorization')?.match(/^Bearer (\S+)$/i)?.[1]
   if (!jwt) return fail('Sign in to download the recording.',401)
-  const { data, error } = await services.auth.auth.getUser(jwt)
-  if (error || !data.user) return fail('Sign in to download the recording.',401)
   try {
-    const allowed = await services.command(meeting,data.user.id,'download')
+    const viewer = await services.viewer(jwt)
+    if (!viewer) return fail('Sign in to download the recording.',401)
+    const allowed = await services.appCommand(meeting,viewer,'download')
     if (!allowed?.recording || allowed.recording.id !== recording) return fail('Recording unavailable.',404)
     const object = await services.download(allowed.recording,request.signal)
     if (!object.ok || !object.body) return fail('Recording unavailable.',404)
+    const current = await services.appCommand(meeting,viewer,'download')
+    if (current?.recording?.id !== recording) {
+      await object.body.cancel().catch(() => {})
+      return fail('Recording unavailable.',404)
+    }
     const file = recordingFile(allowed.recording)
     const headers = { ...recordingHeaders, 'Content-Type':file.type, 'Content-Disposition':'attachment; filename="'+file.name+'"',
       'X-Content-Type-Options':'nosniff' }
@@ -39,9 +44,6 @@ export async function POST(request: Request) {
   if (!services) return fail('Recording is unavailable.',503)
   const jwt = request.headers.get('Authorization')?.match(/^Bearer (\S+)$/i)?.[1]
   if (!jwt) return fail('Sign in to manage meeting recording.',401)
-  const { data, error } = await services.auth.auth.getUser(jwt)
-  if (error || !data.user) return fail('Sign in to manage meeting recording.',401)
-  const actor = data.user.id
   const { action, meeting: input, id } = await request.json().catch(() => null) ?? {}
   if (typeof input !== 'string' || !recordingId.test(input) || !actions.has(action) ||
       (['accept','withdraw','start','stop'].includes(action) && (typeof id !== 'string' || !recordingId.test(id)))) {
@@ -49,19 +51,30 @@ export async function POST(request: Request) {
   }
   const meeting = input.toLowerCase()
   try {
-    let state = await services.command(meeting,actor,'view')
+    const viewer = await services.viewer(jwt)
+    if (!viewer) return fail('Sign in to manage meeting recording.',401)
+    if (action === 'stop' || action === 'withdraw') {
+      const result = await services.appCommand(meeting,viewer,action,id)
+      if (!result?.recording?.id) return fail('Recording unavailable.',403)
+      if (action === 'stop') await services.reconcile(meeting,result.recording)
+      else await services.settle(result.recording)
+      const visible = await services.appCommand(meeting,viewer,'view')
+      return Response.json(visible ? recordingView(visible,viewer.actor) :
+        {policy:false,owner:false,host:false,attendee:false,recording:null}, { headers: recordingHeaders })
+    }
+    const state = await services.appCommand(meeting,viewer,'view')
     if (!state) return fail('Recording unavailable.',403)
     if (action === 'view' && state.recording?.id) {
       await services.reconcile(meeting,state.recording).catch(() => {})
     } else if (action === 'request' || action === 'request-video' || action === 'accept' || action === 'start') {
       if (!state.attendee || !state.policy || (action !== 'accept' && !state.host)) return fail('Recording unavailable.',403)
       const requesting = action === 'request' || action === 'request-video'
-      const owner = requesting ? (action === 'request-video' ? actor : undefined) : state.recording?.capture?.owner
+      const owner = requesting ? (action === 'request-video' ? viewer.actor : undefined) : state.recording?.capture?.owner
       const { roster, microphones, capture } = await services.participants(meeting,owner)
       const recId = requesting ? randomUUID() : id
       if (action === 'request-video' && !capture) return fail('Turn on your camera before requesting single-camera recording.',409)
       if (action === 'start' && !microphones.length) return fail('At least one microphone must be published to start audio recording.',409)
-      const result = await services.command(meeting,actor,requesting ? 'request' : action,recId,roster,undefined,capture)
+      const result = await services.appCommand(meeting,viewer,requesting ? 'request' : action,recId,roster,capture)
       if (!result?.recording?.id) return fail('The recording roster or consent changed. Request consent again if needed.',409)
       if (action === 'start') {
         try { await services.start(result.recording,microphones) }
@@ -71,14 +84,10 @@ export async function POST(request: Request) {
           return fail('The recording could not start. No recording is available.',502)
         }
       }
-    } else if (action === 'stop' || action === 'withdraw') {
-      const result = await services.command(meeting,actor,action,id)
-      if (!result?.recording?.id) return fail('Recording unavailable.',403)
-      if (action === 'stop') await services.reconcile(meeting,result.recording)
-      else await services.settle(result.recording)
     }
-    state = await services.command(meeting,actor,'view') ?? state
-    return Response.json(recordingView(state,actor), { headers: recordingHeaders })
+    const current = await services.appCommand(meeting,viewer,'view')
+    return current ? Response.json(recordingView(current,viewer.actor), { headers: recordingHeaders }) :
+      fail('Recording unavailable.',403)
   } catch {
     return fail(updateError,503)
   }

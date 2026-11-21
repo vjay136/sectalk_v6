@@ -25,8 +25,14 @@ export async function POST(request: Request) {
 
   try {
     const auth = { persistSession: false, autoRefreshToken: false }
-    const actor = await createClient(url, key, { auth }).auth.getUser(token)
+    const viewer = createClient(url, key, { auth, global: { headers: { Authorization: 'Bearer ' + token } } })
+    const actor = await viewer.auth.getUser(token)
     if (actor.error || !actor.data.user) return response(401, 'Sign in to open the thread summary.')
+    const access = async () => {
+      const result = await viewer.rpc('st_v8_standard_room_requires_sso', { p_room: room })
+      return !result.error && result.data === false
+    }
+    if (!await access()) return response(403, 'Thread summary access is unavailable.')
     const user = actor.data.user.id
     const db = createClient(url, serviceKey, { auth })
     const command = async (operation: string) => {
@@ -40,12 +46,16 @@ export async function POST(request: Request) {
     const raw = await command(action === 'generate' ? 'source' : action)
     if (!raw) return response(403, 'Thread summary access is unavailable.')
     const { source, ...state } = raw
-    if (action !== 'generate') return Response.json(state, { headers })
+    if (action !== 'generate') {
+      if (!await access()) return response(403, 'Thread summary access is unavailable.')
+      return Response.json(state, { headers })
+    }
     if (typeof state.revision !== 'string' || !Array.isArray(source) || source.length === 0) {
       return response(409, 'There are no eligible posts to summarize yet.')
     }
     const draft = draftMeetingSummary(source, 'en')
     const current = await command('view')
+    if (!await access()) return response(403, 'Thread summary access is unavailable.')
     if (current?.revision !== state.revision) {
       return response(409, 'The eligible posts changed. Generate a new summary.')
     }

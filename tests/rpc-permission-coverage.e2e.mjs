@@ -5,6 +5,16 @@ import {setTimeout} from 'node:timers/promises'
 import {createClient} from '@supabase/supabase-js'
 import {liveRpcInventory,rpcInventory} from '../scripts/rpc-permission-inventory.mjs'
 
+const origin=new URL(process.env.SECTALK_STORAGE_TEST_URL).origin
+const targets=new Map([
+  ['http://127.0.0.1:55321','supabase_db_v4-auth-qa'],
+  ['http://127.0.0.1:56651','supabase_db_v6-i232-qa'],
+])
+const qaContainer=targets.get(origin)
+assert.ok(qaContainer,'Use a disposable Supabase QA project')
+assert.equal(process.env.SECTALK_RPC_QA_CONTAINER??'supabase_db_v4-auth-qa',qaContainer,
+  'Use the RPC inventory and REST service from the same local project')
+
 const expected=rpcInventory()
 const live=liveRpcInventory()
 const approved=new Map(expected.map(entry=>[entry.rpc,entry]))
@@ -17,8 +27,6 @@ for(const entry of live) {
 assert.deepEqual([...missing],[],'Inventory contains functions no longer exposed')
 assert.ok(live.every(entry=>entry.gate!=='Unclassified'))
 
-const origin=new URL(process.env.SECTALK_STORAGE_TEST_URL).origin
-assert.equal(origin,'http://127.0.0.1:55321')
 const key=process.env.SECTALK_STORAGE_TEST_PUBLIC_KEY
 const options={auth:{persistSession:false,autoRefreshToken:false}}
 const anon=createClient(origin,key,options)
@@ -31,7 +39,7 @@ const identifier=randomBytes(32).toString('hex')
 let workspace
 function data(result){if(result.error)throw new Error(result.error.message);return result.data}
 function sql(input){
-  return execFileSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],
+  return execFileSync('docker',['exec','-i',qaContainer,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],
     {input,encoding:'utf8'}).trim()
 }
 async function account(label){

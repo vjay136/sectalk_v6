@@ -4,8 +4,8 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowRight, ShieldCheck } from 'lucide-react'
 import { db } from '../lib/data'
 
-export function StaffMfa({ refresh, explanation = 'An authenticator code is required to review reports or change account restrictions.' }:
-  { refresh: () => Promise<void>; explanation?: string }) {
+export function StaffMfa({ refresh, heading='Verify staff access', explanation = 'An authenticator code is required to review reports or change account restrictions.' }:
+  { refresh: () => Promise<void>; heading?:string; explanation?: string }) {
   const [setup, setSetup] = useState<{ id: string; qr_code: string; secret: string } | null>(null)
   const [factor, setFactor] = useState('')
   const [loaded, setLoaded] = useState(false)
@@ -48,7 +48,7 @@ export function StaffMfa({ refresh, explanation = 'An authenticator code is requ
     setBusy(false)
   }
 
-  return <div className="panel mfa-panel"><div className="card-icon"><ShieldCheck size={22}/></div><h2>Verify staff access</h2><p>{explanation}</p>
+  return <div className="panel mfa-panel"><div className="card-icon"><ShieldCheck size={22}/></div><h2>{heading}</h2><p>{explanation}</p>
     {setup && <div className="mfa-setup"><img src={setup.qr_code} alt="Scan with your authenticator app" width={180} height={180}/><p>Manual setup key</p><code>{setup.secret}</code></div>}
     {factor ? <form onSubmit={verify}><label>Authenticator code<input name="code" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required /></label><button className="primary" disabled={busy}>Verify access <ArrowRight size={16}/></button></form> :
       <button className="primary" disabled={busy || !loaded} onClick={enroll}>Set up authenticator</button>}

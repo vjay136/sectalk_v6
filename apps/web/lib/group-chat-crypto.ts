@@ -108,21 +108,30 @@ export async function rewrapGroupHistory(proof:GroupHistoryProof,device:LocalDev
   return {envelopes,signature}
 }
 
-export async function encryptGroupMessage(group: string, epoch: number, device: LocalDevice, key: CryptoKey, message: string) {
-  const bytes = encoder.encode(message)
-  if (!message.trim() || bytes.length > 4000) throw new Error('Enter a message of up to 4,000 UTF-8 bytes.')
-  const id = crypto.randomUUID()
+export async function signGroupMessage(group:string,epoch:number,device:LocalDevice,id:string,payload:string) {
   const header = [group, epoch, id, device.owner, device.id]
-  const payload = await seal(key, bytes, data(['message', ...header]))
   const signature = binaryToBase64url(await crypto.subtle.sign(signingAlgorithm, device.signing.privateKey, data(['sign', ...header, payload])))
   return { id, epoch, payload, signature }
 }
 
-export async function decryptGroupMessage(group: string, key: CryptoKey, message: GroupCiphertext) {
+export function sealGroupSenderExport(key:CryptoKey,group:string,epoch:number,actor:string,device:string,session:string,keys:string) {
+  return seal(key,encoder.encode(keys),data(['sender-export',group,epoch,actor,device,session]))
+}
+
+export async function openGroupSenderExport(key:CryptoKey,group:string,epoch:number,actor:string,device:string,session:string,sealed:string) {
+  return decoder.decode(await unseal(key,sealed,data(['sender-export',group,epoch,actor,device,session])))
+}
+
+export async function verifyGroupMessage(group:string,message:GroupCiphertext) {
   const header = [group, message.epoch, message.id, message.actor, message.device]
   const signingKey = await crypto.subtle.importKey('raw', base64urlToBinary(message.signing),
     { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
   if (!await crypto.subtle.verify(signingAlgorithm, signingKey, base64urlToBinary(message.signature),
     data(['sign', ...header, message.payload]))) throw new Error('Message signature verification failed.')
+}
+
+export async function decryptGroupMessage(group: string, key: CryptoKey, message: GroupCiphertext) {
+  await verifyGroupMessage(group,message)
+  const header=[group,message.epoch,message.id,message.actor,message.device]
   return decoder.decode(await unseal(key, message.payload, data(['message', ...header])))
 }

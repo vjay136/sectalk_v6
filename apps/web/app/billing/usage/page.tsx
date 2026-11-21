@@ -2,6 +2,8 @@
 
 import {useEffect, useState} from 'react'
 import {db} from '../../../lib/data'
+import {useWorkspaceBillingAccess} from '../../../components/workspace-billing-access'
+import {workspaceBillingSsoMessage} from '../../../lib/workspace-billing-access'
 
 type Workspace = {id: string; name: string}
 type Usage = {
@@ -19,6 +21,7 @@ export default function WorkspaceUsage() {
   const [selected, setSelected] = useState('')
   const [result, setResult] = useState<{id: string; usage: Usage | null} | null>(null)
   const [revision, setRevision] = useState(0)
+  const billingAccess=useWorkspaceBillingAccess(selected||undefined)
 
   useEffect(() => {
     if (!db) { setWorkspaces([]); return }
@@ -30,15 +33,15 @@ export default function WorkspaceUsage() {
   }, [])
 
   useEffect(() => {
-    if (!selected || !db) return
+    if (!selected || billingAccess!=='allowed' || !db) return
     const controller = new AbortController()
     void db.rpc('st_v7_workspace_usage', {p_workspace: selected}).abortSignal(controller.signal).then(({data, error}) => {
       if (!controller.signal.aborted) setResult({id: selected, usage: error ? null : data})
     })
     return () => controller.abort()
-  }, [revision, selected])
+  }, [billingAccess, revision, selected])
 
-  const current = result?.id === selected ? result : null
+  const current = billingAccess==='allowed' && result?.id === selected ? result : null
   const usage = current?.usage
   return <main className="content-page">
     <a href="/?billing=usage">Back to Billing</a>
@@ -53,7 +56,9 @@ export default function WorkspaceUsage() {
       </select>
       <button type="button" disabled={!selected} onClick={() => setRevision(value => value + 1)}>Refresh usage</button>
     </>}
-    {selected && !current && <p role="status">Loading usage…</p>}
+    {selected && billingAccess==='required' && <p role="status">{workspaceBillingSsoMessage}</p>}
+    {selected && billingAccess==='unavailable' && <p role="alert">Usage is unavailable for this workspace.</p>}
+    {selected && (billingAccess===undefined || billingAccess==='allowed' && !current) && <p role="status">Loading usage…</p>}
     {current && !usage && <p role="alert">Usage is unavailable for this workspace.</p>}
     {usage && <section aria-label="Metered usage" className="panel release-panel">
       <h2>{date.format(new Date(usage.period_start))} usage (UTC)</h2>

@@ -8,6 +8,7 @@ import { SectionTabs } from './section-tabs'
 import { RoomDirectory } from './room-directory'
 import { QuietHoursSettings } from './quiet-hours'
 import { WorkspaceSwitcher, useWorkspaceContext, type Workspace } from './workspace-context'
+import { WorkspaceEntryGate } from './workspace-entry-gate'
 import { WorkspaceGroups } from './workspace-groups'
 import { WorkspaceOnboarding } from './workspace-onboarding'
 import { WorkspaceNotificationPolicy } from './workspace-notification-policy'
@@ -19,10 +20,18 @@ import { FamilyDashboard } from './family-dashboard'
 import { SchoolClasses } from './school-classes'
 import { WorkspaceCustomRoles } from './workspace-custom-roles'
 import { WorkspacePolicies } from './workspace-policies'
-import { PendingDirectoryMembership } from './pending-directory-membership'
 import { WorkspaceAdminOverview } from './workspace-admin-overview'
 import { WorkspaceFiles } from './workspace-files'
 import { WorkspaceIntegrations } from './workspace-integrations'
+import { WorkspacePlannerAccess, WorkspacePlannerAccessNotice, useWorkspacePlannerAccess } from './workspace-planner-access'
+import { PendingDirectoryMembership } from './pending-directory-membership'
+import { WorkspaceResidencyClaim } from './workspace-residency-claim'
+import { WorkspaceResidencyRouting } from './workspace-residency-routing'
+import { WorkspaceResidencyWriteHandoff } from './workspace-residency-write-handoff'
+import { WorkspaceResidencyRollbackReview } from './workspace-residency-rollback-review'
+import { WorkspaceResidencySourceReplayReview } from './workspace-residency-source-replay-review'
+import { WorkspaceResidencyBoardReplay } from './workspace-residency-board-replay'
+import { WorkspaceResidencyBoardAuthor } from './workspace-residency-board-author'
 import { WorkspaceFeatures } from './workspace-features'
 import { WorkspaceFileEgress } from './workspace-file-egress'
 import { WorkspaceTrial } from './workspace-trial'
@@ -33,6 +42,8 @@ import { WorkspaceDlp } from './workspace-dlp'
 import { useDlpPublishWarning } from './dlp-publish-warning'
 import { MessageFormatting, RichMessage } from './rich-message'
 import { ChannelReportDialog } from './channel-reports'
+import { ChannelEncryptionPolicy } from './channel-encryption-policy'
+import { managedChannelRequest,type ManagedSearchCursor } from '../lib/managed-channel-client'
 import {useSensitiveAction} from './sensitive-action'
 
 const ImpersonationWatch = dynamic(() => import('./impersonation-watch').then(module => module.ImpersonationWatch), {
@@ -40,9 +51,9 @@ const ImpersonationWatch = dynamic(() => import('./impersonation-watch').then(mo
 })
 
 type Invite = { id: string; workspace_name: string }
-type Channel = {id:string;name:string;owner:string;visibility:'workspace'|'private';archived:boolean}
+type Channel = {id:string;name:string;owner:string;visibility:'workspace'|'private';archived:boolean;encryption_mode:'standard'|'managed'}
 type ChannelEvent = {id:number;actor:string;action:string;target:string|null;detail:string|null;occurred_at:string}
-type ChannelDetails = {can_read:boolean;can_manage:boolean;members?:string[];audit?:ChannelEvent[]}
+type ChannelDetails = {can_read:boolean;can_manage:boolean;sso_required?:boolean;members?:string[];audit?:ChannelEvent[]}
 type Member = { user_id: string; role: 'owner' | 'admin' | 'member'; suspended_at: string | null }
 type BulkInviteResult = { handle: string; sent: boolean }
 type Post = { id: string; sender: string; body: string; created_at: string; quarantined_at: string | null }
@@ -113,7 +124,7 @@ async function readInviteHandles(file: File) {
 export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
   user:string;view?:WorkspaceView;requestedRoom?:{workspace:string;id:string}|null
 }) {
-  const {active:space,workspaces,reload:reloadWorkspaces}=useWorkspaceContext()
+  const {active:space,workspaces,workspaceLinkUnavailable,reload:reloadWorkspaces}=useWorkspaceContext()
   const [invites, setInvites] = useState<Invite[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -146,10 +157,12 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
 
   const {title, description, icon:Icon}=workspaceViews[view]
   return <section className="content-page">
-    {view==='workspaces'&&<PendingDirectoryMembership key={user}/>}
     <header className="content-title"><div className="card-icon"><Icon size={22}/></div><div><h1>{title}</h1><p>{description}</p></div></header>
+    {view==='workspaces'&&workspaceLinkUnavailable&&<p role="status">This workspace is unavailable. Choose one of your workspaces to continue.</p>}
     {error && <p role="alert" className="error">{error}</p>}
     {view==='workspaces'&&<PendingWorkspaceInvite onJoined={reloadWorkspaces}/>}
+    {view==='workspaces'&&<PendingDirectoryMembership key={'directory-membership:'+user}/>}
+    {view==='workspaces'&&<WorkspaceResidencyClaim key={'residency-claim:'+user} onClaimed={reloadWorkspaces}/>}
     {view==='workspaces' && invites.length > 0 && <section className="panel release-panel"><h2>Invitations</h2>{invites.map(invite => <div className="release-row" key={invite.id}>
       <strong>{invite.workspace_name}</strong>
       <button className="primary" disabled={busy} onClick={() => void reply(invite.id, true)}>Join</button>
@@ -157,19 +170,23 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
     </div>)}</section>}
     <div className="release-flex">
       <WorkspaceSwitcher/>
-      {view==='workspaces' && workspaces && <WorkspaceOnboarding openByDefault={!space} onCreated={reloadWorkspaces}/>}
+      {view==='workspaces' && workspaces && <WorkspaceOnboarding openByDefault={workspaces.length===0} onCreated={reloadWorkspaces}/>}
     </div>
-    {space ? <WorkspaceArea key={space.id+view+space.role} space={space} user={user} view={view}
-      initialRoom={space.id===requestedRoom?.workspace?requestedRoom.id:undefined} /> :
+    {space ? space.requiresSso
+      ? <WorkspaceEntryGate key={space.id} workspace={space.id} owner={space.role==='owner'} onRecovered={()=>reloadWorkspaces(space.id)}/>
+      : <WorkspaceArea key={space.id+view+space.role} space={space} user={user} view={view}
+        initialRoom={space.id===requestedRoom?.workspace?requestedRoom.id:undefined} /> :
       workspaces?.length===0&&view!=='workspaces'&&<p>Join or create a workspace to get started.</p>}
   </section>
 }
 
 function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;user:string;view:WorkspaceView;initialRoom?:string }) {
+  const [rollbackReviewVersion,setRollbackReviewVersion]=useState(0)
   const [tab, setTab] = useState<'channels' | 'board' | 'people' | 'teams' | 'files' | 'activity' | 'impersonation' | 'governance' | 'overview' | 'integrations' | 'features' | 'ai' | 'dlp' | 'compliance-exports' | 'file-egress' | 'trial' | 'organization' | 'family' | 'school' | 'custom-roles' | 'policies'>(()=>
     typeof window!=='undefined'&&new URLSearchParams(window.location.search).get('trial')==='return'?'trial':'people')
   const [roomView,setRoomView]=useState<'rooms'|'channels'>('rooms')
   const [channels, setChannels] = useState<Channel[]>([])
+  const [channelAccess,setChannelAccess] = useState<'allowed'|'required'|'unavailable'>()
   const [channelId, setChannelId] = useState('')
   const {reload: reloadWorkspaceBrand}=useWorkspaceContext()
   const [liveBrand,setLiveBrand]=useState<'blue'|'teal'|'violet'|'amber'>()
@@ -178,9 +195,13 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
   const [members, setMembers] = useState<Member[]>([])
   const [profiles, setProfiles] = useState<Record<string, Profile>>({})
   const [audit, setAudit] = useState<Audit[]>([])
+  const [auditAccess, setAuditAccess] = useState<'allowed'|'required'|'unavailable'>()
   const [presenceRequired,setPresenceRequired] = useState<boolean|null>(null)
+  const [directoryAccess,setDirectoryAccess] = useState<'allowed'|'required'|'unavailable'>()
+  const [invitationAccess,setInvitationAccess] = useState<'allowed'|'required'|'unavailable'>()
   const [bulkResults, setBulkResults] = useState<BulkInviteResult[]>([])
   const [error, setError] = useState('')
+  const loadVersion = useRef(0)
   const activeMembers = members.filter(member => !member.suspended_at)
   const role = activeMembers.find(member => member.user_id === user)?.role
   const manager = role === 'owner' || role === 'admin'
@@ -189,25 +210,45 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
   const visibleTab = (!manager && ['activity','impersonation','governance','overview','features','ai','dlp','compliance-exports'].includes(tab)) ||
     ((tab==='integrations'||tab==='file-egress'||tab==='trial'||tab==='organization'||tab==='custom-roles'||tab==='policies')&&role!=='owner') ? 'people' : tab
   const load = useCallback(async () => {
-    const [channelResult, memberResult, presencePolicy] = await Promise.all([
-      db!.from('st_v2_channels').select('id,name,owner,visibility,archived').eq('workspace_id', space.id).order('name'),
+    const request = ++loadVersion.current
+    const [channelResult, channelStatus, memberResult, presencePolicy, directoryStatus, invitationStatus] = await Promise.all([
+      db!.from('st_v2_channels').select('id,name,owner,visibility,archived,encryption_mode').eq('workspace_id', space.id).order('name'),
+      db!.rpc('st_v8_workspace_channel_structure_requires_sso',{p_workspace:space.id}),
       db!.from('st_v2_members').select('user_id,role,suspended_at').eq('workspace_id', space.id).order('joined_at').limit(500),
       view==='workspaces' ? db!.rpc('st_v6_workspace_presence_policy',{p_workspace:space.id}) : null,
+      view==='workspaces' ? db!.rpc('st_v8_workspace_directory_requires_sso',{p_workspace:space.id}) : null,
+      view==='workspaces' ? db!.rpc('st_v8_workspace_invitation_admin_requires_sso',{p_workspace:space.id}) : null,
     ])
-    if (channelResult.error || memberResult.error) { setError('Could not load the workspace.'); return }
+    if (request !== loadVersion.current) return
+    const channelState=channelResult.error||channelStatus.error?'unavailable':channelStatus.data?'required':'allowed'
+    setChannelAccess(channelState)
+    const availableChannels=channelState==='allowed'?(channelResult.data??[]):[]
+    setChannels(availableChannels)
+    setChannelId(previous => availableChannels.some(channel => channel.id === previous) ? previous : availableChannels[0]?.id ?? '')
+    if (directoryStatus) {
+      setDirectoryAccess(directoryStatus.error ? 'unavailable' : directoryStatus.data ? 'required' : 'allowed')
+    }
+    if (invitationStatus) {
+      setInvitationAccess(invitationStatus.error ? 'unavailable' : invitationStatus.data ? 'required' : 'allowed')
+    }
+    if (memberResult.error) { setError('Could not load the workspace.'); return }
     setError('')
     const people = memberResult.data as Member[]
     setMembers(people)
-    setChannels(channelResult.data)
     setPresenceRequired(typeof presencePolicy?.data==='boolean'?presencePolicy.data:null)
-    setChannelId(previous => channelResult.data.some(channel => channel.id === previous) ? previous : channelResult.data[0]?.id ?? '')
     if (people.length) {
       const { data } = await db!.from('st_profiles').select('id,name,handle').in('id', people.map(member => member.user_id))
-      if (data) setProfiles(Object.fromEntries(data.map(profile => [profile.id, profile])))
-    }
+      if (request === loadVersion.current) setProfiles(Object.fromEntries((data || []).map(profile => [profile.id, profile])))
+    } else setProfiles({})
     if (people.some(person => person.user_id === user && person.role !== 'member')) {
-      const { data } = await db!.from('st_v2_workspace_audit').select('id,event,actor,created_at').eq('workspace_id', space.id).order('id', { ascending: false }).limit(25)
-      if (data) setAudit(data)
+      const [entries, access] = await Promise.all([
+        db!.from('st_v2_workspace_audit').select('id,event,actor,created_at').eq('workspace_id', space.id).order('id', { ascending: false }).limit(25),
+        db!.rpc('st_v8_workspace_audit_requires_sso',{p_workspace:space.id}),
+      ])
+      if (request === loadVersion.current) {
+        setAudit(entries.data || [])
+        setAuditAccess(entries.error || access.error ? 'unavailable' : access.data ? 'required' : 'allowed')
+      }
     }
   }, [space.id, user, view])
 
@@ -215,7 +256,7 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
     void load()
     const reconnect = onReconnect(load)
     const timer = window.setInterval(load, 18000)
-    return () => { reconnect(); window.clearInterval(timer) }
+    return () => { ++loadVersion.current; reconnect(); window.clearInterval(timer) }
   }, [load])
 
   const visibleChannels=channels.filter(channel=>channel.archived===archivedChannels)
@@ -223,9 +264,25 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
 
   return <div className="panel release-panel">
     {view==='workspaces'&&<OrganizationBrand workspace={space.id} name={space.name} accent={liveBrand}/>}
+    {view==='workspaces'&&<WorkspaceResidencyRouting workspace={space.id}/>}
+    {view==='workspaces'&&space.role==='owner'&&<WorkspaceResidencyWriteHandoff workspace={space.id}
+      onRollbackHeld={()=>setRollbackReviewVersion(version=>version+1)}/>}
+    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyRollbackReview
+      key={'destination-review:'+space.id+':'+rollbackReviewVersion} workspace={space.id}/>}
+    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
+      key={'board:'+space.id+':'+rollbackReviewVersion} workspace={space.id}/>}
+    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
+      key={'channels:'+space.id+':'+rollbackReviewVersion} workspace={space.id} scope="channels"/>}
+    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencySourceReplayReview
+      key={'source-review:'+space.id+':'+rollbackReviewVersion} workspace={space.id}/>}
+    {view==='workspaces'&&space.role==='member'&&<WorkspaceResidencyBoardAuthor key={space.id} workspace={space.id}/>}
+    {view==='workspaces'&&space.role==='member'&&<WorkspaceResidencyBoardAuthor key={'chat:'+space.id} workspace={space.id} scope="channels"/>}
     {view==='workspaces'&&space.policy&&<p className="muted">{space.policy.details?.label||space.policy.workspace_type} · {
       space.policy.compliance?.label||(space.policy.template==='restricted'?'Restricted policy':'Standard policy')}</p>}
-    {view==='workspaces' && <SectionTabs label="Workspace sections" value={visibleTab} onChange={setTab} options={[
+    {view==='workspaces' && <SectionTabs label="Workspace sections" value={visibleTab} onChange={next=>{
+      setTab(next)
+      if(next==='channels'||next==='people') void load()
+    }} options={[
       ...(manager ? [['overview','Overview'] as const,['features','Features'] as const] : []),
       ...(role&&space.policy?.workspace_type==='school'?[['school','School'] as const]:[]),
       ...(role&&space.policy?.workspace_type==='family'?[['family','Family'] as const]:[]),
@@ -237,11 +294,19 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
         ['compliance-exports','Compliance exports'] as const] : []),
     ]}/>}
     {error && <p role="alert" className="error">{error}</p>}
-    {view==='rooms'&&<SectionTabs label="Room sections" value={roomView} onChange={setRoomView} options={ [['rooms','Room directory'],['channels','Workspace channels']] }/>}
+    {view==='rooms'&&<SectionTabs label="Room sections" value={roomView} onChange={next=>{
+      setRoomView(next)
+      if(next==='channels') void load()
+    }} options={ [['rooms','Room directory'],['channels','Workspace channels']] }/>}
     {view==='rooms'&&roomView==='rooms'&&<RoomDirectory key={initialRoom} initialRoom={initialRoom} space={space.id} user={user} manager={manager} profiles={profiles}
       allowedRoomKinds={space.policy?.room_kinds}
       workspaceAdminIds={activeMembers.filter(member=>member.role!=='member').map(member=>member.user_id)}/>}
     {((view==='rooms'&&roomView==='channels')||(view==='workspaces'&&tab==='channels')) && <div className="release-section">
+      {view==='workspaces'&&role==='owner'&&<ChannelEncryptionPolicy workspace={space.id}/>}
+      {channelAccess==='required'&&<p role="status">Sign in with workspace single sign-on to open the channel directory.</p>}
+      {channelAccess==='unavailable'&&<p role="alert">Could not check access to the channel directory.</p>}
+      {!channelAccess&&<p role="status">Checking channel directory access…</p>}
+      {channelAccess==='allowed'&&<>
       <SectionTabs label="Channel filters" value={archivedChannels?'archived':'active'}
         onChange={next=>setArchivedChannels(next==='archived')} options={ [['active','Active channels'],['archived','Archived channels']] }/>
       <div className="release-flex">
@@ -257,10 +322,14 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
       {selectedChannel?<ChannelPanel key={selectedChannel.id+selectedChannel.visibility} channel={selectedChannel} profiles={profiles} activeMembers={activeMembers} user={user}
         refresh={load} onArchiveChange={archived=>{setChannelId(selectedChannel.id);setArchivedChannels(archived)}}/>
         :<p>No {archivedChannels?'archived':'active'} channels.</p>}
+      </>}
     </div>}
-    {view==='workspaces' && tab==='board' && <Board space={space.id} manager={manager} />}
+    {view==='workspaces' && tab==='board' && <WorkspacePlannerAccess workspace={space.id}>
+      <Board key={space.id} space={space.id} manager={manager}/>
+    </WorkspacePlannerAccess>}
     {view==='workspaces' && tab==='files' && <WorkspaceFiles workspace={space.id} owner={role==='owner'} />}
-    {view==='workspaces' && visibleTab==='integrations' && <WorkspaceIntegrations key={space.id} workspace={space.id} onManageDomains={()=>setTab('organization')}/>}
+    {view==='workspaces' && visibleTab==='integrations' && <WorkspaceIntegrations key={space.id} workspace={space.id}
+      onManageDomains={()=>setTab('organization')}/>}
     {view==='workspaces' && visibleTab==='file-egress' && <WorkspaceFileEgress key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='policies' && <WorkspacePolicies key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='custom-roles' && <WorkspaceCustomRoles key={space.id} workspace={space.id} members={managedMembers}/>}
@@ -277,8 +346,10 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
     {view==='workspaces' && tab==='features' && manager && <WorkspaceFeatures key={space.id} workspace={space.id}/>}
     {view==='workspaces' && visibleTab==='compliance-exports' && manager && <ComplianceExports key={space.id} workspace={space.id}/>}
     {view==='workspaces' && tab==='teams' && <WorkspaceGroups workspace={space.id} manager={manager} people={activeMembers} profiles={profiles}/>}
-    {view==='tasks'&&<TaskList space={space.id} actor={user} manager={manager} members={members} profiles={profiles}/>}
-    {view==='calendar'&&<WorkspaceCalendar space={space.id} />}
+    {view==='tasks'&&<WorkspacePlannerAccess workspace={space.id}>
+      <TaskList key={space.id} space={space.id} actor={user} manager={manager} members={members} profiles={profiles}/>
+    </WorkspacePlannerAccess>}
+    {view==='calendar'&&<WorkspaceCalendar key={space.id} space={space.id} />}
     {view==='workspaces' && visibleTab==='school' && role && space.policy?.workspace_type==='school' &&
       (classroom ? <section aria-label="Supervised classroom room">
         <button type="button" className="secondary" onClick={()=>setClassroom(undefined)}>Back to School</button>
@@ -295,7 +366,10 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
         members={managedMembers} names={memberNames}/>}
     {view==='workspaces'&&visibleTab==='people' && <div className="release-section">
       {role && <WorkspaceNotificationPolicy workspace={space.id} manager={manager}/>}
-      {manager&&<WorkspaceLinkInvites workspace={space.id} profile={space.policy?.compliance}/>}
+      {manager&&invitationAccess==='required'&&<p role="status">Sign in with workspace single sign-on to manage invitations.</p>}
+      {manager&&invitationAccess==='unavailable'&&<p role="alert">Could not check invitation management access.</p>}
+      {manager&&invitationAccess===undefined&&<p role="status">Checking invitation management access…</p>}
+      {manager&&invitationAccess==='allowed'&&<WorkspaceLinkInvites workspace={space.id} profile={space.policy?.compliance}/>}
       {presenceRequired!==null&&<div>
         {manager ? <QuickForm label="Workspace availability policy" button="Save availability policy" send={async fields => {
           await rpc('st_v6_set_workspace_presence_policy',{p_workspace:space.id,p_required:fields.get('presence')==='required'})
@@ -306,11 +380,11 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
           <p className="muted">Requiring sharing disables Invisible and new changes to hide availability for active members. Existing private settings stay private until the member chooses a state.</p>
         </QuickForm> : <p className="muted">{presenceRequired?'This workspace requires availability sharing.':'Members choose how to share their availability.'}</p>}
       </div>}
-      {manager && <QuickForm label="Invite a member" button="Send invitation" send={async fields => {
+      {manager && invitationAccess==='allowed' && <QuickForm label="Invite a member" button="Send invitation" send={async fields => {
         if (!await rpc('st_v2_invite', { p_workspace: space.id, p_handle: fields.get('handle') })) throw new Error('This contact is unavailable or has already been invited.')
         await load()
       }}><label>Invite by SecTalk handle<input name="handle" required minLength={3} maxLength={24} /></label></QuickForm>}
-      {manager && <details className="release-create"><summary>Import invitations from CSV</summary>
+      {manager && invitationAccess==='allowed' && <details className="release-create"><summary>Import invitations from CSV</summary>
         <QuickForm label="Import invitations" button="Send invitations" send={async fields => {
           setBulkResults([])
           const file = fields.get('csv')
@@ -328,16 +402,23 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
           <ul>{bulkResults.map(result => <li key={result.handle}>@{result.handle} · {result.sent ? 'Sent' : 'Unavailable or already invited'}</li>)}</ul>
         </div>}
       </details>}
-      {role === 'owner' || role === 'admin' ? <WorkspacePeople key={space.id} workspace={space.id} role={role} user={user} onChanged={load}/> : <>
+      {directoryAccess==='required' && <p role="status">Sign in through your workspace provider to view or manage the member directory.</p>}
+      {directoryAccess==='unavailable' && <p role="alert">Could not check workspace directory access.</p>}
+      {directoryAccess===undefined && <p role="status">Checking workspace directory access…</p>}
+      {directoryAccess==='allowed' && (role === 'owner' || role === 'admin' ? <WorkspacePeople key={space.id} workspace={space.id} role={role} user={user} onChanged={load}/> : <>
         <h2>Members</h2>
         {members.map(member => <div className="release-row" key={member.user_id}>
           <strong>{profiles[member.user_id]?.name || 'Workspace member'}</strong><span className="pill">{member.role}</span>
           {member.suspended_at && <span className="pill">Suspended</span>}
         </div>)}
-      </>}
+      </>)}
     </div>}
-    {view==='workspaces'&&tab==='activity'&&manager&&<div className="release-section"><h2>Recent workspace activity</h2>{audit.length===0&&<p>No activity yet.</p>}
-      {audit.map(event => <div className="release-row" key={event.id}><strong>{event.event.replace('.', ' ')}</strong><span>{profiles[event.actor]?.name || 'Workspace member'}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></div>)}
+    {view==='workspaces'&&tab==='activity'&&manager&&<div className="release-section"><h2>Recent workspace activity</h2>
+      {auditAccess===undefined&&<p role="status">Checking workspace audit access…</p>}
+      {auditAccess==='unavailable'&&<p role="alert">Could not load workspace activity.</p>}
+      {auditAccess==='required'&&<p role="status">Sign in through your workspace provider to access audit logs.</p>}
+      {auditAccess==='allowed'&&audit.length===0&&<p>No activity yet.</p>}
+      {auditAccess==='allowed'&&audit.map(event => <div className="release-row" key={event.id}><strong>{event.event.replace('.', ' ')}</strong><span>{profiles[event.actor]?.name || 'Workspace member'}</span><time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></div>)}
     </div>}
   </div>
 }
@@ -378,6 +459,7 @@ function ChannelPanel({channel,profiles,activeMembers,user,refresh,onArchiveChan
     {confirmation}
     <h2>#{channel.name}</h2>
     <p>{channel.visibility==='private'?'Private':'Workspace-wide'}{channel.archived?' · Archived':''}</p>
+    <p>Encryption mode · {channel.encryption_mode==='managed'?'Server-managed encryption':'Standard workspace storage'}</p>
     {error&&<p role="alert" className="error">{error}</p>}
     {details?.can_manage&&<details className="release-create">
       <summary>Channel settings</summary>
@@ -416,18 +498,28 @@ function ChannelPanel({channel,profiles,activeMembers,user,refresh,onArchiveChan
         {event.detail&&<span>{event.action==='transfer_owner'?'Previous owner '+name(event.detail):event.detail}</span>}
       </li>)}</ol>:<p>No channel audit entries.</p>}
     </details>}
-    {details?.can_read&&<ChannelFeed channelId={channel.id} archived={channel.archived} profiles={profiles} user={user}/>}
+    {details?.sso_required&&<p role="status">Sign in with workspace single sign-on to read or send messages in this channel.</p>}
+    {details?.can_read&&<ChannelFeed channelId={channel.id} archived={channel.archived} profiles={profiles} user={user}
+      managed={channel.encryption_mode==='managed'}/>}
   </section>
 }
 
-function ChannelFeed({ channelId, archived, profiles, user }: { channelId: string; archived:boolean; profiles: Record<string, Profile>; user: string }) {
+function ChannelFeed({ channelId, archived, profiles, user, managed }: {
+  channelId:string; archived:boolean; profiles:Record<string,Profile>; user:string; managed:boolean
+}) {
   const [posts, setPosts] = useState<Post[]>([])
   const [error, setError] = useState('')
   const [reporting,setReporting]=useState<Post|null>(null)
   const [reportNotice,setReportNotice]=useState('')
   const [older, setOlder] = useState(false)
+  const [matches,setMatches]=useState<Post[] | null>(null)
+  const [searchTerm,setSearchTerm]=useState('')
+  const [searchNext,setSearchNext]=useState<ManagedSearchCursor|null>(null)
+  const [searching,setSearching]=useState(false)
+  const [searchError,setSearchError]=useState('')
   const draftId = useRef<{ id: string; body: string } | null>(null)
   const loadedPosts = useRef(new Set<string>())
+  const searchPostIds = useRef<string[]>([])
   const quarantined = useRef(new Map<string,string>())
   const {publish: publishWithDlp, prompt: dlpPrompt}=useDlpPublishWarning()
   const applyQuarantine = useCallback((markers: Pick<Post,'id'|'quarantined_at'>[]) => {
@@ -442,12 +534,28 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
     setPosts(previous => previous.map(post => found.has(post.id)
       ? { ...post,body:'Message quarantined',quarantined_at:quarantined.current.get(post.id)! } : post))
     setReporting(previous => previous && found.has(previous.id) ? null : previous)
+    setMatches(previous => previous?.filter(post => !found.has(post.id)) ?? null)
   },[])
   const fetchPosts = useCallback(async (before?: Post) => {
-    let query = db!.from('st_v2_posts').select('*').eq('channel_id', channelId)
-    if (before) query = query.or('created_at.lt.' + before.created_at + ',and(created_at.eq.' + before.created_at + ',id.lt.' + before.id + ')')
-    const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(51)
-    if (error) { setError('Could not load channel messages.'); return }
+    let data: Post[]
+    if (managed) {
+      try {
+        data=await managedChannelRequest(channelId,before ? new URLSearchParams({before:before.created_at,beforeId:before.id}) : undefined)
+      } catch {
+        setPosts([])
+        setMatches(null)
+        setSearchNext(null)
+        searchPostIds.current=[]
+        setError('Could not load managed channel messages.')
+        return
+      }
+    } else {
+      let query = db!.from('st_v2_posts').select('*').eq('channel_id', channelId)
+      if (before) query = query.or('created_at.lt.' + before.created_at + ',and(created_at.eq.' + before.created_at + ',id.lt.' + before.id + ')')
+      const result=await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(51)
+      if (result.error) { setError('Could not load channel messages.'); return }
+      data=result.data
+    }
     setError('')
     if (before || data.length > 50) setOlder(data.length > 50)
     const page = data.slice(0,50) as Post[]
@@ -458,7 +566,7 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
       .map(post => [post.id, post])).values()]
       .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)))
     return new Set(page.map(post => post.id))
-  }, [channelId,applyQuarantine])
+  }, [channelId,applyQuarantine,managed])
   useEffect(() => {
     let pending = false
     const controller = new AbortController()
@@ -467,7 +575,8 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
       pending = true
       try {
         const latest = await fetchPosts()
-        const loaded = [...loadedPosts.current].filter(id => !latest?.has(id) && !quarantined.current.has(id))
+        const loaded = [...new Set([...loadedPosts.current,...searchPostIds.current])]
+          .filter(id => !latest?.has(id) && !quarantined.current.has(id))
         for (let start=0;start<loaded.length && !controller.signal.aborted;start+=100) {
           const {data} = await db!.from('st_v2_posts').select('id,quarantined_at').eq('channel_id',channelId)
             .in('id',loaded.slice(start,start+100)).not('quarantined_at','is',null).abortSignal(controller.signal)
@@ -489,12 +598,48 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
     const timer = window.setInterval(refresh, 5000)
     return () => { controller.abort(); reconnect(); window.clearInterval(timer); void db!.removeChannel(channel) }
   }, [channelId, fetchPosts,applyQuarantine])
+  async function search(term:string,cursor?:ManagedSearchCursor) {
+    setSearching(true)
+    setSearchError('')
+    setSearchNext(null)
+    setMatches(null)
+    searchPostIds.current=[]
+    try {
+      const page:{matches:Post[];next:ManagedSearchCursor|null}=await managedChannelRequest(channelId,undefined,{search:term,...cursor})
+      searchPostIds.current=page.matches.map(post=>post.id)
+      setMatches(page.matches.filter(post=>!quarantined.current.has(post.id)))
+      setSearchNext(page.next)
+    } catch {
+      setSearchError('Could not search this channel.')
+    } finally {
+      setSearching(false)
+    }
+  }
   return <>
+    {managed&&<section className="release-section" aria-label="Managed encrypted channel">
+      <h3>Managed encryption</h3>
+      <form className="release-form" onSubmit={event=>{
+        event.preventDefault()
+        const term=String(new FormData(event.currentTarget).get('managed-search')??'').trim()
+        setSearchTerm(term)
+        void search(term)
+      }}>
+        <label>Search channel messages<input name="managed-search" type="search" required minLength={2} maxLength={120}/></label>
+        <button className="secondary" type="submit" disabled={searching}>Search this channel</button>
+      </form>
+      <p>Search starts with the newest messages. Search earlier messages to continue through retained history.</p>
+      {searching&&<p role="status">Searching channel messages…</p>}
+      {searchError&&<p role="alert">{searchError}</p>}
+      {matches?.length
+        ?<ul aria-label="Managed channel search results">{matches.map(post=><li key={post.id}>{post.body}</li>)}</ul>
+        :matches&&<p role="status">No matches in this batch.</p>}
+      {searchNext&&<button className="secondary" type="button" onClick={()=>void search(searchTerm,searchNext)}>Search earlier messages</button>}
+    </section>}
     {error && <p className="error" role="alert">{error}</p>}
     {dlpPrompt}
     {reportNotice&&<p role="status">{reportNotice}</p>}
-    {reporting&&<ChannelReportDialog channel={channelId} post={reporting.id} body={reporting.body}
-      close={()=>setReporting(null)} done={()=>{setReporting(null);setReportNotice('Channel report submitted. Track its progress in Safety.')}}/>}
+    {reporting&&<ChannelReportDialog channel={channelId} post={reporting.id} body={reporting.body} managed={managed}
+      close={()=>setReporting(null)} done={id=>{setReporting(null);setReportNotice(`Channel report submitted. Ticket ${id}. Track it in Safety under My reports.`)}}/>}
     <details className="release-create"><summary>Channel quiet hours</summary>
       <QuietHoursSettings channel={channelId}/>
     </details>
@@ -515,7 +660,8 @@ function ChannelFeed({ channelId, archived, profiles, user }: { channelId: strin
       if (!body) return
       if (draftId.current?.body !== body) draftId.current = { id: crypto.randomUUID(), body }
       const id=draftId.current.id
-      await publishWithDlp('channel',channelId,id,body,()=>rpc('st_v2_post', { p_channel: channelId, p_id: id, p_body: body }))
+      await publishWithDlp('channel',channelId,id,body,()=>managed ? managedChannelRequest(channelId,undefined,{id,body}) :
+        rpc('st_v2_post', { p_channel: channelId, p_id: id, p_body: body }))
       draftId.current = null
       await fetchPosts()
     }}><label><span><Send size={14}/> Channel message</span><textarea name="body" required maxLength={4000} rows={2} readOnly={dlpPrompt!==null} /></label></QuickForm>}
@@ -674,18 +820,22 @@ function TaskList({ space,actor,manager,members,profiles }: {
 }
 
 function WorkspaceCalendar({space}: {space:string}) {
-  const [entries,setEntries]=useState<{id:string;title:string;at:string;kind:'events'|'meetings'|'deadlines'}[]|null>(null)
+  const access=useWorkspacePlannerAccess(space)
+  const [entries,setEntries]=useState<{id:string;title:string;at:string;kind:'events'|'meetings'|'deadlines';roomCall?:boolean}[]|null>(null)
+  const [scheduleAccess,setScheduleAccess]=useState<'allowed'|'required'|'unavailable'>()
   const [filter,setFilter]=useState<'all'|'events'|'meetings'|'deadlines'>('all')
   const [error,setError]=useState('')
   const reload=useCallback(async()=>{
-    const [items,meetings]=await Promise.all([
+    const [items,meetings,schedule]=await Promise.all([
       db!.from('st_v2_items').select('id,title,kind,due_at').eq('workspace_id',space).in('kind',['event','task']).not('due_at','is',null).order('due_at').limit(100),
-      db!.from('st_v3_meetings').select('id,title,starts_at').eq('workspace_id',space).neq('status','ended').order('starts_at').limit(100),
+      db!.from('st_v3_meetings').select('id,title,starts_at,room_id').eq('workspace_id',space).neq('status','ended').order('starts_at').limit(100),
+      db!.rpc('st_v8_workspace_schedule_requires_sso',{p_workspace:space}),
     ])
+    setScheduleAccess(schedule.error?'unavailable':schedule.data?'required':'allowed')
     if(items.error||meetings.error){setError('Could not load your calendar.');return}
     setEntries([
       ...items.data.map(row=>({id:row.id,title:row.title,at:row.due_at,kind:row.kind==='task'?'deadlines' as const:'events' as const})),
-      ...meetings.data.map(row=>({id:row.id,title:row.title,at:row.starts_at,kind:'meetings' as const})),
+      ...meetings.data.map(row=>({id:row.id,title:row.title,at:row.starts_at,kind:'meetings' as const,roomCall:Boolean(row.room_id)})),
     ].sort((first,second)=>Date.parse(first.at)-Date.parse(second.at)))
     setError('')
   },[space])
@@ -695,12 +845,16 @@ function WorkspaceCalendar({space}: {space:string}) {
     const reconnect=onReconnect(reload)
     return ()=>{window.clearInterval(timer);reconnect()}
   },[reload])
-  const visible=entries?.filter(entry=>filter==='all'||entry.kind===filter)
+  const visible=entries?.filter(entry=>(filter==='all'||entry.kind===filter)
+    && (entry.kind==='meetings' ? scheduleAccess==='allowed'||entry.roomCall : access==='allowed'))
   return <div className="release-section">
     <SectionTabs label="Calendar filters" value={filter} onChange={setFilter} options={[
       ['all','Agenda'],['events','Events'],['meetings','Meetings'],['deadlines','Task deadlines'],
     ]}/>
-    <details className="release-create"><summary>Add a calendar event</summary>
+    <WorkspacePlannerAccessNotice access={access}/>
+    {scheduleAccess==='required'&&<p role="status">Sign in through your workspace provider to see workspace meeting schedules.</p>}
+    {scheduleAccess==='unavailable'&&<p role="alert">Could not check workspace meeting access.</p>}
+    {access==='allowed'&&<details className="release-create"><summary>Add a calendar event</summary>
       <QuickForm label="Add a calendar event" button="Add event" send={async fields=>{
         await rpc('st_v2_add_item',{p_workspace:space,p_kind:'event',p_title:fields.get('title'),p_details:fields.get('details'),p_due:new Date(String(fields.get('start'))).toISOString()})
         setFilter('events');await reload()
@@ -709,7 +863,7 @@ function WorkspaceCalendar({space}: {space:string}) {
         <label>Starts at<input name="start" type="datetime-local" required/></label>
         <label>Details<textarea name="details" maxLength={3000} rows={2}/></label>
       </QuickForm>
-    </details>
+    </details>}
     {error&&<p role="alert" className="error">{error}</p>}
     {!entries&&!error&&<p role="status">Loading calendar…</p>}
     {visible?.length===0&&<p>No calendar entries in this view.</p>}

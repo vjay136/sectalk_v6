@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
 import { StaffMfa } from './staff-mfa'
+import { TenantArtifactKeys } from './tenant-artifact-keys'
+import { WorkspaceOffboarding } from './workspace-offboarding'
 
-type Access = 'none' | 'mfa' | 'admin' | 'owner'
-type Kind = 'audit' | 'room_report'
+type Access = 'none' | 'mfa' | 'sso' | 'admin' | 'owner'
+type Kind = 'audit' | 'room_report' | 'managed_channel_report' | 'managed_room_report' | 'offboarding_inventory'
 type Source = { kind: Kind; id: string; label: string; occurred_at: string }
 type Decision = 'approved' | 'denied' | 'revoked' | 'withdrawn'
 type State = Decision | 'pending' | 'expired'
@@ -15,7 +17,13 @@ type Case = {
   sources: Omit<Source, 'occurred_at'>[]; history: Audit[]
   manifest_sha256: string | null; bundle_sha256: string | null; has_artifact: boolean
 }
-const sourceLabels: Record<Kind,string> = { audit: 'Workspace audit event', room_report: 'Shared room report' }
+const sourceLabels: Record<Kind,string> = {
+  audit: 'Workspace audit event',
+  room_report: 'Shared room report',
+  managed_channel_report: 'Consented managed channel report under legal hold',
+  managed_room_report: 'Consented managed room report under legal hold',
+  offboarding_inventory: 'Workspace offboarding inventory',
+}
 const decisions: Record<Decision,string> = {
   approved: 'Approve exact records', denied: 'Deny request', revoked: 'Revoke export', withdrawn: 'Withdraw request',
 }
@@ -25,7 +33,7 @@ export function ComplianceExports({ workspace }: { workspace: string }) {
   const [access, setAccess] = useState<Access | null>(null)
   const refresh = useCallback(async () => {
     const { data, error } = await db!.rpc('st_v7_compliance_access', { p_workspace: workspace })
-    setAccess(!error && (data === 'mfa' || data === 'admin' || data === 'owner') ? data : 'none')
+    setAccess(!error && (data === 'mfa' || data === 'sso' || data === 'admin' || data === 'owner') ? data : 'none')
   }, [workspace])
   useEffect(() => {
     void refresh()
@@ -39,7 +47,10 @@ export function ComplianceExports({ workspace }: { workspace: string }) {
     {access === null ? <p role="status">Checking export access…</p> :
       access === 'none' ? <p>Compliance export access is unavailable.</p> :
         access === 'mfa' ? <StaffMfa refresh={refresh} explanation="Enter a current authenticator code to review or create a compliance export."/> :
-          <ExportCases workspace={workspace} access={access} onAccessChanged={refresh}/>}
+          access === 'sso' ? <p>Sign in with workspace single sign-on to manage compliance exports.</p> :
+            <ExportCases workspace={workspace} access={access} onAccessChanged={refresh}/>}
+    {(access === 'admin' || access === 'owner' || access === 'sso') && <TenantArtifactKeys workspace={workspace}/>}
+    <WorkspaceOffboarding key={workspace} workspace={workspace} reviewOnly/>
   </section>
 }
 
@@ -59,7 +70,7 @@ function ExportCases({ workspace, access, onAccessChanged }: {
       setCases(null)
       setError('Could not load export cases.')
       if (error.code === '42501') await onAccessChanged()
-    } else setCases(data as Case[])
+    } else setCases((data as Case[]).filter(item=>item.sources.every(source=>source.kind!=='offboarding_inventory')))
   }, [workspace, onAccessChanged])
   useEffect(() => { void load() }, [load])
   useEffect(() => {
@@ -178,6 +189,8 @@ function ExportCases({ workspace, access, onAccessChanged }: {
       <ul>{item.sources.map(source => <li key={sourceKey(source)}>{sourceLabels[source.kind]} · {source.label} · <code>{source.id}</code></li>)}</ul>
       {item.manifest_sha256 && <details><summary>Approved SHA-256 hashes</summary>
         <p>Manifest <code>{item.manifest_sha256}</code></p><p>Bundle <code>{item.bundle_sha256}</code></p>
+        {item.sources.some(source=>source.kind==='managed_room_report')&&
+          <p>The bundle hash covers the approved encrypted records. Authorized downloads include the readable room messages and the original bundle hash.</p>}
       </details>}
       <div className="actions">
         {access === 'owner' && item.state === 'pending' && (['approved','denied'] as const).map(decision =>

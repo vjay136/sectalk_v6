@@ -7,6 +7,7 @@ import { ForwardMessageDialog } from './forward-message'
 import { ScopedTasks } from './scoped-tasks'
 import { QuietHoursSettings } from './quiet-hours'
 import { RoomPostReactions, RoomReactionSettings, useRoomReactionCounts, useWorkspaceReactionPolicy, type RoomReactionPolicy } from './room-reactions'
+import { ManagedRoomPolicy,ManagedRoomPosts } from './managed-room'
 import { AdminNotificationAudit } from './admin-notification-audit'
 import { useReadReceiptSettings, useRoomReadReceipts } from './read-receipts'
 import { DraftStatus, useSyncedDraft } from './synced-draft'
@@ -60,6 +61,7 @@ function RoomComposer({user,room,parent,staff,mentionAll,showAnnounce,working,ca
   </form>
 }
 type Room={id:string;name:string;kind:Kind;template:Template;archived:boolean;locked:boolean;slow_seconds:number; forwarding_allowed:boolean;
+  encryption_mode:'standard'|'managed';
   classification:Classification}
 type Post={id:string;sender:string;body:string;kind:'message'|'announcement';created_at:string;edited_at:string|null;removed_at:string|null; forwarded:boolean}
 type Roster={user_id:string;role:Role}
@@ -91,6 +93,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
   const reactionPolicy=useWorkspaceReactionPolicy(space)
   const workspaceReceipts=useReadReceiptSettings('workspace',manager?space:null)
   const [rooms,setRooms]=useState<Room[]|null>(null)
+  const [directoryAccess,setDirectoryAccess]=useState<'allowed'|'required'|'unavailable'>()
   const [selected,setSelected]=useState(initialRoom||'')
   const [selectedFilter,setFilter]=useState<'active'|'archived'|null>(null)
   const [template,setTemplate]=useState<Template>('blank')
@@ -103,10 +106,14 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
   const directoryVersion=useRef(0)
   const refresh=useCallback(async()=>{
     const version=++directoryVersion.current
-    const {data,error}=await db!.from('st_v6_rooms').select('id,name,kind,template,archived,locked,slow_seconds,forwarding_allowed,classification').eq('workspace_id',space).order('name')
+    const [listed,access]=await Promise.all([
+      db!.from('st_v6_rooms').select('id,name,kind,template,archived,locked,slow_seconds,forwarding_allowed,classification,encryption_mode').eq('workspace_id',space).order('name'),
+      db!.rpc('st_v8_workspace_room_structure_requires_sso',{p_workspace:space}),
+    ])
     if(version!==directoryVersion.current)return
-    if(error){setError('Could not load room directory.');return}
-    setRooms(data as Room[])
+    const next=listed.error||access.error?'unavailable':access.data?'required':'allowed'
+    setDirectoryAccess(next)
+    setRooms(next==='allowed'?listed.data as Room[]:null)
   },[space])
   useEffect(()=>{
     void refresh()
@@ -135,12 +142,11 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
 
   return <section aria-label="Room directory">
     <h2>Room directory</h2>
-    <SectionTabs label="Room directory filters" value={filter} onChange={setFilter} options={ [['active','Active rooms'],['archived','Archived rooms']] }/>
     {error&&<p role="alert" className="error">{error}</p>}
     {notice&&<p role="status">{notice}</p>}
-    {!rooms&&!error&&<p role="status">Loading rooms…</p>}
     {reactionPolicy.error&&<p role="alert" className="error">{reactionPolicy.error}</p>}
-    {manager&&reactionPolicy.policy&&<RoomReactionSettings key={space} workspace={space} policy={reactionPolicy.policy} onSaved={reactionPolicy.refresh}/>}
+    {manager&&reactionPolicy.policy&&<RoomReactionSettings key={'room-reactions:'+space} workspace={space} policy={reactionPolicy.policy} onSaved={reactionPolicy.refresh}/>}
+    {manager&&<ManagedRoomPolicy key={'managed-room-policy:'+space} workspace={space}/>}
     {manager&&workspaceReceipts.settings&&<details>
       <summary>Workspace read receipts</summary>
       <button className="secondary" type="button" disabled={workspaceReceipts.saving}
@@ -150,6 +156,11 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
       </button>
       {workspaceReceipts.error&&<p role="alert" className="error">{workspaceReceipts.error}</p>}
     </details>}
+    {!directoryAccess&&<p role="status">Loading rooms…</p>}
+    {directoryAccess==='required'&&<p role="status">Sign in with workspace single sign-on to open the room directory.</p>}
+    {directoryAccess==='unavailable'&&<p role="alert">Could not check access to the room directory.</p>}
+    {directoryAccess==='allowed'&&<>
+    <SectionTabs label="Room directory filters" value={filter} onChange={setFilter} options={ [['active','Active rooms'],['archived','Archived rooms']] }/>
     {manager&&<details open={creating} onToggle={event=>setCreating(event.currentTarget.open)}><summary>Create a room</summary>
       <form className="release-form" onSubmit={event=>{
         event.preventDefault()
@@ -165,6 +176,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
         })
       }}>
         <label>Room name<input name="name" required maxLength={64}/></label>
+        <p>New rooms use standard workspace storage.</p>
         <label>Room template<select name="template" value={template} onChange={event=>{
           const next=event.target.value as Template
           setTemplate(next);setKind(undefined)
@@ -202,6 +214,7 @@ export function RoomDirectory({space,user,manager,profiles,workspaceAdminIds,all
         setFilter(archived?'archived':'active')
       }}
       refreshDirectory={refresh} reactionPolicy={reactionPolicy.policy}/>}
+    </>}
   </section>
 }
 
@@ -212,6 +225,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const {authorize,confirmation}=useSensitiveAction()
   const {publish: publishWithDlp, prompt: dlpPrompt}=useDlpPublishWarning()
   const [role,setRole]=useState<Role|null|undefined>(undefined)
+  const [ssoRequired,setSsoRequired]=useState(false)
   const [entries,setEntries]=useState<Entry[]>([])
   const [roster,setRoster]=useState<Roster[]>([])
   const [notes,setNotes]=useState<Audit[]>([])
@@ -258,7 +272,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const forwardingAvailable=room.kind==='public'&&canShareClassification&&room.forwarding_allowed&&!room.archived&&!room.locked&&(staff||role==='member')
   const refresh=useCallback(async()=>{
     const version=++refreshVersion.current
-    const [identity,requests,members,messages,pinned,activity,blocked]=await Promise.all([
+    const [identity,requests,members,messages,pinned,activity,blocked,signIn]=await Promise.all([
       db!.rpc('st_v6_room_my_role',{p_room:room.id}),
       db!.from('st_v6_room_entries').select('*').eq('room_id',room.id).gt('expires_at',new Date().toISOString()).limit(100),
       db!.from('st_v6_room_members').select('user_id,role').eq('room_id',room.id).limit(500),
@@ -269,10 +283,16 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
       manager?db!.rpc('st_v6_room_management_audit',{p_room:room.id})
         :db!.from('st_v6_room_audit').select('*').eq('room_id',room.id).order('id',{ascending:false}).limit(50),
       db!.from('st_v6_room_bans').select('user_id').eq('room_id',room.id).limit(100),
+      db!.rpc('st_v8_standard_room_requires_sso',{p_room:room.id}),
     ])
     if(version!==refreshVersion.current)return
-    if([identity,requests,members,messages,pinned,activity,blocked].some(result=>result.error)){
+    if([identity,requests,members,messages,pinned,activity,blocked,signIn].some(result=>result.error)){
       setError('Could not load room data.');return
+    }
+    setSsoRequired(signIn.data===true)
+    if(signIn.data===true){
+      setRole(null);setPosts([]);setPins([]);setReplies([]);setThreadRoot(null);setThreadStates([])
+      return
     }
     setRole(identity.data as Role|null)
     setEntries((requests.data||[]) as Entry[]);setRoster((members.data||[]) as Roster[])
@@ -354,7 +374,8 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const receiptFeed=useRef<HTMLElement>(null)
   const actualView=manager&&!role&&!['people','settings','audit'].includes(view)?'settings'
     :(!canManage&&(view==='settings'||view==='audit'))||(!manager&&role==='guest'&&view==='people')?'messages':view
-  const showTyping=Boolean(role&&!room.archived&&(actualView==='messages'||(actualView==='threads'&&thread)))
+  const managed=room.encryption_mode==='managed'
+  const showTyping=Boolean(!managed&&role&&!room.archived&&(actualView==='messages'||(actualView==='threads'&&thread)))
   const typingParent=actualView==='threads'?thread:null
   const activeTyping=showTyping&&roomTyping?.parent===typingParent?roomTyping:null
   useEffect(()=>{
@@ -409,7 +430,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     finally{setTypingPolicyBusy(false)}
   }
   const nextVisibility=room.kind==='public'?'private':'public'
-  const canChangeVisibility=manager&&!room.archived&&(room.kind==='public'||room.kind==='private')
+  const canChangeVisibility=!managed&&manager&&!room.archived&&(room.kind==='public'||room.kind==='private')
     &&(room.template==='blank'||room.template==='project')&&(!allowedRoomKinds||allowedRoomKinds.includes(nextVisibility))
   const ownerCandidates=roster.filter(person=>person.role!=='owner'&&profiles[person.user_id])
   const parent=threadRoot||posts.find(post=>post.id===thread)
@@ -502,18 +523,19 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
       void settings('slow',{p_seconds:Number(new FormData(event.currentTarget).get('seconds'))})
     }}><label>Slow mode in seconds<input key={room.slow_seconds} name="seconds" type="number" min={0} max={300} required defaultValue={room.slow_seconds}/></label>
       <button className="secondary" disabled={working}>Save slow mode</button></form>}
-    <MessageFormatting account={user} mode='managed'/>
+    {!managed&&<MessageFormatting account={user} mode='managed'/>}
     {confirmation}
     {dlpPrompt}
     {forwarding&&<ForwardMessageDialog key={forwarding} source={{kind:'room',conversation:room.id,message:forwarding}}
       close={()=>setForwarding(null)} onSent={()=>setNotice('Message forwarded.')}/>}
     <h2>{room.name}</h2><p>{kinds[room.kind]}{room.template!=='blank'?' · '+templates[room.template].name+' template':''}{room.archived?' · Archived':room.locked?' · Locked':''}{role?' · '+roleLabel(role):''}</p>
+    <p>Encryption mode · {managed?'Server-managed encryption':'Standard workspace storage'}</p>
     <p className="pill">{classificationLabels[room.classification]} classification</p>
     {role&&<div>
       <button type="button" className="secondary" aria-expanded={quietHours}
         onClick={()=>setQuietHours(!quietHours)}>Room quiet hours</button>
       {quietHours&&<QuietHoursSettings room={room.id}/>}
-      {receiptPolicy.settings&&<button type="button" className="secondary" disabled={receiptPolicy.saving}
+      {!managed&&receiptPolicy.settings&&<button type="button" className="secondary" disabled={receiptPolicy.saving}
         aria-pressed={receiptPolicy.settings.personal_enabled} title="Applies to your direct chats and eligible rooms"
         onClick={()=>void receiptPolicy.save('personal',!receiptPolicy.settings?.personal_enabled)}>Share my read receipts</button>}
     </div>}
@@ -521,19 +543,23 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     {error&&<p role="alert" className="error">{error}</p>}
     {notice&&<p role="status">{notice}</p>}
     {role===undefined&&!error&&<p role="status">Loading room…</p>}
-    {role===null&&(invite?<div className="action-row">
+    {ssoRequired&&<p role="status">Workspace single sign-on is required to open this room’s messages. Sign out and use Workspace single sign-on on the sign-in page.</p>}
+    {role===null&&!ssoRequired&&(invite?<div className="action-row">
       <button className="primary" type="button" disabled={working} onClick={()=>void member('accept')}>Accept room invitation</button>
       <button className="secondary" type="button" disabled={working} onClick={()=>void member('decline')}>Decline invitation</button>
     </div>:!room.archived&&['public','announcement','broadcast'].includes(room.kind)&&<button className="primary" type="button" disabled={working} onClick={()=>void member('join')}>Join room</button>)}
     {(role||manager)&&<>
       <SectionTabs label="Room tabs" value={actualView} onChange={setView} options={[
-        ...(role?[['messages','Messages'] as const,['threads','Threads'] as const,['pins','Pins'] as const,
+        ...(role?[['messages','Messages'] as const]:[]),
+        ...(role&&!managed?[['threads','Threads'] as const,['pins','Pins'] as const,
           ['files','Files'] as const,['tasks','Tasks'] as const,['calls','Calls'] as const]:[]),
         ...(manager||role!=='guest'?[['people','Members'] as const]:[]),
         ...(canManage?[['settings','Settings'] as const,['audit','Audit'] as const]:[]),
       ]}/>
       {reactions.error&&<p role="alert" className="error">{reactions.error}</p>}
-      {actualView==='messages'&&(posts.length?posts.map(post=>renderPost(post,true)):<p>No messages yet.</p>)}
+      {actualView==='messages'&&(managed?
+        <ManagedRoomPosts room={room.id} user={user} canPost={Boolean(canPost&&role!=='guest')} name={name}/>:
+        posts.length?posts.map(post=>renderPost(post,true)):<p>No messages yet.</p>)}
       {actualView==='threads'&&<>
         {threadStates.some(item=>item.following)&&<div className="release-section"><h3>Followed threads</h3>
           {threadStates.filter(item=>item.following).map(item=><button className="secondary" type="button" key={item.post_id}
@@ -558,7 +584,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
         people={Object.fromEntries((room.kind==='admin'?workspaceAdminIds:roster.map(row=>row.user_id))
           .filter(id=>profiles[id]).map(id=>[id,profiles[id]]))}/>}
       {activeTyping?.until&&Date.parse(activeTyping.until)>Date.now()&&<p className="thread-typing" role="status">Someone is typing…</p>}
-      {canPost&&(actualView==='messages'||(actualView==='threads'&&thread&&room.kind!=='announcement'))&&
+      {!managed&&canPost&&(actualView==='messages'||(actualView==='threads'&&thread&&room.kind!=='announcement'))&&
         <RoomComposer key={typingParent||'root'} user={user} room={room.id} parent={typingParent} staff={staff} mentionAll={Boolean(permissions.state?.mention_all)}
           showAnnounce={staff&&room.kind!=='announcement'&&actualView==='messages'} working={working}
           canToggleTyping={Boolean(activeTyping)&&!typingPolicyBusy} shareTyping={Boolean(activeTyping?.share)}
@@ -592,7 +618,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
             <label>Invite workspace member<select name="person" required><option value="">Choose someone</option>
               {Object.values(profiles).filter(person=>person.id!==user&&!roster.some(row=>row.user_id===person.id)&&!bans.includes(person.id))
                 .map(person=><option value={person.id} key={person.id}>{person.name} (@{person.handle})</option>)}</select></label>
-            <label>Invitation role<select name="role"><option value="member">Member</option><option value="guest">Guest</option><option value="read_only">Read only</option></select></label>
+            <label>Invitation role<select name="role"><option value="member">Member</option>{!managed&&<option value="guest">Guest</option>}<option value="read_only">Read only</option></select></label>
             <button className="secondary" disabled={working}>Invite</button>
           </form>
           {entries.filter(entry=>entry.kind==='request').map(entry=><div className="release-row" key={entry.user_id}>
@@ -606,7 +632,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
       </>}
       {actualView==='settings'&&<>
         {permissions.state&&<RoomPermissionSettings room={room.id} editable={permissions.state.editable} refresh={permissions.refresh}/>}
-        {role==='owner'&&<RoomGuestLinks room={room.id}
+        {role==='owner'&&!managed&&<RoomGuestLinks room={room.id}
           policyVersion={JSON.stringify([room.kind,room.classification,room.forwarding_allowed,room.archived,room.locked])}/>}
         {manager&&!room.archived&&<form className="release-form" key={room.classification} onSubmit={event=>{
           event.preventDefault()
@@ -625,7 +651,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
           <p>Confidential and Restricted labels disable in-app forwarding. Room visibility controls access.</p>
           <button className="secondary" disabled={working}>Save classification</button>
         </form>}
-        {receiptPolicy.settings&&<div className="release-section">
+        {!managed&&receiptPolicy.settings&&<div className="release-section">
           <h3>Room read receipts</h3>
           {!receiptPolicy.settings.workspace_enabled&&<p>Workspace policy disables read receipts.</p>}
           <button className="secondary" type="button" disabled={receiptPolicy.saving}

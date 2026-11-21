@@ -9,13 +9,14 @@ import {RoomServiceClient,TokenVerifier} from 'livekit-server-sdk'
 
 const app=new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase=new URL(process.env.SECTALK_STORAGE_TEST_URL)
-assert.equal(app.href,'http://127.0.0.1:3498/')
+const gated=process.env.SECTALK_TEST_LIVEKIT_SIGNAL==='1'
+assert.equal(app.href,gated?'http://127.0.0.1:3581/':'http://127.0.0.1:3498/')
 assert.equal(supabase.hostname,'127.0.0.1')
 const {SECTALK_STORAGE_TEST_PUBLIC_KEY:key,SECTALK_STORAGE_TEST_SERVICE_KEY:serviceKey}=process.env
 assert.ok(key && serviceKey)
 const auth={persistSession:false,autoRefreshToken:false}
 const admin=createClient(supabase.href,serviceKey,{auth})
-const provider=new RoomServiceClient('http://127.0.0.1:7880','devkey','secret')
+const provider=new RoomServiceClient(gated?'http://127.0.0.1:7900':'http://127.0.0.1:7880','devkey','secret')
 const verifier=new TokenVerifier('devkey','secret')
 const endpoint=new URL('/api/meetings/guests',app)
 const {chromium}=await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
@@ -183,6 +184,11 @@ try {
   await guest.locator('.meeting-media').waitFor({state:'detached'})
   assert.ok(!(await provider.listParticipants('sectalk-v3-'+meeting)).some(person=>person.identity===lobby[0].id))
   assert.equal((await visit('token',access)).status,403)
+  if (gated) {
+    const reconnect=new URL('http://127.0.0.1:3580/rtc/validate')
+    reconnect.searchParams.set('access_token',mediaToken)
+    assert.equal((await fetch(reconnect)).status,403)
+  }
   assert.equal((await submit(ticket,'after-revocation')).status,403)
   assert.ok(!challenges.includes('after-revocation'))
 

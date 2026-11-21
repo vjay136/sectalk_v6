@@ -2,6 +2,7 @@ import { fileFailure, fileHeaders } from '../../../lib/authenticated-file-reques
 import { readAttachmentUpload } from '../../../lib/attachment-upload-body'
 import { exportBucket, exportDigest, exportIdPattern, exportResponse, exportStorage, storeExport } from '../../../lib/export-storage-server'
 import { operationalReportViewer } from '../../../lib/operational-report-server'
+import { decryptManagedArtifact } from '../../../lib/tenant-artifact-keys'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -41,7 +42,7 @@ async function execute(request: Request, input: Capture | string) {
       if (typeof material.payload !== 'string') return failed()
       const bytes = Buffer.from(material.payload, 'utf8')
       if (bytes.length !== material.bytes || exportDigest(bytes) !== material.sha256) return failed()
-      const artifact = await storeExport(viewer.actor, { kind: 'evidence', scope_id: material.snapshot }, format, bytes)
+      const artifact = await storeExport(viewer.actor, { kind: 'evidence', scope_id: material.snapshot }, format, bytes, ticket)
       if (!artifact) return failed()
       const result = await finish(artifact)
       if (result.error) return failed()
@@ -52,8 +53,8 @@ async function execute(request: Request, input: Capture | string) {
     if (!validId(material.artifact)) return unavailable()
     const object = await storage.storage.from(exportBucket).download(material.artifact)
     if (object.error || object.data.size !== material.bytes) return unavailable()
-    const bytes = Buffer.from(await object.data.arrayBuffer())
-    if (exportDigest(bytes) !== material.sha256) return unavailable()
+    const bytes = await decryptManagedArtifact(storage,ticket,material.artifact,Buffer.from(await object.data.arrayBuffer())).catch(() => null)
+    if (!bytes || exportDigest(bytes) !== material.sha256) return unavailable()
     const result = await finish(material.artifact)
     if (result.error) return failed()
     if (result.data !== true) return unavailable()

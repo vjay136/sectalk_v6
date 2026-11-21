@@ -112,14 +112,29 @@ begin
     raise exception 'Existing channel cascade did not leave a verifiable deletion commitment';
   end if;
 
-  delete from public.st_v2_workspaces where id = fixture_workspace;
-  if not exists (
+  if to_regclass('sectalk_private.st_v8_workspace_audit_actors') is not null then
+    delete from public.st_v2_workspaces where id = fixture_workspace;
+    if not exists(
+      select 1 from sectalk_private.st_v6_audit_verify(anchored.entry_no,anchored.entry_hash) v
+      where v.entry_no=anchored.entry_no+1 and exists(
+        select 1 from public.st_v2_workspace_audit a where a.id=fixture_audit_id and a.workspace_id=fixture_workspace)
+    ) then raise exception 'Ordinary workspace removal rewrote retained audit'; end if;
+  elsif to_regclass('sectalk_private.st_v8_workspace_audit_custody') is null then
+    delete from public.st_v2_workspaces where id = fixture_workspace;
+  else
+    begin
+      delete from public.st_v2_workspaces where id = fixture_workspace;
+      raise exception 'Workspace audit cascade bypassed reviewed custody';
+    exception when foreign_key_violation then null; end;
+    delete from public.st_v2_workspace_audit where id = fixture_audit_id;
+  end if;
+  if to_regclass('sectalk_private.st_v8_workspace_audit_actors') is null and not exists (
     select 1 from sectalk_private.st_v6_audit_verify(anchored.entry_no, anchored.entry_hash) v
       join sectalk_private.st_v6_audit_chain c using (entry_no, entry_hash)
       where c.entry_no = anchored.entry_no + 2 and c.source_id = fixture_audit_id
         and c.source = 'public.st_v2_workspace_audit' and c.operation = 'DELETE'
   ) then
-    raise exception 'Existing workspace cascade did not leave a verifiable deletion commitment';
+    raise exception 'Workspace audit deletion did not leave a verifiable journal commitment';
   end if;
 
   if exists (

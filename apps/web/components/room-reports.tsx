@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { db, formatError } from '../lib/data'
+import { categories as reportCategories,db,formatError } from '../lib/data'
 import { SocResponseActions } from './soc-response-actions'
+import { StaffMfa } from './staff-mfa'
+import { isReportTicket, ReportTicket, ReportTime } from './report-ticket'
 
 const categories = {
   harassment: 'Harassment', threat: 'Threat', scam: 'Scam', impersonation: 'Impersonation',
@@ -35,10 +37,12 @@ type Report = {
   decided_at?: string | null
 }
 
-export function RoomPostReport({room, post, close}: {room: string; post: string; close: () => void}) {
+export function RoomPostReport({room, post, close, revision}: {room: string; post: string; close: () => void; revision?:string}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [sent, setSent] = useState(false)
+  const [sent, setSent] = useState<string|null>(null)
+  const [category, setCategory] = useState('')
+  const canShareWithWorkspace = category === 'spam' || category === 'other'
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -46,29 +50,67 @@ export function RoomPostReport({room, post, close}: {room: string; post: string;
     setBusy(true)
     setError('')
     const form = new FormData(event.currentTarget)
-    const {error} = await db!.rpc('st_v6_submit_room_report', {
+    const {data,error} = await db!.rpc(revision?'st_v8_submit_consented_managed_room_report':'st_v6_submit_room_report', {
       p_room: room, p_post: post, p_category: form.get('category'),
-      p_details: form.get('details'), p_share: form.has('share'),
+      p_details: form.get('details'),
+      ...(revision?{p_revision:revision,p_consent:form.has('share'),p_workspace_consent:form.has('workspace-share')}
+        :{p_share:form.has('share')}),
     })
-    if (error) setError(formatError(error, 'Could not submit this room report.'))
-    else setSent(true)
+    if (error || !isReportTicket(data)) setError(formatError(error, 'Could not confirm your room report submission.'))
+    else setSent(data)
     setBusy(false)
   }
 
   return <section className="release-section" aria-label="Report room message">
     <h3>Report room message</h3>
-    {sent ? <p role="status">Report submitted. Follow its status in Safety under My reports.</p> :
+    {sent ? <div role="status"><p>Report submitted. Follow its status in Safety under My reports.</p><ReportTicket id={sent}/></div> :
       <form className="release-form" onSubmit={submit}>
-        <label>Category<select name="category" required defaultValue="">
+        <label>Category<select name="category" required value={category} onChange={event=>setCategory(event.currentTarget.value)}>
           <option value="" disabled>Choose a category</option>
-          {Object.entries(categories).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          {Object.entries(reportCategories).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select></label>
         <label>Private details for platform staff<textarea name="details" maxLength={1500} rows={3}/></label>
-        <label><input type="checkbox" name="share"/> Allow platform staff to share this post and category with authorized workspace admins</label>
+        <label><input type="checkbox" name="share" required={Boolean(revision)}/> {revision
+          ?'Share this exact message revision with Platform Safety'
+          :'Allow platform staff to share this post and category with authorized workspace admins'}</label>
+        {revision&&canShareWithWorkspace&&<label><input type="checkbox" name="workspace-share"/> Allow Platform Safety to share this revision
+          with authorized workspace reviewers, including in an approved legal-hold export</label>}
         <button className="primary" disabled={busy}>Submit room report</button>
       </form>}
     {error && <p className="error" role="alert">{error}</p>}
     <button className="secondary" type="button" disabled={busy} onClick={close}>{sent ? 'Done' : 'Cancel room report'}</button>
+  </section>
+}
+
+function ManagedEvidence({report}:{report:string}){
+  const [present,setPresent]=useState<boolean|null>(null)
+  const [body,setBody]=useState('')
+  const [error,setError]=useState('')
+  const [busy,setBusy]=useState(false)
+  useEffect(()=>{
+    const controller=new AbortController()
+    void db!.rpc('st_v8_managed_room_evidence_present',{p_report:report}).abortSignal(controller.signal)
+      .then(result=>{if(!controller.signal.aborted)setPresent(result.data===true)})
+    return ()=>controller.abort()
+  },[report])
+  async function open(){
+    setBusy(true)
+    setError('')
+    try{
+      const token=(await db!.auth.getSession()).data.session?.access_token
+      const response=await fetch('/api/managed-room-evidence/'+report,{headers:{Authorization:'Bearer '+token}})
+      if(!response.ok)throw new Error('Evidence unavailable.')
+      setBody((await response.json()).body)
+    }catch{setError('Verify your authenticator to open this evidence.')}
+    finally{setBusy(false)}
+  }
+  if(present===null)return null
+  if(!present)return <p>The reported post is no longer available.</p>
+  return <section aria-label="Reported managed message">
+    {body?<><blockquote>{body}</blockquote><button type="button" onClick={()=>setBody('')}>Hide evidence</button></>
+      :<button type="button" className="secondary" disabled={busy} onClick={()=>void open()}>Open approved revision</button>}
+    {error&&<><p role="alert">{error}</p>
+      <StaffMfa refresh={open} explanation="A recent authenticator verification is required to open the approved revision."/></>}
   </section>
 }
 
@@ -91,21 +133,63 @@ function useRoomReports(scope: 'mine' | 'platform' | 'workspace') {
   return {rows, error, load}
 }
 
-export function MyRoomReports() {
+const roomActions:Record<string,string>={submitted:'Report received',reviewing:'Review started',handoff:'Sent to workspace review',
+  returned_to_platform:'Returned to Platform Safety',resolved:'Resolved',dismissed:'Dismissed',quarantined:'Room message quarantined'}
+type RoomTimelineItem={action:string;at:string;scope:'platform'|'workspace'|null}
+
+function RoomReportHistory({id}:{id:string}) {
+  const [open,setOpen]=useState(false)
+  const [items,setItems]=useState<RoomTimelineItem[]|null>(null)
+  const [error,setError]=useState('')
+  useEffect(()=>{
+    if(!open)return
+    let live=true
+    async function load(){
+      const result=await db!.rpc('st_v8_my_room_report_timeline',{p_report:id})
+      if(!live)return
+      if(result.error){setError('Could not load room report history.');return}
+      setError('')
+      setItems(result.data as RoomTimelineItem[])
+    }
+    void load()
+    const timer=window.setInterval(()=>{if(document.visibilityState==='visible')void load()},5000)
+    return()=>{live=false;window.clearInterval(timer)}
+  },[id,open])
+  return <details name="room-report-history" onToggle={event=>setOpen(event.currentTarget.open)}>
+    <summary>Action history</summary>
+    {error&&<p role="alert" className="error">{error}</p>}
+    {!items&&!error&&open&&<p role="status">Loading room report history…</p>}
+    {items?.length===0&&<p>No actions are available for this ticket.</p>}
+    {items&&items.length>0&&<ol className="audit">{items.map((item,index)=><li key={`${item.action}-${item.at}-${index}`}>
+      <strong>{roomActions[item.action]??'Report updated'}</strong>
+      {item.scope&&<> · {item.scope==='workspace'?'Workspace review':'Platform Safety'}</>}
+      <small><ReportTime value={item.at}/></small>
+    </li>)}</ol>}
+  </details>
+}
+
+export function MyRoomReports({hints,ticketQuery=''}:{hints:EventTarget;ticketQuery?:string}) {
   const {rows, error, load} = useRoomReports('mine')
+  useEffect(()=>{
+    hints.addEventListener('personal_reports_refresh',load)
+    return()=>hints.removeEventListener('personal_reports_refresh',load)
+  },[hints,load])
+  const matching=rows?.filter(row=>row.id.includes(ticketQuery))
   return <section className="release-section" aria-label="My room reports">
     <div className="release-row"><h3>My room reports</h3>
       <button type="button" className="secondary" onClick={() => void load()}>Refresh room reports</button>
     </div>
     {error && <p role="alert" className="error">{error}</p>}
-    {rows?.length === 0 && <p>No room reports yet.</p>}
-    {rows?.map(row => <article className="release-board-item" key={row.id}>
-      <strong>{categories[row.category]}</strong><p>{statuses[row.status]}</p>
-      <time dateTime={row.created_at}>{new Date(row.created_at).toLocaleString()}</time>
+    {matching?.length === 0 && <p>{ticketQuery ? 'No matching room reports.' : 'No room reports yet.'}</p>}
+    {matching?.map(row => <article className="release-board-item" key={row.id}>
+      <strong>{reportCategories[row.category]}</strong><p>{statuses[row.status]}</p>
+      <p><ReportTicket id={row.id}/></p>
+      <ReportTime value={row.created_at}/>
       {row.decision_scope && row.decided_at && <p>{row.decision_scope === 'workspace' ? 'Decided by your workspace reviewer' : 'Decided by Platform Safety'}
-        {' · '}<time dateTime={row.decided_at}>{new Date(row.decided_at).toLocaleString()}</time></p>}
+        {' · '}<ReportTime value={row.decided_at}/></p>}
       <p>{row.handed_off_at ? 'Shared with authorized workspace admins' :
         row.share_with_workspace ? 'You allowed workspace sharing' : 'Platform review only'}</p>
+      <RoomReportHistory id={row.id}/>
     </article>)}
   </section>
 }
@@ -175,9 +259,10 @@ export function RoomReportQueue({scope}: {scope: 'platform' | 'workspace'}) {
       <p>{selected.workspace_name}</p>
       {scope === 'platform' && selected.share_with_workspace && <p>Room report ID <code>{selected.id}</code></p>}
       {selected.details && <p className="case-text">{selected.details}</p>}
-      {selected.evidence ? <blockquote>{selected.evidence}</blockquote> : <p>The reported post is no longer available.</p>}
+      {selected.evidence ? <blockquote>{selected.evidence}</blockquote> : scope==='platform'
+        ? <ManagedEvidence key={`evidence-${selected.id}`} report={selected.id}/> : <p>The reported post is no longer available.</p>}
       {selected.handed_off_at && <p>Shared with authorized workspace admins.</p>}
-      {scope==='workspace' && selected.handed_off_at && <SocResponseActions key={selected.id} report={selected.id} roomCase/>}
+      {scope==='workspace' && selected.handed_off_at && <SocResponseActions key={`response-${selected.id}`} report={selected.id} roomCase/>}
       {scope === 'platform' && !selected.share_with_workspace && <p>Reporter selected platform review only.</p>}
       {(selected.share_with_workspace || selected.stage) && <dl className="profile-stats">
         <div><dt>Current stage</dt><dd>{stages[selected.stage ?? 0]}</dd></div>
@@ -187,7 +272,7 @@ export function RoomReportQueue({scope}: {scope: 'platform' | 'workspace'}) {
         {selected.acknowledged_at && <div><dt>Acknowledged</dt><dd>{new Date(selected.acknowledged_at).toLocaleString()}</dd></div>}
       </dl>}
       {actionError && <p role="alert" className="error">{actionError}</p>}
-      {(selected.can_decide || selected.can_acknowledge || selected.can_route || reviewers.length > 0) && <form key={selected.id} className="release-form" onSubmit={review}>
+      {(selected.can_decide || selected.can_acknowledge || selected.can_route || reviewers.length > 0) && <form key={`decision-${selected.id}`} className="release-form" onSubmit={review}>
         <label>Review action<select name="action" required onChange={event => setAction(event.target.value)}>
           {selected.can_route && <option value="route">Route to {stages[(selected.stage ?? 0) + 1]}</option>}
           {selected.can_acknowledge && <option value="acknowledge">Acknowledge stage</option>}

@@ -64,18 +64,26 @@ function WorkspaceMeetings({ user, requested, workspace }: { user:string; reques
   const [error,setError] = useState('')
   const [busy,setBusy] = useState(false)
   const [frequency,setFrequency]=useState('once')
+  const [scheduleAccess,setScheduleAccess]=useState<'allowed'|'required'|'unavailable'>()
   const pendingMeeting = useRef<{ input:string; id:string } | null>(null)
+  const reloadVersion = useRef(0)
   const workspaceId=workspace.id
   const recurrence=useFeature('recurring_meetings',workspaceId,view==='schedule')
   const reload = useCallback(async () => {
-    const { data,error } = await db!.from('st_v3_meetings').select('*').eq('workspace_id',workspaceId).order('starts_at',{ascending:false}).limit(100)
+    const request=++reloadVersion.current
+    const [{ data,error },access] = await Promise.all([
+      db!.from('st_v3_meetings').select('*').eq('workspace_id',workspaceId).order('starts_at',{ascending:false}).limit(100),
+      db!.rpc('st_v8_workspace_schedule_requires_sso',{p_workspace:workspaceId}),
+    ])
+    if(request!==reloadVersion.current)return
+    setScheduleAccess(access.error?'unavailable':access.data?'required':'allowed')
     if (error) setError('Could not load meetings.')
     else {
       if(requested&&!data.some(row=>row.id===requested)){
         const linked=await db!.from('st_v3_meetings').select('*').eq('workspace_id',workspaceId).eq('id',requested).maybeSingle()
         if(linked.data)data.push(linked.data)
       }
-      setMeetings(data as Meeting[])
+      if(request===reloadVersion.current)setMeetings(data as Meeting[])
     }
   },[requested,workspaceId])
   useEffect(() => {
@@ -85,7 +93,7 @@ function WorkspaceMeetings({ user, requested, workspace }: { user:string; reques
     const reconnect=onReconnect(reload)
     const interval=window.setInterval(reload,6000)
     void fetch('/api/meetings/token').then(reply=>reply.json()).then(data=>setReady(data.mediaConfigured===true)).catch(()=>undefined)
-    return () => { reconnect();window.clearInterval(interval);void db!.removeChannel(subscription) }
+    return () => { ++reloadVersion.current;reconnect();window.clearInterval(interval);void db!.removeChannel(subscription) }
   },[reload,workspaceId])
   async function createMeeting(event:FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -112,17 +120,21 @@ function WorkspaceMeetings({ user, requested, workspace }: { user:string; reques
     } catch(error) { setError(formatError(error,instant?'Could not start the meeting.':'Could not schedule the meeting.')) }
     finally { setBusy(false) }
   }
-  const selected=meetings?.find(m=>m.id===id)
+  const availableMeetings=meetings?.filter(meeting=>meeting.room_id||scheduleAccess==='allowed')
+  const selected=availableMeetings?.find(m=>m.id===id)
   const canHost=workspace.role==='owner'||workspace.role==='admin'
+  const canSchedule=canHost&&scheduleAccess==='allowed'
   const instant=view==='instant'
-  const editing=canHost && (view==='schedule'||instant)
+  const editing=canSchedule && (view==='schedule'||instant)
   const past=(meeting:Meeting)=>meeting.status==='ended'||Date.parse(meeting.ends_at)<=Date.now()
-  const list=meetings?.filter(meeting=>past(meeting)===(view==='past'))
+  const list=availableMeetings?.filter(meeting=>past(meeting)===(view==='past'))
   return <>
-    {!ready && <p className="release-info">Scheduling and waiting rooms are available. Live audio and video require a configured media provider.</p>}
+    {scheduleAccess==='allowed'&&!ready && <p className="release-info">Scheduling and waiting rooms are available. Live audio and video require a configured media provider.</p>}
+    {scheduleAccess==='required'&&<p role="status">Sign in through your workspace provider to access meeting schedules and lobbies.</p>}
+    {scheduleAccess==='unavailable'&&<p role="alert">Could not check workspace meeting access.</p>}
     {error && <p role="alert" className="error">{error}</p>}
     <SectionTabs label="Meeting sections" value={editing ? view : view==='past' ? 'past' : 'upcoming'} onChange={next=>{if(!busy){setError('');setId(null);setView(next)}}} options={[
-      ['upcoming','Upcoming & live'], ['past','Past meetings'], ...(canHost ? [['instant','Meet now'] as const,['schedule','Schedule'] as const] : []),
+      ['upcoming','Upcoming & live'], ['past','Past meetings'], ...(canSchedule ? [['instant','Meet now'] as const,['schedule','Schedule'] as const] : []),
     ]}/>
     {editing ? <div className="panel release-panel">
       <h2>{instant?'Start a meeting now':'Schedule a meeting'}</h2><form key={view} className="release-form" onSubmit={createMeeting}>

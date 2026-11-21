@@ -4,6 +4,8 @@ import {useEffect,useState} from 'react'
 import {db} from '../../../lib/data'
 import {formatBillingAmount,isBillingCurrency} from '../../../lib/billing'
 import type {InvoiceDocument} from '../../../lib/stripe-invoice-documents'
+import {useWorkspaceBillingAccess} from '../../../components/workspace-billing-access'
+import {workspaceBillingSsoMessage} from '../../../lib/workspace-billing-access'
 
 type Invoice = Omit<InvoiceDocument,'id'> & {invoice_ticket:string; receipt_ticket:string|null}
 type Listing = {invoices:Invoice[];next:string|null}
@@ -32,6 +34,8 @@ export default function BillingDocuments() {
   const [revision,setRevision] = useState(0)
   const [busy,setBusy] = useState(false)
   const [error,setError] = useState('')
+  const billingAccess=useWorkspaceBillingAccess(workspace||undefined)
+  const canRead=!workspace||billingAccess==='allowed'
 
   useEffect(()=>{
     if (!db) {setInitialized(true);return}
@@ -48,7 +52,7 @@ export default function BillingDocuments() {
   },[])
 
   useEffect(()=>{
-    if(!initialized) return
+    if(!initialized||!canRead) return
     const controller=new AbortController()
     void billingRequest(workspace,undefined,undefined,controller.signal).then(response=>response.json()).then(result=>{
       if(!controller.signal.aborted) setListing(result)
@@ -56,7 +60,7 @@ export default function BillingDocuments() {
       if(!controller.signal.aborted) setError((error as Error).message)
     })
     return ()=>controller.abort()
-  },[initialized,workspace,revision])
+  },[canRead,initialized,workspace,revision])
 
   async function older() {
     if (!listing?.next) return
@@ -102,13 +106,15 @@ export default function BillingDocuments() {
         {workspaces.map(scope=><option key={scope.id} value={scope.id}>{scope.name}</option>)}
       </select>
     </>}
-    <button type="button" disabled={!initialized||busy} onClick={()=>{setError('');setListing(null);setRevision(value=>value+1)}}>
+    <button type="button" disabled={!initialized||!canRead||busy} onClick={()=>{setError('');setListing(null);setRevision(value=>value+1)}}>
       Refresh documents
     </button>
-    {!listing&&!error&&<p role="status">Loading billing documents…</p>}
-    {error&&<p role="alert">{error}</p>}
-    {listing?.invoices.length===0&&<p>No finalized invoices for this subscription.</p>}
-    {listing?.invoices.map(invoice=><article key={invoice.number} className="panel release-panel">
+    {workspace&&billingAccess==='required'&&<p role="status">{workspaceBillingSsoMessage}</p>}
+    {workspace&&billingAccess==='unavailable'&&<p role="alert">Billing document access is unavailable for this scope.</p>}
+    {(workspace&&billingAccess===undefined||canRead&&!listing&&!error)&&<p role="status">Loading billing documents…</p>}
+    {canRead&&error&&<p role="alert">{error}</p>}
+    {canRead&&listing?.invoices.length===0&&<p>No finalized invoices for this subscription.</p>}
+    {canRead&&listing?.invoices.map(invoice=><article key={invoice.number} className="panel release-panel">
       <h2>Invoice {invoice.number}</h2>
       <p>Stripe · {invoice.issued_at.slice(0,10)} UTC · {invoice.status.replaceAll('_',' ')}</p>
       <dl>
@@ -131,6 +137,6 @@ export default function BillingDocuments() {
           onClick={()=>void download(invoice.receipt_ticket!,invoice.number,'receipt')}>Download receipt PDF</button>}
       </div>
     </article>)}
-    {listing?.next&&<button type="button" disabled={busy} onClick={()=>void older()}>Load older invoices</button>}
+    {canRead&&listing?.next&&<button type="button" disabled={busy} onClick={()=>void older()}>Load older invoices</button>}
   </main>
 }

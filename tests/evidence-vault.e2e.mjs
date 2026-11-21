@@ -20,6 +20,7 @@ const password = randomUUID() + '!1Q'
 const run = randomUUID().slice(0,8)
 const users = []
 const workspaces = []
+const exerciseRewrap = process.env.SECTALK_ARTIFACT_REWRAP_QA === '1'
 let browser
 const sha = input => createHash('sha256').update(input).digest('hex')
 function data(result) {
@@ -153,14 +154,25 @@ try {
     + " from sectalk_private.st_v7_evidence_snapshots where case_id='" + caseId + "' and hold_id='" + holdId + "';"))
   const { artifact } = snapshot
   const saved = Buffer.from(await data(await storage.download(artifact)).arrayBuffer())
-  assert.equal(sha(saved),snapshot.sha256)
-  assert.equal(JSON.parse(saved.toString()).body,original)
-  assert.ok(!saved.toString().includes('Reporter-only note'))
+  assert.notEqual(sha(saved),snapshot.sha256)
+  assert.ok(!saved.includes(Buffer.from(original)))
   assert.ok((await adminApi.storage.from('sectalk-exports').download(artifact)).error)
   assert.ok((await storage.remove([artifact])).error)
+  const originalEnvelope=exerciseRewrap ? sql(`select to_jsonb(e) from sectalk_private.st_v7_artifact_envelopes e where artifact='${artifact}';`) : null
+  if(exerciseRewrap) {
+    const policy=data(await ownerApi.rpc('st_v8_tenant_rotation_schedule',{p_workspace:tenant,p_days:30}))
+    assert.equal(policy.schedule.days,30)
+  }
+  const rotation=await fetch(app+'/api/tenant-keys',{
+    method:'POST',headers:{Authorization:'Bearer '+ownerToken,'Content-Type':'application/json'},
+    body:JSON.stringify({workspace:tenant,custody:'managed',reason:'Rotate while preserving the held synthetic snapshot.'}),
+  })
+  assert.equal(rotation.status,200,rotation.ok?'':await rotation.text())
+  assert.equal((await rotation.json()).version,2)
   assert.equal((await call(ownerToken,snapshot.id)).status,404)
   assert.equal((await call(outsideToken,snapshot.id)).status,404)
   assert.equal((await call(adminToken,null,{ caseId,report:selected.id,hold:holdId,reason })).status,409)
+  if(exerciseRewrap)assert.equal(sql(`select count(*) from sectalk_private.st_v8_protected_artifact_wraps where artifact='${artifact}';`),'0')
 
   sql("update public.st_v6_room_posts set body='Changed source body after capture',edited_at=clock_timestamp()"
     + " where room_id='" + room + "' and id='" + selected.post + "';")
@@ -169,7 +181,22 @@ try {
   await article.getByText(holdId,{ exact:true }).waitFor()
   const downloading = adminPage.waitForEvent('download')
   await article.getByRole('button',{ name:'Download evidence snapshot',exact:true }).click()
-  assert.deepEqual(await readFile(await (await downloading).path()),saved)
+  const opened=await readFile(await (await downloading).path())
+  assert.equal(sha(opened),snapshot.sha256)
+  assert.equal(opened.length,saved.length)
+  assert.equal(JSON.parse(opened.toString()).body,original)
+  assert.ok(!opened.toString().includes('Reporter-only note'))
+  if(exerciseRewrap) {
+    assert.equal(sql(`select to_jsonb(e) from sectalk_private.st_v7_artifact_envelopes e where artifact='${artifact}';`),originalEnvelope)
+    assert.equal(sql(`select kind||':'||previous_version||':'||wrapping_version from sectalk_private.st_v8_protected_artifact_rewrap_audit
+      where artifact='${artifact}';`),'evidence:1:2')
+    const authorized=await call(adminToken,snapshot.id)
+    assert.equal(authorized.status,200)
+    assert.deepEqual(Buffer.from(await authorized.arrayBuffer()),opened)
+    assert.deepEqual(Buffer.from(await data(await storage.download(artifact)).arrayBuffer()),saved)
+    assert.ok((await storage.remove([artifact])).error)
+    console.log('Passed held evidence rewrap with unchanged encrypted object and approved snapshot bytes.')
+  }
   sql("update sectalk_private.st_v6_room_reports set share_with_workspace=false where id='" + selected.id + "';")
   assert.equal((await call(adminToken,snapshot.id)).status,404)
   sql("update sectalk_private.st_v6_room_reports set share_with_workspace=true where id='" + selected.id + "';"
@@ -196,7 +223,7 @@ try {
     assert.equal(entry.sha256,sha(previous + entry.payload))
     previous = entry.sha256
     return JSON.parse(entry.payload).event
-  }),['captured','downloaded','hold_released'])
+  }),['captured','downloaded',...(exerciseRewrap ? ['downloaded'] : []),'hold_released'])
   data(await storage.remove([artifact]))
   assert.ok((await storage.download(artifact)).error)
 } finally {
@@ -210,7 +237,11 @@ try {
       + " where a.id=s.artifact and s.workspace_id='" + id + "'; begin; set local session_replication_role=replica;"
       + " delete from sectalk_private.st_v7_evidence_custody c using sectalk_private.st_v7_evidence_snapshots s"
       + " where c.snapshot_id=s.id and s.workspace_id='" + id + "'; delete from sectalk_private.st_v7_evidence_snapshots"
-      + " where workspace_id='" + id + "'; commit; delete from sectalk_private.st_v7_compliance_audit where workspace_id='" + id + "';"
+      + " where workspace_id='" + id + "'; delete from sectalk_private.st_v7_tenant_key_audit where workspace='" + id
+      + (exerciseRewrap ? `'; delete from sectalk_private.st_v8_protected_artifact_rewrap_audit where workspace='${id}` : '')
+      + "'; commit; delete from sectalk_private.st_v7_tenant_key_versions where workspace='" + id
+      + "'; delete from sectalk_private.st_v7_tenant_key_state where workspace='" + id
+      + "'; delete from sectalk_private.st_v7_compliance_audit where workspace_id='" + id + "';"
       + " delete from sectalk_private.st_v6_room_reports where workspace_id='" + id + "'; delete from public.st_v2_workspaces where id='" + id + "';")
   }
   for (const user of users) sql("delete from auth.users where id='" + user + "';")

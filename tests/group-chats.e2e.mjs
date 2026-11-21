@@ -13,7 +13,14 @@ const checkSearch = process.env.SECTALK_GROUP_SEARCH === '1'
 const checkQuarantine = process.env.SECTALK_GROUP_QUARANTINE === '1'
 const checkFiles = process.env.SECTALK_GROUP_FILES === '1'
 const checkHistory = process.env.SECTALK_GROUP_HISTORY === '1'
+const checkOlmReadiness=process.env.SECTALK_GROUP_OLM_READINESS==='1'
+const checkOlmDirect=process.env.SECTALK_OLM_DIRECT==='1'
+const checkSenderKeys=process.env.SECTALK_GROUP_SENDER_KEYS==='1'
 const trace = label => { if (process.env.SECTALK_GROUP_QA_TRACE === '1') console.log(label) }
+function senderCipher(message) {
+  assert.ok(message.payload.startsWith('sk2.'))
+  return JSON.parse(Buffer.from(message.payload.slice(4),'base64url')).cipher
+}
 assert.equal(new URL(app).hostname, '127.0.0.1')
 assert.equal(origin, 'http://127.0.0.1:55321')
 const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
@@ -114,14 +121,100 @@ try {
   const [owner, peer, newcomer] = await Promise.all([
     account('owner', 'Group Alice'), account('peer', 'Group Bob'), account('new', 'Group Charlie'),
   ])
+  let approvedPair
   for (const contact of [peer, newcomer]) {
     const chat = data(await owner.client.rpc('st_request', { p_handle: contact.handle }))
     data(await contact.client.rpc('st_respond', { p_chat: chat, p_accept: true }))
+    if(contact===peer)approvedPair=chat
   }
   browser = await chromium.launch({ executablePath: process.env.SECTALK_TEST_BROWSER })
   const [a, b, c] = await Promise.all([open(owner), open(peer), open(newcomer)])
   const b2 = await open(peer, b)
   trace('Approved browser fixtures ready.')
+  if(checkOlmReadiness||checkOlmDirect){
+    let successfulUpload
+    for(const page of [a,b]){
+      await nav(page).getByRole('button',{name:'Profile',exact:true}).click()
+      await page.getByRole('button',{name:'Devices and sessions',exact:true}).click()
+      const uploaded=page.waitForResponse(response=>response.url()===app+'/api/e2ee/device')
+      await page.getByRole('button',{name:'Prepare this browser',exact:true}).click()
+      successfulUpload=await uploaded
+      assert.equal(successfulUpload.status(),200)
+      await page.getByText('This approved browser has published its encryption keys.',{exact:true}).waitFor()
+      await nav(page).getByRole('button',{name:'Group chats',exact:true}).click()
+    }
+    const [ownerBrowser,peerBrowser,outsiderBrowser]=await Promise.all([session(a),session(b),session(c)])
+    const pair=data(await ownerBrowser.rpc('st_v8_olm_pair_directory',{p_chat:approvedPair}))
+    const receiver=data(await peerBrowser.rpc('st_v8_olm_device_proof'))
+    assert.equal(pair.roster.find(entry=>entry.device===receiver.device).bundle.device_id,receiver.device)
+    assert.equal(pair.roster.filter(entry=>entry.bundle).length,2)
+    assert.ok((await outsiderBrowser.rpc('st_v8_olm_pair_directory',{p_chat:approvedPair})).error)
+    const captured=successfulUpload.request().postDataJSON()
+    const tampered=await fetch(app+'/api/e2ee/device',{method:'POST',headers:{Authorization:'Bearer '+await accessToken(b),
+      'Content-Type':'application/json'},body:JSON.stringify({...captured,bundle:{...captured.bundle,device_id:crypto.randomUUID()}})})
+    assert.equal(tampered.status,403)
+    console.log('PASS: Edge prepared and published real Olm keys for two approved devices, denied an outsider and rejected a mutated bundle')
+    if(checkOlmDirect){
+      const screens=[[a,peer.name],[b,owner.name]]
+      const numbers=[]
+      for(const [page,name] of screens){
+        await nav(page).getByRole('button',{name:'Inbox',exact:true}).click()
+        await page.getByRole('button',{name:new RegExp(name)}).first().click()
+        await page.getByRole('button',{name:'Verify contact keys',exact:true}).click()
+        const safety=page.getByLabel('Safety number',{exact:true})
+        await safety.waitFor()
+        numbers.push(await safety.textContent())
+      }
+      assert.equal(numbers[0],numbers[1])
+      for(const [page] of screens){
+        await page.getByLabel('Safety number or scanned QR value',{exact:true}).fill(numbers[0])
+        await page.getByRole('button',{name:'Check and verify',exact:true}).click()
+        await page.getByText('The current contact keys are verified on this browser.',{exact:true}).waitFor()
+        await page.getByRole('button',{name:'Close dialog',exact:true}).click()
+        await page.getByRole('button',{name:'Secure direct messages',exact:true}).click()
+      }
+      await a.getByRole('button',{name:'Enable secure messages',exact:true}).click()
+      await a.getByText('Waiting for '+peer.name+' to enable secure messages.',{exact:true}).waitFor()
+      await b.getByRole('button',{name:'Enable secure messages',exact:true}).click()
+      await a.getByLabel('Write a secure message',{exact:true}).waitFor()
+      const firstSecure='Secure pair fixture '+randomUUID()
+      const secondSecure='Secure response fixture '+randomUUID()
+      for(const [page,other,text] of [[a,b,firstSecure],[b,a,secondSecure]]){
+        await page.getByLabel('Write a secure message',{exact:true}).fill(text)
+        const sent=page.waitForResponse(response=>response.url().endsWith('/rpc/st_v8_olm_direct_send'),{timeout:20000})
+        await page.getByRole('button',{name:'Send secure message',exact:true}).click()
+        const received=await sent.catch(async cause=>{
+          const alert=await page.getByRole('region',{name:'Secure direct messages',exact:true}).getByRole('alert').textContent({timeout:1000}).catch(()=>null)
+          throw alert?new Error(alert,{cause}):cause
+        })
+        assert.equal(received.status(),200)
+        for(const side of [page,other])await side.getByText(text,{exact:true}).waitFor()
+      }
+      const repeated='Secure delivery with a lost acknowledgement '+randomUUID()
+      let acceptedId
+      await a.route('**/rpc/st_v8_olm_direct_send',async route=>{
+        const response=await route.fetch()
+        assert.equal(response.status(),200)
+        acceptedId=route.request().postDataJSON().p_message
+        await route.fulfill({response,status:503,json:{message:'Synthetic response loss after the native send committed'}})
+      },{times:1})
+      await a.getByLabel('Write a secure message',{exact:true}).fill(repeated)
+      const lost=a.waitForResponse(response=>response.status()===503&&response.url().endsWith('/rpc/st_v8_olm_direct_send'))
+      await a.getByRole('button',{name:'Send secure message',exact:true}).click()
+      await lost
+      await b.getByText(repeated,{exact:true}).waitFor()
+      const retried=a.waitForResponse(response=>response.status()===200&&response.url().endsWith('/rpc/st_v8_olm_direct_send'))
+      await a.getByRole('button',{name:'Send secure message',exact:true}).click()
+      assert.equal((await retried).request().postDataJSON().p_message,acceptedId)
+      const ciphertext=data(await peerBrowser.rpc('st_v8_olm_direct_read',{p_chat:approvedPair}))
+      assert.equal(ciphertext.events.length,3)
+      assert.equal(ciphertext.events.filter(message=>message.id===acceptedId).length,1)
+      assert.ok(!JSON.stringify(ciphertext).includes(firstSecure)&&!JSON.stringify(ciphertext).includes(secondSecure))
+      assert.ok((await outsiderBrowser.rpc('st_v8_olm_direct_read',{p_chat:approvedPair})).error)
+      console.log('PASS: secure direct messages required two opt-ins and verified keys, delivered both directions, prevented duplicate delivery, and denied an outsider')
+      for(const [page] of screens)await nav(page).getByRole('button',{name:'Group chats',exact:true}).click()
+    }
+  }
   const title = 'Encrypted browser fixture'
   await a.getByRole('button', { name: 'New group', exact: true }).click()
   await a.getByLabel('Group name', { exact: true }).fill(title)
@@ -144,6 +237,15 @@ try {
   assert.notEqual(before.device, beforeSecond.device)
   assert.notEqual(before.envelopes[0].sealed, beforeSecond.envelopes[0].sealed)
   assert.ok(!JSON.stringify(before).includes(first) && before.messages[0].signature.length === 86)
+  if(checkSenderKeys){
+    const text='Independent approved-device sender '+randomUUID()
+    await send(b,text)
+    for(const page of [a,b2])await page.getByText(text,{exact:true}).waitFor()
+    const other=data(await group(ac,'read')).messages.at(-1)
+    assert.notEqual(senderCipher(other).session_id,senderCipher(before.messages[0]).session_id)
+    assert.notEqual(senderCipher(other).sender_key,senderCipher(before.messages[0]).sender_key)
+    assert.ok(!JSON.stringify(other).includes(text))
+  }
   if(checkFiles){
     trace('Beginning encrypted attachment flow.')
     const filename='private-fixture-'+randomUUID().slice(0,8)+'.txt'
@@ -360,6 +462,7 @@ try {
 
   const newest = data(await group(ac, 'read')).messages.at(-1)
   assert.equal(newest.epoch, 3)
+  if(checkSenderKeys)assert.notEqual(senderCipher(newest).session_id,senderCipher(before.messages[0]).session_id)
   const oldKeyRejected = await b.evaluate(async ({ owner, snapshot, newest }) => {
     const old = snapshot.envelopes[0]
     const decode = text => Uint8Array.from(atob(text.replaceAll('-', '+').replaceAll('_', '/')), character => character.charCodeAt(0))
@@ -382,10 +485,14 @@ try {
     const oldBytes = decode(old.sealed)
     const raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: oldBytes.subarray(0, 12), additionalData: context }, wrappingKey, oldBytes.subarray(12))
     const oldKey = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt'])
-    const nextBytes = decode(newest.payload)
+    const senderPacket=newest.payload.startsWith('sk2.')?JSON.parse(new TextDecoder().decode(decode(newest.payload.slice(4)))):null
+    const nextBytes=decode(senderPacket?.sealed??newest.payload)
+    const nextContext=senderPacket
+      ?wire(['sender-export',snapshot.group.id,newest.epoch,newest.actor,newest.device,senderPacket.cipher.session_id])
+      :wire(['message',snapshot.group.id,newest.epoch,newest.id,newest.actor,newest.device])
     try {
       await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nextBytes.subarray(0, 12),
-        additionalData: wire(['message', snapshot.group.id, newest.epoch, newest.id, newest.actor, newest.device]) },
+        additionalData: nextContext },
       oldKey, nextBytes.subarray(12))
       return false
     } catch (error) {
@@ -439,6 +546,8 @@ try {
     await privateLine.getByText('Report group message', { exact: true }).click()
     await privateLine.getByRole('button', { name: 'Submit report without message text', exact: true }).click()
     await privateLine.getByText('Report submitted to Safety.', { exact: true }).waitFor()
+    const privateTicket=await privateLine.getByRole('status').locator('code').textContent()
+    assert.match(privateTicket,/^[a-f0-9-]{36}$/)
     const reportRequests = () => requests.filter(request => request.url.endsWith('/rpc/st_report_group_message'))
       .map(request => JSON.parse(request.body))
     const [metadata] = reportRequests()
@@ -450,12 +559,16 @@ try {
     await disclosedLine.locator('blockquote').filter({ hasText: disclosedText }).waitFor()
     await disclosedLine.getByRole('button', { name: 'Submit report with message text', exact: true }).click()
     await disclosedLine.getByText('Report submitted to Safety.', { exact: true }).waitFor()
+    const disclosedTicket=await disclosedLine.getByRole('status').locator('code').textContent()
+    assert.match(disclosedTicket,/^[a-f0-9-]{36}$/)
+    assert.notEqual(disclosedTicket,privateTicket)
     const [, disclosure] = reportRequests()
     assert.equal(disclosure.p_share, true)
     assert.equal(disclosure.p_evidence, disclosedText)
     assert.ok(requests.every(request => !request.body?.includes(privateText)))
     const reports = data(await cc.from('st_reports').select('id,category,status').eq('reporter', newcomer.id))
     assert.equal(reports.length, 2)
+    assert.deepEqual(reports.map(report=>report.id).sort(),[privateTicket,disclosedTicket].sort())
     assert.ok(reports.every(report => report.category === 'scam' && report.status === 'open'))
     assert.deepEqual(data(await ac.from('st_reports').select('id').eq('reporter', newcomer.id)), [])
     assert.equal((await cc.from('st_reports').select('evidence').eq('reporter', newcomer.id)).error?.code, '42501')
@@ -493,6 +606,17 @@ try {
       assert.equal(sql(`select evidence is not null from public.st_reports where id='${quarantineCase}';`),'t')
       console.log('PASS: two-person group response produced a live tombstone and preserved only the consented report evidence for staff')
     }
+    await nav(c).getByRole('button',{name:'Safety',exact:true}).click()
+    await c.getByRole('group',{name:'My report scopes',exact:true}).getByRole('button',{name:'Chat reports',exact:true}).click()
+    await c.getByLabel('Filter recent reports by ticket number',{exact:true}).fill(privateTicket)
+    const timeline=c.getByRole('region',{name:'My chat reports',exact:true})
+    await timeline.getByText(privateTicket,{exact:true}).waitFor()
+    assert.equal(await timeline.getByText(disclosedTicket,{exact:true}).count(),0)
+    await timeline.getByRole('button',{name:/Scam or fraud/}).click()
+    await c.getByRole('heading',{name:'Report timeline',exact:true}).waitFor()
+    await c.getByText('Report received',{exact:true}).waitFor()
+    assert.equal(await c.getByText('Response from SecTalk Safety',{exact:true}).count(),0)
+    console.log('PASS: group report receipts match the private report list and reporter-only action history')
   }
   console.log('PASS: approved-device enrollment, native encryption and signatures across four browser contexts, no old keys on join, and both devices denied after removal')
 } finally {

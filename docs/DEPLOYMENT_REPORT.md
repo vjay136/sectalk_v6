@@ -1,21 +1,51 @@
 # V6 deployment status
 
-The existing SecTalk v5 Vercel project and GitHub release are the live baseline. V6 is a release candidate. Production promotion and a published release require the full verification described in the supplied brief.
+The existing SecTalk v5 Vercel project and GitHub release are the live baseline. The v6 source can be published with the Free-tier scope below. A working deployment still requires an isolated backend and verification of the enabled services.
 
-Run `npm run verify:registry -- --release` to check feature completion. V6 requires all 239 rows to be DONE before publication or deployment. The structural registry check runs separately as `npm run verify:registry`. The release gate also requires the brief's integration, security, accessibility, load, recovery, and provider tests.
+Publish v6 to `main` in the separate [SecTalk v6 GitHub repository](https://github.com/vjay136/sectalk_v6) using the local `v6` remote. GitHub reported a public, empty repository with write access. The existing `origin` points to the v5 repository. Vercel's signed-in New Project page shows `sectalk_v6` as available to import under `silent-soldier-vjay`. Use that import after the release commit is published.
+
+Run `npm run verify:registry -- --release-free` to check the 234 required rows and the Web, Admin and Workers browser assets before publishing the Free-tier source. The full-scope gate remains `npm run verify:registry -- --release` and requires all 239 rows. The structural registry check runs separately as `npm run verify:registry`.
+
+| Optional in the Free-tier scope | Current boundary |
+| --- | --- |
+| AUTH-05 Enterprise SSO | Native OIDC and signed SAML have local evidence. Configure enterprise providers only after hosted gateway verification. |
+| ORG-08 Regional residency | Approved transfer and several rollback workflows have local evidence. Regional placement, full restoration and live cutover require separately verified installations. |
+| ORG-09 Tenant erasure | Offboarding exports, custody, review and the rollback-only database rehearsal are available. Permanent removal requires verified provider erasure and a terminal executor. |
+| SEC-04 Tenant key lifecycle | Managed key features and synthetic provider checks have local evidence. Enable hosted BYOK only after scoped provider and recovery verification. |
+| PLAT-13 Effective legal documents | Public pages and versioned acceptance are implemented. Terms and Privacy render as drafts until the actual operator approves and configures the effective documents. |
+
+The Free-tier source may be imported into Vercel once a separate backend has been chosen. Run the hosted readiness, integration, security, accessibility, load and recovery checks for enabled services before opening it to users.
+
+A later Supabase Pro upgrade can provide hosted infrastructure for further verification. Keep enterprise providers, regional cutover, permanent erasure and external key operations gated by their specific configuration and authorization. Finish each outstanding matrix check before declaring full-scope availability. Configure effective legal documents separately from the infrastructure plan.
+
+The release uses the `sectalk-web`, `sectalk-admin` and `sectalk-workers` Vercel projects, rooted at `apps/web`, `apps/admin` and `apps/workers` respectively. Enable source files outside the app root for the shared npm workspaces. Apply the v6 migrations to the separate v6 backend before enabling traffic or job schedules.
+
+`npm run build:workers` builds the worker API independently. Its health endpoint is public and returns a service identifier. Job endpoints require their existing server credentials. The worker project alone registers the tenant-key rotation cron, daily at 03:12 UTC. The signed managed DEK rewrap uses its own server credential and runs on demand. [Worker keys and schedule](EXTERNAL_TENANT_KEYS.md)
+
+Configure the private scheduler to send authenticated `POST` requests to the worker origin for billing reconciliation and renewal mail, file and export maintenance, webhook and SIEM delivery, notification email, operational reports and web push. The scheduler should use each job's dedicated bearer from the worker environment. Verify one authenticated invocation and its durable queue outcome for each enabled job before enabling the schedule. [Stripe reconciliation](spec/stripe-reconciliation.md) · [SIEM delivery](spec/siem-export.md)
+
+`npm run build:admin` builds the operator console independently. Staff use named accounts with assigned roles and a fresh authenticator code. Share the admin origin directly with authorized staff. The consumer navigation contains no link to it. [Operator console setup](spec/operator-console.md)
 
 | External setup | What the target environment requires |
 | --- | --- |
 | Auth email | Grant access to the target Supabase Auth settings, add the exact callback, and configure a verified transactional sender. Apply the templates and test delivery to a real inbox. |
-| Authenticator recovery | Verify atomic reset and session revocation against the target Supabase Auth schema in a separate project. Add assurance enforcement for direct Data API, Realtime and Storage access before closing AUTH-03. |
-| Calls | Configure TURN over UDP and TLS and provide a dedicated test LiveKit project. Verify direct, relay-only, reconnect, and group-call paths across real networks. |
-| Billing | Configure Stripe test prices, signing secrets and webhook delivery. For Razorpay, provide a test merchant account and webhook signing secret after the adapter is built. |
+| Authenticator recovery | Verify the existing atomic reset and session revocation checks against the target Supabase Auth schema and direct Data API, Realtime and Storage surfaces. |
+| Calls | Configure TURN over UDP and TLS and provide a dedicated test LiveKit project. Verify direct, relay-only, reconnect, and group-call paths across real networks. For gateway-managed meetings, measure refreshed-grant denial and active participant removal on the actual deployment. [Meeting media checks](MEETING_MEDIA_REVOCATION.md) |
+| Billing | Configure Stripe test prices, signing secrets and webhook delivery. The hosted Razorpay check requires a test merchant account and signing secret. |
 | Realtime and jobs | Provide isolated Ably, Redis and queue credentials for the adapters and failure-path verification. |
-| Storage and encryption | Provision a dedicated nonproduction S3-compatible bucket and KMS key with narrowly scoped grants for scanner, retention and key-management tests after the adapters are implemented. |
+| Storage and encryption | Provision dedicated nonproduction Storage and scoped KMS keys to verify encrypted records, provider lifecycle, retention and recoverability against the target environment. |
 | V6 chat attachments | Configure a v6-only Supabase server key as `SECTALK_FILE_STORAGE_KEY` and a separate random signing secret as `SECTALK_FILE_TICKET_SECRET`. Keep both server-side. Verify uploads and signed retrieval against the migrated v6 Storage bucket. |
 | Push and safety AI | Provision the push keys and a policy-approved test model or gateway account after the delivery and classification paths are implemented. |
-| Vulnerability disclosure | Set the stable v6 HTTPS origin, a verified and monitored private contact, and the contact expiry documented in [SECURITY.md](../SECURITY.md). Verify both public disclosure routes on the target deployment. |
+| Vulnerability disclosure | Set the v6 HTTPS origin, disclosure expiry, private service credential and envelope key. Assign verified reviewers to monitor the built-in queue. Verify public discovery, submission and restricted review in the target environment. [Security reporting configuration](../SECURITY.md) |
+| Public legal pages | Confirm the actual operator details, monitored service and privacy contacts, active processors, applicable jurisdictions and approval record before enabling the effective documents. [Legal release configuration](PUBLIC_LEGAL_RELEASE.md) |
+| Community Rules | Publish the approved version to the v6 backend and verify acceptance with a fresh account. Confirm the acceptance receipt persists and that a newly effective version asks the user to review it again. [Activation steps](PUBLIC_LEGAL_RELEASE.md) |
+| Native Enterprise OIDC | Edge completed native OAuth with public HTTPS discovery and JWKS, signed identity, S256, workspace JIT and receipt revocation using a synthetic Vercel Sandbox issuer and disposable local GoTrue. An isolated hosted Supabase gateway, independently verified domain and exact hosted callback still need testing. [Workspace SSO](workspace-sso.md) |
+| Enterprise region placement | Use a separately provisioned destination project with verified region and installation binding. Rehearse migration, routing, rollback and provider backup evidence for that target. [Feature matrix](FEATURE_MATRIX.md) |
 | Audit chain | Retain PostgreSQL audit checkpoint receipts in a log destination with independent access and retention. Verify a retained receipt against the private audit verifier after initializing the target. |
 | Disaster recovery | Rehearse managed database recovery, recovery of matching private Storage objects, Auth, provider configuration and isolated cutover using the [disaster recovery runbook](DISASTER_RECOVERY.md). |
+
+The connected Supabase organization currently lists two active projects and no separate SecTalk v6 target. The existing releases through v5 belong to `silent-soldier-vjay`, the intended workspace for a separate v6 release. That workspace returned HTTP 403 to this Vercel connection, and Vercel could not issue a consent link for it. The approved Hobby team `vjayces-projects` hosts the isolated `sectalk-oidc-issuer-qa` project. Its temporary Vercel Sandbox completed testing and stopped. The QA project has no Git repository connection. Hosted verification still needs an isolated Supabase test target and the provider setup above.
+
+The current Supabase budget is Free tier. The two active projects occupy the available slots. Local Docker projects supply isolated database and browser verification. The portable recovery drill supports manual database and Storage backups. Managed branching, automatic backups and point-in-time recovery are outside the Free plan. [Supabase Free plan limits](https://supabase.com/pricing) · [Manual recovery drill](DISASTER_RECOVERY.md)
 
 The matrix uses BLOCKED_EXTERNAL only when the implementation and its test-mode proof are present. Missing configuration and missing code are tracked separately.

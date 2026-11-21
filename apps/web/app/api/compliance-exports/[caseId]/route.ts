@@ -1,6 +1,8 @@
 import { fileFailure, fileHeaders } from '../../../../lib/authenticated-file-request'
 import { exportBucket, exportDigest, exportIdPattern, exportResponse, exportStorage, storeExport } from '../../../../lib/export-storage-server'
 import { operationalReportViewer } from '../../../../lib/operational-report-server'
+import { decryptManagedArtifact,openTenantRecord,type TenantRecordKey } from '../../../../lib/tenant-artifact-keys'
+import { managedRoomRevision } from '../../../../lib/managed-room-revision'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -13,6 +15,28 @@ type Material = {
 const format = { filename: 'sectalk-compliance-export.json', media_type: 'application/json' } as const
 const unavailable = () => fileFailure(404, 'An approved export is unavailable for this session.')
 const failed = () => fileFailure(503, 'The private export could not be completed.')
+
+async function openHeldRoomRecords(storage:NonNullable<ReturnType<typeof exportStorage>>,ticket:string,bytes:Buffer){
+  const bundle=JSON.parse(bytes.toString('utf8'))
+  const rooms=(bundle.records as {kind:string;id:string;json:string}[]).filter(record=>record.kind==='managed_room_report')
+  if(!rooms.length)return bytes
+  const keys=await storage.rpc('st_v8_managed_room_compliance_keys',{p_ticket:ticket})
+  if(keys.error||!keys.data)return null
+  const approved_managed_room_messages=[]
+  for(const record of rooms){
+    const item=JSON.parse(record.json)
+    const key=keys.data[record.id] as TenantRecordKey|undefined
+    if(!key||record.id!==item.id||managedRoomRevision({
+      room:item.room,id:item.post,sender:item.author,key,envelope:item.envelope,
+    })!==item.encrypted_revision)return null
+    const clear=await openTenantRecord(key,'room:'+item.room,item.post,item.author,item.envelope)
+    try{
+      approved_managed_room_messages.push({id:record.id,encrypted_revision:item.encrypted_revision,
+        body:new TextDecoder('utf-8',{fatal:true}).decode(clear)})
+    }finally{clear.fill(0)}
+  }
+  return Buffer.from(JSON.stringify({...bundle,approved_bundle_sha256:exportDigest(bytes),approved_managed_room_messages}),'utf8')
+}
 
 async function execute(request: Request, { params }: Context, operation: Operation) {
   const viewer = await operationalReportViewer(request)
@@ -39,7 +63,7 @@ async function execute(request: Request, { params }: Context, operation: Operati
       if (typeof material.bundle !== 'string') return failed()
       const bytes = Buffer.from(material.bundle, 'utf8')
       if (bytes.length !== material.bytes || exportDigest(bytes) !== material.sha256) return failed()
-      const artifact = await storeExport(viewer.actor, { kind: 'compliance', scope_id: material.case }, format, bytes)
+      const artifact = await storeExport(viewer.actor, { kind: 'compliance', scope_id: material.case }, format, bytes, ticket)
       if (!artifact) return failed()
       const result = await finish(artifact)
       if (result.error) return failed()
@@ -50,13 +74,15 @@ async function execute(request: Request, { params }: Context, operation: Operati
     if (!material.artifact || !exportIdPattern.test(material.artifact)) return unavailable()
     const object = await storage.storage.from(exportBucket).download(material.artifact)
     if (object.error || object.data.size !== material.bytes) return unavailable()
-    const bytes = Buffer.from(await object.data.arrayBuffer())
-    if (exportDigest(bytes) !== material.sha256) return unavailable()
+    const bytes = await decryptManagedArtifact(storage,ticket,material.artifact,Buffer.from(await object.data.arrayBuffer())).catch(() => null)
+    if (!bytes || exportDigest(bytes) !== material.sha256) return unavailable()
+    const delivery = await openHeldRoomRecords(storage,ticket,bytes).catch(() => null)
+    if(!delivery)return unavailable()
     const result = await finish(material.artifact)
     if (result.error) return failed()
     if (result.data !== true) return unavailable()
     completed = true
-    return exportResponse(bytes, format)
+    return exportResponse(delivery, format)
   } catch {
     return failed()
   } finally {

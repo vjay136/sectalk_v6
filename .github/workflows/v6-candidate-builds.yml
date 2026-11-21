@@ -1,0 +1,36 @@
+name: SecTalk v6 candidate builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/release-v6.0.0]
+  pull_request:
+    branches: [main, codex/release-v6.0.0]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_build_fixture
+      SECTALK_APP_URL: http://127.0.0.1:3484
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:registry
+      - run: npm test
+      - run: npm run build
+      - run: npm run build:admin
+      - run: npm run build:workers
+      - run: npm run verify:registry -- --release-free

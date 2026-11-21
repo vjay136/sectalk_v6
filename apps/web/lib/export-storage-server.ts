@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { fileAuthOptions, fileHeaders } from './authenticated-file-request'
+import { encryptManagedArtifact } from './tenant-artifact-keys'
 
 const maximumExportBytes = 1024 * 1024
 export const exportBucket = 'sectalk-exports'
@@ -32,16 +33,19 @@ export function exportResponse(bytes: Buffer, format: ExportFormat, artifact?: s
   return new Response(Uint8Array.from(bytes), { headers })
 }
 
-export async function storeExport(actor: string, source: ExportSource, format: ExportFormat, bytes: Buffer) {
+export async function storeExport(actor: string, source: ExportSource, format: ExportFormat, bytes: Buffer, ticket?: string) {
   const storage = exportStorage()
   if (!storage || bytes.length < 1 || bytes.length > maximumExportBytes) return undefined
+  const managed = source.kind==='compliance' || source.kind==='evidence'
+  if (managed && !ticket) return undefined
   const reservation = await storage.rpc('st_v6_begin_export_object', {
     p_actor: actor, p_kind: source.kind, p_scope: source.scope_id ?? null, p_period: source.period ?? null,
     p_filename: format.filename, p_media: format.media_type, p_bytes: bytes.length, p_sha256: exportDigest(bytes),
   })
   if (reservation.error || typeof reservation.data !== 'string' || !exportIdPattern.test(reservation.data)) return undefined
   const artifact = reservation.data
-  const upload = await storage.storage.from(exportBucket).upload(artifact, bytes, {
+  const stored = managed ? await encryptManagedArtifact(storage,ticket!,artifact,bytes) : bytes
+  const upload = await storage.storage.from(exportBucket).upload(artifact, stored, {
     contentType: format.media_type, upsert: false, cacheControl: '0',
   })
   if (upload.error) return undefined

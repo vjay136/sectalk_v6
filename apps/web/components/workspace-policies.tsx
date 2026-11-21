@@ -11,7 +11,7 @@ type Field = { key: string; name: string; options?: Array<[string,string]>; min?
 type Domain = 'messaging'|'files'|'calls'|'ai'|'retention'|'sharing'|'dlp'|'external'
 type Revision = { revision: number; settings: Settings; recorded_at: string }
 type Verified = { access: 'verified'; revision: number; current: Settings; history: Revision[] }
-type Policy = Verified | { access: 'none'|'mfa' }
+type Policy = Verified | { access: 'none'|'mfa'|'sso' }
 type Preview = { current: Settings; proposed: Settings; effect: Record<string, boolean> }
 
 const dlpActions: Array<[string,string]> = [['allow','Allow'],['warn','Warn'],['block','Block'],['redact','Redact']]
@@ -81,7 +81,7 @@ function PolicyEditor({ workspace, domain }: { workspace:string; domain:Domain }
     if(reply.error){setError('Could not load this policy.');return}
     const result=reply.data as Policy
     setPolicy(result)
-    if(result.access==='verified')setDraft(result.current)
+    setDraft(result.access==='verified'?result.current:{})
     setPreview(undefined);setReviewTarget(undefined);setVersion('')
   }
   useEffect(()=>{
@@ -101,7 +101,10 @@ function PolicyEditor({ workspace, domain }: { workspace:string; domain:Domain }
       const response=await db!.rpc('st_v7_workspace_policies',{p_workspace:workspace,p_domain:domain,p_action:action,
         p_revision:policy.revision,p_settings:target===null?candidate:null,p_target:target})
       if(response.error)throw response.error
-      if(response.data.access!=='verified'){setPolicy(response.data);setPreview(undefined);return}
+      if(response.data.access!=='verified'){
+        setPolicy(response.data);setDraft({});setPreview(undefined);setReviewTarget(undefined);setVersion('')
+        return
+      }
       if(action==='preview'){setPreview(response.data as Preview);setReviewTarget(target)}
       else{
         const applied=response.data as Verified
@@ -122,6 +125,7 @@ function PolicyEditor({ workspace, domain }: { workspace:string; domain:Domain }
     {!policy&&!error&&<p role="status">Loading policy…</p>}
     {policy?.access==='none'&&<p>Only the current workspace owner can open this policy editor.</p>}
     {policy?.access==='mfa'&&<StaffMfa refresh={()=>read()} explanation="Verify your authenticator to manage workspace policies."/>}
+    {policy?.access==='sso'&&<p>Sign in with workspace single sign-on to manage policies.</p>}
     {policy?.access==='verified'&&<>
       <div className="release-flex"><strong>Current revision {policy.revision}</strong>
         <button className="secondary" type="button" disabled={busy} onClick={()=>void read()}>Refresh policy</button></div>

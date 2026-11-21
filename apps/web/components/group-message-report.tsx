@@ -2,24 +2,26 @@
 
 import { useState, type FormEvent } from 'react'
 import { db } from '../lib/data'
+import { isReportTicket,ReportTicket } from './report-ticket'
 
 export function GroupMessageReport({ group, message, text }: { group: string; message: string; text: string }) {
   const [includeText, setIncludeText] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<'reported' | 'error'>()
+  const [result, setResult] = useState<string|null>(null)
+  const reported=isReportTicket(result)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (busy || result === 'reported') return
+    if (busy || reported) return
     const form = new FormData(event.currentTarget)
     setBusy(true)
-    setResult(undefined)
+    setResult(null)
     try {
       const { data, error } = await db!.rpc('st_report_group_message', {
         p_group: group, p_message: message, p_category: form.get('category'),
         p_share: includeText, p_evidence: includeText ? text : null,
       })
-      setResult(error || !data ? 'error' : 'reported')
+      setResult(error || !isReportTicket(data) ? 'error' : data)
     } catch {
       setResult('error')
     } finally {
@@ -29,7 +31,7 @@ export function GroupMessageReport({ group, message, text }: { group: string; me
 
   return <details>
     <summary>Report group message</summary>
-    {result === 'reported' ? <p role="status">Report submitted to Safety.</p> : <form onSubmit={event => void submit(event)}>
+    {reported ? <div role="status"><p>Report submitted to Safety.</p><ReportTicket id={result}/></div> : <form onSubmit={event => void submit(event)}>
       <label>Reason<select name="category" defaultValue="scam" disabled={busy}>
         <option value="scam">Scam or spam</option><option value="harassment">Harassment</option>
         <option value="threat">Threat</option><option value="impersonation">Impersonation</option>

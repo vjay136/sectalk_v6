@@ -1,0 +1,16 @@
+[Unit]
+Description=SecTalk Supabase backup and independently isolated restore rehearsal
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sectalk-dr
+Group=sectalk-dr
+WorkingDirectory=/opt/sectalk
+EnvironmentFile=/etc/sectalk/recovery.env
+ExecStart=/usr/bin/node /opt/sectalk/scripts/scheduled-supabase-recovery.mjs
+ExecStopPost=/bin/sh -ec 'exec "$$SECTALK_DR_RELEASE_HOOK"'
+UMask=0077
+Nice=10
+TimeoutStartSec=4h

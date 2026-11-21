@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { verifyAccountCredential } from '../lib/account-credential'
 import { db, formatError } from '../lib/data'
 import { saveDownload } from '../lib/chat-files'
@@ -23,6 +23,16 @@ export function AccountData({ user }: { user: string }) {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+  const verificationForm = useRef<HTMLFormElement>(null)
+  const actionButton = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (action) verificationForm.current?.querySelector('input')?.focus()
+    else if (actionButton.current) {
+      actionButton.current.focus()
+      actionButton.current = null
+    }
+  }, [action])
 
   useEffect(() => {
     let live = true
@@ -83,7 +93,8 @@ export function AccountData({ user }: { user: string }) {
     }
   }
 
-  function choose(next: typeof action) {
+  function choose(next: typeof action, button?: HTMLButtonElement) {
+    if (button) actionButton.current = button
     setError('')
     setNotice('')
     setAction(next)
@@ -94,13 +105,13 @@ export function AccountData({ user }: { user: string }) {
     <p>The JSON export includes your account settings, device metadata, saved searches and eligible messages you authored.</p>
     {deletion && <>
       <div className="actions"><button type="button" className="secondary" disabled={busy}
-        onClick={() => choose('export')}>{cursor ? 'Download next export page' : 'Export my data'}</button>
+        onClick={event => choose('export', event.currentTarget)}>{cursor ? 'Download next export page' : 'Export my data'}</button>
       {deletion.status === 'needs_review' ?
         <>
-          <button type="button" className="secondary" disabled={busy} onClick={() => choose('retry')}>Retry account deletion</button>
-          <button type="button" className="secondary" disabled={busy} onClick={() => choose('cancel')}>Cancel deletion request</button>
+          <button type="button" className="secondary" disabled={busy} onClick={event => choose('retry', event.currentTarget)}>Retry account deletion</button>
+          <button type="button" className="secondary" disabled={busy} onClick={event => choose('cancel', event.currentTarget)}>Cancel deletion request</button>
         </> :
-        <button type="button" className="danger" disabled={busy} onClick={() => choose('request')}>Delete my account</button>}
+        <button type="button" className="danger" disabled={busy} onClick={event => choose('request', event.currentTarget)}>Delete my account</button>}
       </div>
       {deletion.status === 'needs_review' && <p>Your deletion request is pending because this account has retained records or dependencies.
         {deletion.requestedAt && <> Requested <time dateTime={deletion.requestedAt}>{new Date(deletion.requestedAt).toLocaleDateString()}</time>.</>}
@@ -109,7 +120,7 @@ export function AccountData({ user }: { user: string }) {
         {deletion.blockers?.map(blocker=><li key={blocker}>{blockerText[blocker]}</li>)}
       </ul>}
     </>}
-    {action && <form className="release-form" onSubmit={event => void submit(event)} key={action}>
+    {action && <form ref={verificationForm} className="release-form" onSubmit={event => void submit(event)} key={action}>
       {(action === 'request' || action === 'retry') && <>
         <p>Continuing permanently deletes an eligible account. Retained records and dependencies keep the request pending.</p>
         <label>Type DELETE ACCOUNT to confirm<input name="confirmation" required pattern="DELETE ACCOUNT" autoComplete="off" /></label>

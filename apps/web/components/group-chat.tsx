@@ -11,8 +11,9 @@ import { GroupHistoryTransfer } from './group-history-transfer'
 import { MessageFormatting, RichMessage } from './rich-message'
 import { EncryptedGroupSearch } from './encrypted-group-search'
 import { clearGroupIndex, pruneGroupIndex, rememberGroupMessages } from '../lib/encrypted-group-search'
-import { decryptGroupMessage, encryptGroupMessage, groupLocalDevice, openGroupKey, rotateGroupKey,
+import { groupLocalDevice, openGroupKey, rotateGroupKey,
   type GroupCiphertext, type GroupEnvelope } from '../lib/group-chat-crypto'
+import {encryptGroupSenderMessage,usesGroupSenderKey,withGroupSenderReader} from '../lib/group-sender-keys'
 import {maxGroupFileBytes,readGroupFileDescriptor,sealGroupFile,type GroupFileDescriptor} from '../lib/group-file-crypto'
 
 type Group = { id: string; owner: string; name: string; epoch: number; member_cap: number }
@@ -22,7 +23,7 @@ type RenderMessage = (GroupCiphertext & { quarantined?: false }) |
 type Snapshot = { group: Group; device: string; members: Member[]; envelopes: GroupEnvelope[]; messages: RenderMessage[] }
 type Preview = { epoch: number; devices: ManifestEntry[]; plan_cap: number }
 type PendingFile={file:File;group:string;epoch:number;id:string;ciphertext:Uint8Array<ArrayBuffer>;
-  encrypted:Awaited<ReturnType<typeof encryptGroupMessage>>;uploaded:boolean}
+  encrypted:Awaited<ReturnType<typeof encryptGroupSenderMessage>>;uploaded:boolean}
 
 async function groupAction<T>(action: string, group?: string, values?: object) {
   const result = await db!.rpc('st_group_chat', { p_action: action, p_group: group, p_data: values })
@@ -50,9 +51,11 @@ export function GroupChat({user,contacts,openDeviceSettings,hints}:{user:string;
     const receive=(event:Event)=>{if((event as MessageEvent<string>).data===selected)refresh()}
     hints.addEventListener('group_file_published',receive)
     hints.addEventListener('group_history_transferred',receive)
+    hints.addEventListener('group_ciphertext_changed',receive)
     return ()=>{
       hints.removeEventListener('group_file_published',receive)
       hints.removeEventListener('group_history_transferred',receive)
+      hints.removeEventListener('group_ciphertext_changed',receive)
     }
   },[hints,selected,refresh])
   useEffect(() => {
@@ -86,19 +89,24 @@ export function GroupChat({user,contacts,openDeviceSettings,hints}:{user:string;
         const device = await groupLocalDevice(user, snapshot.device)
         const keys = new Map(await Promise.all(snapshot.envelopes.map(async envelope =>
           [envelope.epoch, await openGroupKey(selected, device, envelope)] as const)))
-        const opened = await Promise.all(snapshot.messages.map(async message => {
-          const key = keys.get(message.epoch)
-          let text: string | null = null
-          let file:GroupFileDescriptor|null=null
-          if (key && !message.quarantined) {
-            try {
-              const decrypted=await decryptGroupMessage(selected,key,message)
-              file=readGroupFileDescriptor(decrypted)
-              text=file?'Encrypted attachment: '+file.name:decrypted
-            } catch { /* A failed signature stays unreadable. */ }
+        const hasSenderKeys=snapshot.messages.some(message=>!message.quarantined&&keys.has(message.epoch)&&usesGroupSenderKey(message.payload))
+        const opened=await withGroupSenderReader(user,snapshot.device,hasSenderKeys,async decrypt=>{
+          const result:Array<RenderMessage & {text:string|null;file:GroupFileDescriptor|null}>=[]
+          for(const message of snapshot.messages){
+            const key=keys.get(message.epoch)
+            let text:string|null=null
+            let file:GroupFileDescriptor|null=null
+            if(key&&!message.quarantined){
+              try {
+                const decrypted=await decrypt(selected,key,message)
+                file=readGroupFileDescriptor(decrypted)
+                text=file?'Encrypted attachment: '+file.name:decrypted
+              } catch { /* A failed signature stays unreadable. */ }
+            }
+            result.push({...message,text,file})
           }
-          return {...message,text,file}
-        }))
+          return result
+        })
         if (!await viewingAccount()) return
         await rememberGroupMessages(device, selected, opened.flatMap(message => message.text === null ? [] : [{
           id: message.id, sent: message.sent, epoch: message.epoch, text: message.text,
@@ -166,7 +174,7 @@ export function GroupChat({user,contacts,openDeviceSettings,hints}:{user:string;
     try {
       const device = await groupLocalDevice(user, view.device)
       const key = await openGroupKey(view.group.id, device, envelope)
-      await groupAction('send', view.group.id, await encryptGroupMessage(view.group.id, view.group.epoch, device, key, draft))
+      await groupAction('send', view.group.id, await encryptGroupSenderMessage(view.group.id, view.group.epoch, device, key, draft))
       setDraft('')
       refresh()
     } catch (cause) {
@@ -190,7 +198,7 @@ export function GroupChat({user,contacts,openDeviceSettings,hints}:{user:string;
         const device=await groupLocalDevice(user,localDevice)
         const key=await openGroupKey(group.id,device,envelope)
         const sealed=await sealGroupFile(group.id,group.epoch,id,attachment)
-        const encrypted=await encryptGroupMessage(group.id,group.epoch,device,key,sealed.message)
+        const encrypted=await encryptGroupSenderMessage(group.id,group.epoch,device,key,sealed.message)
         work={file:attachment,group:group.id,epoch:group.epoch,id,ciphertext:sealed.ciphertext,encrypted,uploaded:false}
         pendingFile.current=work
       }

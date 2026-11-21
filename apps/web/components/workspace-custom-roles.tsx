@@ -12,7 +12,7 @@ type Role = {
   risk_max: number | null; utc_start: number | null; utc_end: number | null; enabled: boolean
   assignments: string[]; history: Array<{ revision: number; recordedAt: string }>
 }
-type State = { access: 'none' | 'mfa' } | { access: 'verified'; roles: Role[] }
+type State = { access: 'none' | 'mfa' | 'sso' } | { access: 'verified'; roles: Role[] }
 const permissions: Record<Scope, Partial<Record<Permission, string>>> = {
   group: { rename: 'Edit directory details', archive: 'Archive entry', restore: 'Restore entry' },
   room: { 'room.pin': 'Pin messages', 'room.unpin': 'Unpin messages', 'room.slow': 'Change slow mode' },
@@ -40,7 +40,11 @@ export function WorkspaceCustomRoles({ workspace, members }: { workspace: string
     if (access.error) { setError('Could not load custom roles.'); return }
     const current = access.data as State
     setState(current)
-    if (current.access !== 'verified') return
+    if (current.access !== 'verified') {
+      setTargets([])
+      setSimulation(undefined)
+      return
+    }
     const list = await db!.rpc('st_v7_custom_role_targets', { p_workspace: workspace })
     if (list.error) setError('Could not load eligible resources.')
     else setTargets(list.data)
@@ -53,7 +57,11 @@ export function WorkspaceCustomRoles({ workspace, members }: { workspace: string
     try {
       const result = await db!.rpc('st_v7_workspace_custom_roles', { p_workspace: workspace, p_action: action, ...params })
       if (result.error) throw result.error
-      if (result.data.access !== 'verified') { setState(result.data as State); return }
+      if (result.data.access !== 'verified') {
+        setState(result.data as State)
+        setTargets([])
+        return
+      }
       if (action === 'simulate') setSimulation(result.data)
       else {
         setState(result.data as State)
@@ -79,6 +87,7 @@ export function WorkspaceCustomRoles({ workspace, members }: { workspace: string
     <p>Delegate approved actions on one directory entry, eligible room, or workspace file. Members keep their existing visibility and restrictions. No role grants membership or ownership.</p>
     {state?.access === 'mfa' && <StaffMfa refresh={load} explanation="Verify your authenticator to manage workspace custom roles."/>}
     {state?.access === 'none' && <p>Only the workspace owner can open this editor.</p>}
+    {state?.access === 'sso' && <p>Sign in with workspace single sign-on to manage custom roles.</p>}
     {state?.access === 'verified' && <>
       <label>Custom role<select value={selected} onChange={event => {
         setSelected(event.target.value);setSimulation(undefined);setNotice('')

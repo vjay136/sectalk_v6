@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { draftMeetingSummary } from '../../../../lib/meeting-summary'
+import { meetingArtifactViewer } from '../../../../lib/meeting-artifact-viewer'
 
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control':'private, no-store', Vary:'Authorization' }
@@ -25,13 +26,12 @@ export async function POST(request:Request) {
     (action==='policy' && typeof enabled!=='boolean')) return fail(400)
   try {
     const auth={persistSession:false,autoRefreshToken:false}
-    const {data,error}=await createClient(services.url,services.key,{auth}).auth.getUser(token)
-    if (error || !data.user) return fail(401)
-    const actor=data.user.id
+    const viewer=await meetingArtifactViewer(services.url,services.key,token)
+    if (!viewer) return fail(401)
     const db=createClient(services.url,services.service,{auth})
-    async function command(commandAction:string) {
-      const result=await db.rpc('st_v6_meeting_summary_command',{p_meeting:meeting,p_actor:actor,
-        p_action:commandAction,p_enabled:action==='policy'?enabled:null})
+    const command=async(commandAction:string) => {
+      const result=await db.rpc('st_v8_app_meeting_summary_command',{p_meeting:meeting,p_actor:viewer.actor,
+        p_session:viewer.session,p_action:commandAction,p_enabled:action==='policy'?enabled:null})
       if (result.error) throw new Error('Meeting summary unavailable')
       return result.data
     }

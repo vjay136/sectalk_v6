@@ -60,6 +60,7 @@ try {
   ]){
     const area = directory(ownerPage)
     await area.getByText('Create a room',{exact:true}).click()
+    await area.getByText('New rooms use standard workspace storage.',{exact:true}).waitFor()
     await area.getByLabel('Room name',{exact:true}).fill(title(label))
     await area.getByLabel('Room template').selectOption({label})
     await area.getByText(description).waitFor()
@@ -68,6 +69,8 @@ try {
     assert.equal(await kind.inputValue(),kinds[0])
     const started = ownerPage.waitForResponse(response=>response.url().endsWith('/rpc/st_v6_room_create'))
     await area.getByRole('button',{name:'Create room',exact:true}).click()
+    await ownerPage.getByRole('region',{name:title(label),exact:true})
+      .getByText('Encryption mode · Standard workspace storage',{exact:true}).waitFor()
     assert.equal((await started).status(),200)
     const panel = area.getByRole('region',{name:title(label),exact:true})
     await panel.getByText(new RegExp(label+' starter')).waitFor()

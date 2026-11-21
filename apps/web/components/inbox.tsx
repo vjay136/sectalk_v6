@@ -4,10 +4,11 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import dynamic from 'next/dynamic'
 import {
   ArrowLeft, Ban, Bell, BellOff, Bookmark, CalendarClock, CalendarDays, Check, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Folder, Inbox as InboxIcon, LogOut,
-  Download, Hash, ListChecks, MessageCircle, MoreHorizontal, Paperclip, Phone, Pin, Search, Send, Shield, ShieldCheck, Smile, UserPlus, UserRound, Users, Video, X,
+  Download, Hash, ListChecks, LockKeyhole, MessageCircle, MoreHorizontal, Paperclip, Phone, Pin, Search, Send, Shield, ShieldCheck, Smile, UserPlus, UserRound, Users, Video, X,
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
 import { useCalling } from '../lib/calling'
+import { useCallSounds } from '../lib/call-sounds'
 import { MessageSafetyWarning } from './message-safety-warning'
 import { ProtectedMessageText } from './protected-message-text'
 import { MessageFormatting, RichMessage } from './rich-message'
@@ -43,6 +44,8 @@ import { AccountMfa } from './account-mfa'
 import { DeviceSessions } from './device-sessions'
 import { AccountAppearance, useAccountAppearance } from './account-appearance'
 import { AccountData } from './account-data'
+import { OlmDeviceReadiness } from './olm-device-readiness'
+import { SecureDirectThread } from './secure-direct-thread'
 import { DeviceRegistry } from './device-registry'
 import { DraftStatus, notifyDraftChange, useSyncedDraft } from './synced-draft'
 import { pendingWorkspaceInvite } from '../lib/workspace-invite'
@@ -61,7 +64,7 @@ type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id
 type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'|'invisible'; expires_at:string }
 type PresenceSettings = { required: boolean; sharing: boolean }
 
-export function Inbox({ user }: { user: string }) {
+export function Inbox({ user, openWorkspaces }: { user: string; openWorkspaces:boolean }) {
   const accountAppearance = useAccountAppearance(user)
   const { t } = useLocale()
   const {reload:reloadWorkspaces,select:selectWorkspace}=useWorkspaceContext()
@@ -74,7 +77,7 @@ export function Inbox({ user }: { user: string }) {
   const [requestedMeeting,setRequestedMeeting] = useState<string|null>(()=>typeof window==='undefined'?null:meetingFromQuery(window.location.search))
   const [requestedRoom,setRequestedRoom] = useState<{workspace:string;id:string}|null>(null)
   const [tab, setTab] = useState<'inbox' | 'group-chats' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
-    requestedMeeting?'meetings':pendingWorkspaceInvite()?'workspaces':
+    requestedMeeting?'meetings':openWorkspaces||pendingWorkspaceInvite()?'workspaces':
       typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' :
         typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('trial')==='return' ? 'workspaces' : 'inbox')
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
@@ -82,6 +85,7 @@ export function Inbox({ user }: { user: string }) {
   const [paletteOpen,setPaletteOpen]=useState(false)
   const [paletteSearch,setPaletteSearch]=useState({query:'',sequence:0})
   const [chatTasks,setChatTasks]=useState(false)
+  const [secureChat,setSecureChat]=useState<string|null>(null)
   const [sourceTask,setSourceTask]=useState<string|null>(null)
   const [profileTab, setProfileTab] = useState<'account' | 'security' | 'sessions' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help' | 'appearance' | 'privacy'>('account')
   const [managedBlock,setManagedBlock]=useState<Chat|null>(null)
@@ -217,6 +221,12 @@ export function Inbox({ user }: { user: string }) {
       .on('broadcast',{event:'group_history_transferred'},({payload})=>{
         if(typeof payload?.group==='string')hints.dispatchEvent(new MessageEvent('group_history_transferred',{data:payload.group}))
       })
+      .on('broadcast',{event:'group_ciphertext_changed'},({payload})=>{
+        if(typeof payload?.group==='string')hints.dispatchEvent(new MessageEvent('group_ciphertext_changed',{data:payload.group}))
+      })
+      .on('broadcast',{event:'olm_pair_changed'},({payload})=>{
+        if(typeof payload?.chat==='string')hints.dispatchEvent(new MessageEvent('olm_pair_changed',{data:payload.chat}))
+      })
       .on('broadcast', { event: 'workspace_room_report' }, () => {
         void db!.rpc('st_v6_room_report_queue', { p_scope: 'workspace' }).then(({ data, error }) => {
           if (!error && Array.isArray(data) && data.length) setNotice('You have a new workspace room report to review.')
@@ -343,6 +353,8 @@ export function Inbox({ user }: { user: string }) {
   const statusMessage=effectiveAvailability?.status
   const incoming=call.call?.status==='ringing' && call.call.callee===user ? call.call : null
   const quietIncoming=useQuietIncoming(incoming,hints)
+  const callTone=call.call?.status==='ringing' && !quietIncoming ? (incoming?'ringtone':'ringback') : null
+  const callSounds=useCallSounds(callTone,call.call?.id,call.call?.expires_at)
   useEffect(()=>{
     if(!acceptedChat) return
     let active=true
@@ -511,7 +523,7 @@ export function Inbox({ user }: { user: string }) {
       profileTab==='appearance'?<AccountAppearance settings={accountAppearance}/>:
       profileTab==='privacy'?<AccountData key={user} user={user}/>:
       profileTab==='security'?<AccountMfa hints={hints}/>:
-      profileTab==='sessions'?<><DeviceSessions hints={hints}/><DeviceRegistry hints={hints}/></>:
+      profileTab==='sessions'?<><DeviceSessions hints={hints}/><DeviceRegistry hints={hints}/><OlmDeviceReadiness key={user} user={user} hints={hints}/></>:
       profileTab==='discovery'?<DiscoverySettings user={user}/>:
       profileTab==='activity'?<ProfileActivity openReports={()=>setTab('safety')}/>:
       profileTab==='help'?<InProductHelp openFriends={()=>setTab('friends')} openSafety={()=>setTab('safety')}/>:
@@ -579,6 +591,8 @@ export function Inbox({ user }: { user: string }) {
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start audio call" title="Start audio call" onClick={() => void call.start(chat.id, false)}><Phone size={18} /></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start video call" title="Start video call" onClick={() => void call.start(chat.id, true)}><Video size={20} /></button>
               <ContactKeyVerification key={peerId(chat,user)} owner={user} peer={peerId(chat,user)} name={peer?.name || 'your contact'} hints={hints}/>
+              <button type="button" className="icon" aria-label="Secure direct messages" aria-pressed={secureChat===chat.id}
+                title="Secure direct messages" onClick={()=>setSecureChat(value=>value===chat.id?null:chat.id)}><LockKeyhole size={18}/></button>
               <details className="call-menu">
                 <summary className="icon" aria-label="Protected call options" title="Protected calls"><ShieldCheck size={18}/></summary>
                 <div className="message-menu-panel" style={{top:'100%',right:0,bottom:'auto'}}>
@@ -594,7 +608,10 @@ export function Inbox({ user }: { user: string }) {
           </div>
         </header>
         {blockCheck && <div className="inline-warning"><span>{blocked ? 'Allow this contact to reach you again?' : 'Block new messages and calls from this contact?'}</span><button className="danger" disabled={working} onClick={() => void run('st_set_block', { p_chat: chat.id, p_block: !blocked }, () => { setBlockCheck(false); setNotice(blocked ? 'Contact unblocked.' : 'Contact blocked.') })}>{blocked ? 'Unblock' : 'Block'}</button><button className="secondary" onClick={() => setBlockCheck(false)}>Cancel</button></div>}
-        {chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} selfName={profile.name} peerName={peer?.name||'Contact'} hints={hints} offlineMessages={offlineMessages}
+        {chat.status === 'accepted' && !blocked && secureChat===chat.id ?
+          <SecureDirectThread key={`${user}:${chat.id}`} chat={chat.id} owner={user} peer={peerId(chat,user)} ownerName={profile.name}
+            peerName={peer?.name||'Contact'} hints={hints} openDeviceSettings={()=>{setProfileTab('sessions');setTab('profile')}}/> :
+          chat.status === 'accepted' ? <Thread key={chat.id} chat={chat} self={user} selfName={profile.name} peerName={peer?.name||'Contact'} hints={hints} offlineMessages={offlineMessages}
           forwardDestinations={chats.flatMap(conversation => {
             const contact = profiles[peerId(conversation, user)]
             if (conversation.id === chat.id || conversation.status !== 'accepted' || !contact || blocks.includes(contact.id)) return []
@@ -631,7 +648,11 @@ export function Inbox({ user }: { user: string }) {
     </Dialog>}
     {paletteOpen&&<CommandPalette commands={commands} onClose={()=>setPaletteOpen(false)} onSearch={showSearch}/>}
     {report && <ReportDialog chat={report.chat} message={report.message} file={report.file} close={() => setReport(null)} inform={setNotice} />}
+    <div className="call-announcement visually-hidden" role="alert" aria-atomic="true">
+      {incoming && !quietIncoming ? 'Incoming '+(incoming.video?'video':'audio')+' call from '+(profiles[callerId]?.name || 'a contact')+'.' : ''}
+    </div>
     {call.call && !quietIncoming && <CallPanel key={call.call.id} state={call} self={user} name={profiles[callerId]?.name || 'Contact'}
+      enableSounds={callSounds.needsActivation ? callSounds.enable : undefined}
       openChat={select} reportContact={chatId => setReport({chat:chatId,message:null})} />}
   </main>
 }

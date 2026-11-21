@@ -1,6 +1,8 @@
+import { liveKitControlUrl } from '../../../../lib/livekit-control-url'
 import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { ParticipantInfo_State, RoomServiceClient, TrackSource } from 'livekit-server-sdk'
+import { meetingMediaIdentity } from '../../../../lib/meeting-media-identity'
 
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control':'private, no-store', Vary:'Authorization' }
@@ -18,7 +20,7 @@ function config() {
   const endpoint = URL.parse(worker)
   if (!endpoint || endpoint.protocol!=='http:' || endpoint.hostname!=='127.0.0.1' || !endpoint.port ||
       endpoint.username || endpoint.password || endpoint.pathname!=='/transcribe' || endpoint.search || endpoint.hash) return null
-  return { url,key,service,endpoint,secret,rooms:new RoomServiceClient(livekit.replace(/^ws/,'http'),roomKey,roomSecret,{requestTimeout:5}) }
+  return { url,key,service,endpoint,secret,rooms:new RoomServiceClient(liveKitControlUrl(livekit),roomKey,roomSecret,{requestTimeout:5}) }
 }
 
 async function session(request: Request) {
@@ -30,9 +32,14 @@ async function session(request: Request) {
   const { data,error } = await createClient(services.url,services.key,{auth}).auth.getUser(token)
   if (error || !data.user) return fail(401)
   const actor = data.user.id
+  const { rooms } = services
+  const memberSession = createClient(services.url,services.key,{auth,global:{headers:{Authorization:'Bearer '+token}}})
   const db = createClient(services.url,services.service,{auth})
   async function participant(meeting: string) {
-    const member = await services!.rooms.getParticipant('sectalk-v3-'+meeting,actor).catch(()=>null)
+    const binding = await memberSession.rpc('st_v8_livekit_bind_member',{p_meeting:meeting,p_kind:'managed'})
+    if (binding.error) throw new Error('Meeting access unavailable')
+    if (typeof binding.data !== 'string') return null
+    const member = await rooms.getParticipant('sectalk-v3-'+meeting,meetingMediaIdentity(actor,binding.data)).catch(()=>null)
     return member?.state===ParticipantInfo_State.ACTIVE ? member : null
   }
   async function command(meeting: string, action: string, values: Record<string, unknown> = {}) {

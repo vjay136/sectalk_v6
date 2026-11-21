@@ -5,6 +5,8 @@ export type ManifestEntry = {
 }
 const ECDSA = { name: 'ECDSA', hash: 'SHA-256' }
 
+export const contactKeyStorage=(owner:string,peer:string)=>`sectalk:verified-contact-keys:v1:${owner}:${peer}`
+
 function formatOrder(first: ManifestEntry, second: ManifestEntry) {
   const a = first.owner_id + ':' + first.device
   const b = second.owner_id + ':' + second.device

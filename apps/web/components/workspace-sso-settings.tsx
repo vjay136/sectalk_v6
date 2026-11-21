@@ -3,6 +3,7 @@
 import { useCallback,useEffect,useState,type FormEvent } from 'react'
 import { db,formatError } from '../lib/data'
 import { StaffMfa } from './staff-mfa'
+import { WorkspaceAuditSso, WorkspaceBillingSso, WorkspaceChannelStructureSso, WorkspaceComplianceSso, WorkspaceCustomRoleAdminSso, WorkspaceDirectorySso, WorkspaceEntrySso, WorkspaceFileSso, WorkspaceGroupsSso, WorkspaceIntegrationAdminSso, WorkspaceInvitationAdminSso, WorkspaceLegalHoldSso, WorkspaceManagedContentSso, WorkspaceMemberMediaSso, WorkspaceOrganizationSso, WorkspacePlannerSso, WorkspacePolicyAdminSso, WorkspaceRoomStructureSso, WorkspaceScheduleSso, WorkspaceStandardChannelSso, WorkspaceStandardRoomSso } from './workspace-member-media-sso'
 
 type Setup={domain:string;protocol:'oidc'|'saml';jit:boolean;available:boolean}
 type State={access:'none'|'mfa'|'upgrade'}|{access:'verified';setup:Setup|null}
@@ -73,6 +74,29 @@ export function WorkspaceSsoSettings({workspace,onManageDomains}:{workspace:stri
       </form>:domains&&<p>Verify a domain before configuring a provider.</p>}
       <button type="button" className="secondary" onClick={onManageDomains}>Manage verified domains</button>
       {selection&&<button type="button" className="secondary" disabled={busy} onClick={()=>void update('remove')}>Disconnect workspace SSO</button>}
+    </>}
+    {(state?.access==='verified'||state?.access==='upgrade') && <>
+      <WorkspaceEntrySso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceMemberMediaSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceStandardChannelSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceChannelStructureSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceStandardRoomSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceRoomStructureSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceManagedContentSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspacePlannerSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceDirectorySso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceInvitationAdminSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceIntegrationAdminSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceCustomRoleAdminSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspacePolicyAdminSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceLegalHoldSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceComplianceSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceAuditSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceScheduleSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceGroupsSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceFileSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceBillingSso workspace={workspace} providerAvailable={selection?.available===true}/>
+      <WorkspaceOrganizationSso workspace={workspace} providerAvailable={selection?.available===true}/>
     </>}
     {notice&&<p role="status">{notice}</p>}
     {error&&<p role="alert">{error}</p>}

@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { downloadName, extensions, formatChatFileBytes, saveDownload, supportedFile } from '../lib/chat-files'
-import { workspaceFileRequest } from '../lib/workspace-files-client'
+import { workspaceFileRequest, WorkspaceFileRequestError } from '../lib/workspace-files-client'
 import { WorkspaceFileDetails } from './workspace-file-details'
 import { WorkspaceFileHistory } from './workspace-file-history'
 import { FileEgressExplanation } from './workspace-file-egress'
@@ -23,21 +23,30 @@ function FileLibrary({ scope, owner, room = false }: { scope: string; owner: boo
   const [selection, setSelection] = useState<{ file: File; id: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [ssoRequired, setSsoRequired] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [details, setDetails] = useState<string | null>(null)
+  const loadVersion = useRef(0)
 
   const load = useCallback(async (signal?: AbortSignal) => {
+    const request = ++loadVersion.current
     try {
       const data = await (await workspaceFileRequest(scope, 'GET', { room, signal })).json()
-      if (!signal?.aborted) {
+      if (!signal?.aborted && request===loadVersion.current) {
         setFiles(room ? data.files as Entry[] : data as Entry[])
         setCanUpload(!room || data.can_upload === true)
+        setSsoRequired(false)
+        setLoadError('')
       }
-    } catch {
-      if (!signal?.aborted) {
+    } catch (failure) {
+      if (!signal?.aborted && request===loadVersion.current) {
+        const blocked = failure instanceof WorkspaceFileRequestError && failure.code==='workspace_sso_required'
         setFiles(null)
-        setCanUpload(!room)
-        setError(room ? 'Could not load room files.' : 'Could not load workspace files.')
+        setCanUpload(false)
+        setSsoRequired(blocked)
+        setLoadError(blocked ? failure.message : room ? 'Could not load room files.' : 'Could not load workspace files.')
+        if(blocked)setDetails(null)
       }
     }
   }, [room, scope])
@@ -45,10 +54,11 @@ function FileLibrary({ scope, owner, room = false }: { scope: string; owner: boo
   useEffect(() => {
     const controller = new AbortController()
     void load(controller.signal)
-    const timer = room ? window.setInterval(() => void load(controller.signal), 5000) : undefined
+    const timer = window.setInterval(() => void load(controller.signal), room ? 5000 : 8000)
     return () => {
       controller.abort()
-      if (timer !== undefined) window.clearInterval(timer)
+      ++loadVersion.current
+      window.clearInterval(timer)
     }
   }, [load, room])
 
@@ -110,7 +120,8 @@ function FileLibrary({ scope, owner, room = false }: { scope: string; owner: boo
     <button className="secondary" type="button" disabled={busy} onClick={() => {setError(''); void load()}}>Refresh files</button>
     {feedback && <p role="status">{feedback}</p>}
     {error && <p className="error" role="alert">{error}</p>}
-    {files === null && !error && <p role="status">{room ? 'Loading room files…' : 'Loading workspace files…'}</p>}
+    {loadError && <p role={ssoRequired?'status':'alert'} className={ssoRequired?undefined:'error'}>{loadError}</p>}
+    {files === null && !error && !loadError && <p role="status">{room ? 'Loading room files…' : 'Loading workspace files…'}</p>}
     {files?.length === 0 && <p>{room ? 'No room files yet.' : 'No workspace files yet.'}</p>}
     {files?.map(entry => <article className="release-board-item" key={entry.id}>
       <h3>{entry.filename}</h3>
@@ -120,7 +131,7 @@ function FileLibrary({ scope, owner, room = false }: { scope: string; owner: boo
       {room && <FileEgressExplanation scope={scope} file={entry.id} room/>}
       {entry.can_remove && <button type="button" className="secondary" disabled={busy} onClick={() => void useFile(entry, true)}>Remove file</button>}
     </article>)}
-    {!room && details && <WorkspaceFileDetails key={details} workspace={scope} file={details} close={() => setDetails(null)}/>}
-    {!room && <WorkspaceFileHistory workspace={scope} owner={owner}/>}
+    {!room && !ssoRequired && details && <WorkspaceFileDetails key={details} workspace={scope} file={details} close={() => setDetails(null)}/>}
+    {!room && !ssoRequired && <WorkspaceFileHistory workspace={scope} owner={owner}/>}
   </section>
 }

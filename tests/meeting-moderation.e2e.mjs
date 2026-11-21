@@ -151,6 +151,29 @@ try {
   await guestPage.getByText('Screen sharing is disabled for this meeting.', { exact: true }).waitFor({ state: 'detached' })
 
   const visitorPage = await open(visitor)
+  const checkIngress = process.env.SECTALK_TEST_LIVEKIT_SIGNAL === '1'
+  const saved = checkIngress ? await (await api(visitorPage, visitor, 'token', {})).json() : null
+  async function signaling(path, credential) {
+    assert.ok(credential?.token)
+    const url = new URL(path,credential.url.replace(/^ws/,'http'))
+    assert.equal(url.origin,'http://127.0.0.1:3580')
+    url.searchParams.set('access_token',credential.token)
+    return (await fetch(url)).status
+  }
+  async function signalingRejected(path,credential) {
+    const url=new URL(path,credential.url)
+    url.searchParams.set('access_token',credential.token)
+    return new Promise(resolve=>{
+      const socket=new WebSocket(url)
+      const timeout=setTimeout(()=>{ socket.close(); resolve(false) },5000)
+      socket.addEventListener('error',()=>{ clearTimeout(timeout); resolve(true) },{once:true})
+      socket.addEventListener('open',()=>{ clearTimeout(timeout); socket.close(); resolve(false) },{once:true})
+    })
+  }
+  if (checkIngress) {
+    assert.equal(await signaling('/rtc/validate',saved),200)
+    assert.equal((await fetch('http://127.0.0.1:3580/twirp/livekit.RoomService/ListRooms')).status,404)
+  }
   await button(visitorPage, 'Join audio and video').click()
   await tile(guestPage, visitor).waitFor()
   assert.equal((await api(guestPage, guest, 'moderate', { action: 'cohost', target: visitor.id, enabled: true })).status(), 403)
@@ -162,6 +185,10 @@ try {
   await visitorPage.getByText('A moderator removed you from the meeting.', { exact: true }).waitFor()
   await stage(visitorPage).waitFor({ state: 'detached' })
   assert.equal((await api(visitorPage, visitor, 'token', {})).status(), 403)
+  if (checkIngress) {
+    for (const path of ['/rtc/validate','/rtc/v1/validate']) assert.equal(await signaling(path,saved),403)
+    for (const path of ['/rtc','/rtc/v1']) assert.equal(await signalingRejected(path,saved),true)
+  }
   assert.equal((await api(guestPage, guest, 'moderate', { action: 'remove', target: visitor.id })).status(), 200)
 
   await button(hostPage, 'Revoke co-host access from ' + guest.name).click()
@@ -171,10 +198,12 @@ try {
   await moderation(guestPage).waitFor()
 
   guestPage.once('dialog', dialog => dialog.accept())
+  const beforeEnd = checkIngress ? await (await api(hostPage,owner,'token',{})).json() : null
   await button(guestPage, 'End meeting').click()
   await Promise.all([hostPage, guestPage].map(page => stage(page).waitFor({ state: 'detached' })))
   assert.equal(data(await owner.client.from('st_v3_meetings').select('status').eq('id', meeting).single()).status, 'ended')
   assert.equal((await api(hostPage, owner, 'token', {})).status(), 403)
+  if (checkIngress) assert.equal(await signaling('/rtc/validate',beforeEnd),403)
   assert.equal((await api(guestPage, guest, 'moderate', { action: 'end' })).status(), 200)
 } catch (error) {
   if (diagnostics.length) console.error(diagnostics.slice(-10))

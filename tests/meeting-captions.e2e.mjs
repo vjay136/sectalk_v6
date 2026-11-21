@@ -14,7 +14,9 @@ const { SECTALK_STORAGE_TEST_PUBLIC_KEY: key, SECTALK_STORAGE_TEST_SERVICE_KEY: 
 assert.ok(key && serviceKey && hostWav && guestWav)
 const auth={persistSession:false,autoRefreshToken:false}
 const admin=createClient(supabase.href,serviceKey,{auth})
-const media=new RoomServiceClient('http://127.0.0.1:7880','devkey','secret')
+const mediaOrigin=process.env.SECTALK_CAPTION_MEDIA_CONTROL || 'http://127.0.0.1:7880'
+assert.ok(['http://127.0.0.1:7880','http://127.0.0.1:7900'].includes(mediaOrigin))
+const media=new RoomServiceClient(mediaOrigin,'devkey','secret')
 const { chromium }=await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
 const password=randomUUID()+'!1Q'
 const endpoint=new URL('/api/meetings/captions',app)
@@ -81,8 +83,15 @@ try {
     return {page,uploads}
   }
 
+  const providerRoom='sectalk-v3-'+meeting
+  async function providerParticipant(actor) {
+    const matches=(await media.listParticipants(providerRoom)).filter(person=>person.identity.startsWith(actor+'.'))
+    assert.equal(matches.length,1)
+    assert.equal(matches[0].identity,actor+'.'+matches[0].attributes['sectalk.media.binding'])
+    return matches[0]
+  }
   const [a,b]=await Promise.all([open(host,hostWav),open(guest,guestWav)])
-  const hostMember=await media.getParticipant('sectalk-v3-'+meeting,host.id)
+  const hostMember=await providerParticipant(host.id)
   const databaseView=data(await admin.rpc('st_v6_meeting_caption_command',{
     p_meeting:meeting,p_actor:host.id,p_action:'view',p_sid:hostMember.sid,
   }))
@@ -102,7 +111,7 @@ try {
   const agree='Agree to captions and transcript'
   await b.page.getByRole('button',{name:agree,exact:true}).waitFor()
   assert.equal((await request(host,'start','hi')).status,403)
-  const guestMember=await media.getParticipant('sectalk-v3-'+meeting,guest.id)
+  const guestMember=await providerParticipant(guest.id)
   const guestMic=guestMember.tracks.find(track=>track.source===TrackSource.MICROPHONE)
   const unauthorizedUrl=new URL(endpoint)
   unauthorizedUrl.searchParams.set('meeting',meeting)
@@ -139,11 +148,11 @@ try {
   assert.equal((await fetch(unauthorizedUrl,{method:'PUT',headers:{Authorization:'Bearer '+host.token,
     'Content-Type':'application/octet-stream','X-Microphone-Track':guestMic.sid},body:sample.subarray(44)})).status,403)
 
-  await media.removeParticipant('sectalk-v3-'+meeting,guest.id)
+  await media.removeParticipant(providerRoom,guestMember.identity)
   await b.page.locator('.meeting-media').waitFor({state:'detached'})
   await b.page.getByRole('button',{name:'Join audio and video',exact:true}).click()
   await b.page.getByRole('button',{name:agree,exact:true}).waitFor()
-  const rejoined=await media.getParticipant('sectalk-v3-'+meeting,guest.id)
+  const rejoined=await providerParticipant(guest.id)
   assert.notEqual(rejoined.sid,guestMember.sid)
   const awaitingConsent=await (await request(guest,'view')).json()
   assert.equal(awaitingConsent.sending,false)

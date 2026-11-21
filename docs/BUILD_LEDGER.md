@@ -209,13 +209,156 @@
 | P10 | Consolidate API keys, webhooks, SSO and SCIM under Integrations | Edge and native APIs verified four scoped subtabs, delivery logs, native SAML and SCIM, and denial for ordinary administrators and outsiders |
 | P9 | Route supported INR offers through hosted Razorpay checkout | Edge, SQL and signed provider contracts verified exclusive provider selection and paid activation only after an exact captured payment |
 | P9 | Accept and reconcile custom Enterprise orders | Edge and SQL verified annual quotes, purchase orders, owner acceptance, downloadable manual invoices, payment reconciliation and restricted commercial access |
+| P5 | Check current admission before self-hosted LiveKit signaling | Edge, native media, SQL and the gateway verified role changes, rejected replay of removed and revoked credentials, and preserved protected and group audio and video |
+| P10 | Accept vulnerability reports through the SecTalk security page | Edge and SQL verified anonymous intake, encrypted reports, fresh TOTP review, opaque receipt and denial of unauthorized or altered data |
+| P10 | Verify against an independently retained audit receipt | The production CLI verified a true native rewind, conditional independently stored receipts and retention checks against the loopback provider contract. AWS operations remain a deployment check |
+| P10 | Restore the database, native Auth and private Storage in an isolated target | Two native projects verified a checksummed capture, account sign-in, exact bytes and ownership, audit continuity, and corrupt or populated target refusal |
+| P5 | Enable encrypted direct chat and per-device group sender keys | Edge and native SQL verified mutual consent and safety numbers, pairwise Olm key transfer, Megolm sender sessions, retry deduplication, group epoch rotation, encrypted attachments and approved-device history |
+| P4 | Verify standard-channel SAML access with legacy compatibility | Signed SAML Edge sessions and native SQL verified protected reads and writes, password-session denial, Realtime contents, owner recovery and the existing suspension response. Overall AUTH-05 remains open |
+| P6 | Add searchable managed rooms, consented Safety evidence and held exports | Edge verified searches beyond 100 retained posts, fresh staff proof, distinct approval in the UI, readable private downloads and immediate denial on hold release. Native SQL and channel export regressions passed |
+| P11 | Verify legal guidance and keyboard focus for account data | Mobile Edge verified the Eagle Security legal drafts and account entry. Axe and keyboard tests verified focus in the personal-data forms and after cancellation. Operator approval and full screen-reader testing remain open |
+| P4 | Extend optional Enterprise SSO enforcement to standard rooms | Signed SAML in Edge verified normal room access, password-session denial, scoped search and summaries, provider disconnect and fresh owner recovery. Native tests verified the linked task preview and lost guest access |
+| P10 | Check residency scope and stop integrations during approved offboarding | Native preflight counted cross-workspace dependencies and file metadata discrepancies. Edge and SQL verified that staging closes scoped API, SCIM and webhook access while preserving legal-hold rules |
+| P10 | Rehearse approved private file transfer across projects | Edge, two native Auth scopes and separate private Storage instances verified owner-approved bytes, exact target digests, idempotent retry, collision preservation and public denial. The connected Supabase free-project limit blocks a hosted rehearsal in the authorized budget |
+| P4 | Extend scoped Enterprise SSO to encrypted messages | Native rollback fixtures and signed SAML in Edge verified managed-room and channel access, including read, write, search, old ticket denial and fresh owner recovery |
+| P4 | Extend scoped Enterprise SSO to the workspace planner | Signed SAML in Edge verified boards, checklists, and calendar access, password denial, provider disconnect and fresh owner recovery. Native fixtures also verified room tasks and both search overloads |
+| P10 | Rewrap managed-channel data keys with original evidence intact | Signed worker calls and browser checks verified concurrency, stable ciphertext revisions, read continuity and denial after consent or policy changes |
+| P12 | Package protected jobs as a standalone service | The local production build and HTTP acceptance test verified the worker project against disposable Supabase, including signed rotation and rewrap and absence of consumer routes |
+| P4 | Apply optional Enterprise SSO to the member directory | Signed SAML and native SQL verified roster, shared profiles, staff directory and people search, including stale receipt denial and owner recovery |
+| P10 | Extend managed DEK rewrap to rooms | Edge and Supabase verified exact evidence and ciphertext preservation, holds and reports, concurrent commits and cursor continuation past failed jobs |
+| P12 | Package a standalone staff operations console | The production build and Edge tests verified the queue operator role, fresh authenticator proof, live revocation, service health, and logout |
+| P11 | Measure private direct-message fan-out in the load smoke test | In an isolated Supabase project, two participants delivered all 48 messages with no duplicate deliveries or outsider events. The app's private Broadcast hint and authorized read reached p95 below 400 ms |
+| P4 | Extend Enterprise SSO to the workspace audit flow | Signed SAML in Edge covered Activity, audit search, signed export authorization, stale receipt denial and live owner recovery |
+| P10 | Rehearse exact approved record staging across projects | Real native Auth and TOTP verified two manifest pages, the destination cell binding, one atomic insert under concurrent retry, tampering and foreign workspace denial |
+| P10 | Rewrap compliance export and held-evidence keys | The verified download paths preserved exact ciphertext, the original envelope and evidence history. Browser tests also checked legacy fallback and current hold, expiry and consent rules |
+| P12 | Add direct-report moderation to the standalone console | Edge verified a filed report, exact consented attachment, audited staff warning, recipient notice and reporter timeline, with queue rights scoped separately |
+| P12 | Review vulnerability disclosure intake in the standalone console | Separate production builds verified public intake, assigned TOTP reviewer admission, audited case review, role revocation and continued isolation from moderation and queue access |
+| P12 | Check all three production build artifacts in candidate CI | The workflow builds web, admin and workers separately and checks browser bundles for server credentials. The workflow is local until publication |
+| P10 | Verify an external key deletion receipt independently | A local read-only AWS fixture verified exact post-stage provider evidence, concurrent hold denial and a single receipt. The UI retains separate source and backup statuses |
+| P4 | Require opt-in SSO for workspace meeting schedules and lobbies | Signed SAML verified Meetings and Calendar, a lobby request, revoked provider access and fresh owner recovery. Existing room and direct call paths retained independent gates |
+| P12 | Add the standalone Workspace Reports tab | An optimized Admin build let platform staff hand off real room and channel cases, then let a scoped workspace owner resolve them and verified the reporter's state. Foreign users were denied |
+| P4 | Extend opt-in SSO to Groups & teams | Signed SAML verified rosters and group management, password-session denial, policy recovery, delegated permissions, and preservation of independent School and SCIM paths |
+| P10 | Import approved staged tasks to the destination Board | Edge imported 26 tasks under the independent destination owner's verified session. Two local projects verified exact digest, replay, collision rollback and foreign owner denial |
+| P10 | Verify retained workspace keys in one historical recovery generation | A separately recorded manifest digest and full archive check exposed recoverable synthetic managed keys after live removal. The verifier reported other backup generations and erasure separately |
+| P4 | Extend opt-in SSO to workspace and room files | Signed SAML covered real private uploads and downloads, stale locators and provider recovery. Native egress, offboarding and maintenance regressions passed |
+| P10 | Remove one separately approved task from the current source | Two independent actors verified an exact copy, approval receipt, live holds and typed identifiers. The transaction removed the task and search entry from the disposable source |
+| P10 | Claim the exact approved destination workspace from the app | Edge verified fresh owner claim and the follow-on Board import. Native checks covered the other account, expired installation binding, one audit event under retry, and preservation of an existing workspace with the same ID |
+| P12 | Add account administration to the standalone Admin app | An optimized Edge build verified assigned operators and independent reviewers, guarded session revocation, audit attribution and live assignment revocation |
+| P10 | Publish an approved workspace file into normal destination Files | Two local projects verified source approval, digest binding, destination file scanner call, byte-exact download, duplicate retry and foreign access denial |
+| P10 | Verify a copied file against the independently reviewed Storage revision | Local Edge and SQL verified real private bytes, current independent reviewer evidence and invalidation on active holds or same-size replacement |
+| P4 | Require optional standard workspace billing SSO | Signed SAML verified owner and delegate controls, scoped invoice denial and fresh owner recovery. Personal billing and independent system operations retained their existing paths |
+| P10 | Verify and invite an ordinary member to the destination | Two local projects verified separately authenticated matching accounts, wrong identity/project/owner denial and a pending invitation under retry. Edge accepted the normal invitation and opened the imported Board |
+| P11 | Require explicit Community Rules acceptance at sign-in | Edge verified the current version prompt, receipt persistence, stale acceptance rejection and a renewed prompt for a new version on disposable data |
+| P12 | Extend standalone Admin and room report tracking | Edge and Supabase verified scoped threat review, separate approval for response actions, suspension and restoration across direct chats, and a reporter-only room timeline |
+| P12 | Share direct-message decisions with the reporter | Admin Edge and two disposable databases verified separately stored private staff reasons, explicit reporter summaries and scoped access to final decisions |
+| P10 | Remove one independently approved standard workspace channel post | Edge and SQL verified an exact downloaded copy, two authorized roles, preserved reported and held content, and removal of only the approved post and search entry |
+| P10 | Remove one independently approved standard workspace room post | Edge and SQL verified the exact copy, independent review, hold and report preservation, exact deletion and indexed entry cleanup |
+| P10 | Publish an approved standard channel in the destination | Two projects and Edge verified one exact original channel ID and name, scoped publication, collision handling and idempotent retries |
+| P4 | Bind managed and protected member media grants to native sessions | Signed SAML and the trusted gateway endpoint checked previously issued credentials after disconnect, and native SQL verified exact session revocation |
+| P10 | Verify an exact archived external key version | A real local archive verified provider pin correlation for one version without exposing key material |
+| P4 | Disconnect revoked meeting media sessions | Three encrypted Edge peers on pinned LiveKit verified removal of one revoked session and continuity of the remaining peers |
+| P10 | Publish an approved standard room in the destination | Two disposable projects and Edge verified the approved ID and name, private Confidential defaults, owner access, scope denials and retries |
+| P10 | Delete one independently approved room task | Edge and SQL verified three exact copies, dual approval, hold preservation, removal of the approved source and retention of its original creation audit |
+| P10 | Delete a mixed batch of independently approved source records | Edge and native SQL verified exact copy receipts, manifest approval and all-or-none deletion across supported cohorts |
+| P10 | Restore approved attachments into an admitted destination room | Two Supabase projects and Edge verified scan, exact protected download, scoped access, collision preservation and retries |
+| P10 | Restore an approved channel message under the verified author | Two projects and Edge verified a signed author attestation, matched ordinary member, exact post restoration, normal Channels visibility and independent scope denials |
+| P10 | Restore approved room tasks and compare destination records | Two projects and Edge verified private room task details and audit, normal task access, exact record comparison and detection of changed or missing evidence |
+| P10 | Record an independent live source-erasure review | Edge and disposable SQL verified redacted counts, same-size revision drift, stable capture order, holds, and an exact reviewer receipt |
+| P10 | Carry immutable provider key evidence into backup review | Edge and a real local PostgreSQL archive verified exact version and workspace correlation, mismatches and tamper detection without exposing the raw provider pin |
+| P13 | Render approved HTTPS legal contact forms | Local render and validator checks verified privacy and service contacts, approved publication gating, traditional email links, and a separate security disclosure queue |
+| P10 | Pause and resume guarded writes in the source workspace | Edge and native controls verified independently reviewed placement, scope, write denial, unchanged reads, workspace isolation, resume and automatic expiry |
+| P11 | Verify actual speech and repair incoming-call announcements | NVDA Speech Viewer verified named controls, data verification, a new chat message and the corrected live announcement for a new incoming audio call |
 | P4 | Provide personal settings, download and deletion controls | Edge and SQL verified appearance, motion, personal settings and search export, scoped dependency status, cancellation and eligible Auth and session deletion |
 | P9 | Calculate and display taxes for eligible billing offers | Edge and SQL verified GSTIN and place-of-supply, inclusive and exclusive pricing, Stripe-backed tax and exact finalized invoice totals |
 | P11–P13 | Full verification and production promotion | The release gate remains closed while registry entries and required verification are open |
 
 See the branch history for slice commits.
 
-This local checkpoint covers 227 verified features and 12 pending. The next checkpoint is due at 237 verified features.
+Local checkpoint `05fee35` covers 227 verified features. The working matrix records 234 verified features and 5 pending. The next checkpoint is due at 237 verified features.
+
+The latest residency test verified an accepted ordinary room invitation and restored an approved root and reply in the destination Rooms UI. The native Enterprise OIDC browser test now has a locally verified synthetic issuer and awaits an approved reachable HTTPS endpoint.
+
+The routing rehearsal verified owner request, independent approval, separate destination sign-in and immediate link withdrawal. Retained source workspaces remained under their existing pause controls. Offboarding now supports approved complete room-thread deletion through the normal owner, reviewer and hold controls.
+
+Signed SAML verified the opt-in channel directory and administration policy. Offboarding added a checked room-file archive receipt tied to exact bytes and the Storage revision. Both isolated database catalogs and live REST matched 685 callable signatures.
+
+Edge verified that the independent source reviewer can accept the destination's time-bounded comparison receipt in Compliance exports. The receipt records the approved totals, including unresolved rows. Signed SAML also verified opt-in room directory and administration access and fresh owner recovery.
+
+Hosted transfer contract tests covered both attachment scopes and verified member invitations. Signed SAML covered invitation management, and Edge covered exact workspace and room file registration cleanup with retained bytes preserved. The AWS custody verifier passed its offline Linux contract. The feature count remains 234 because the production acceptance checks are still open.
+
+Edge verified one combined attachment approval and source drift counts. The offboarding census now checks returned Storage paths, signed SAML covers API key and webhook administration, and the scoped S3 inventory passed its offline Linux suite.
+
+Edge verified durable source hold, destination standby and proof-bound rollback through the guarded write paths. The browser also verified scope-aware permission catalog metadata and exact empty archived channel removal. The exact-version AWS archive verifier passed its offline Linux suite.
+
+Edge verified guarded destination activation after matching plan and recovery admissions, current source hold evidence and an independent comparison. Same-size file drift prevented activation. The cross-location AWS recovery inventory verifier passed its offline Linux suite.
+
+Optimized Edge and native Supabase verified independent approval and removal of a populated archived standard channel with exact owner-authored message versions. The network-disabled Linux suite also verified the managed-backup catalog observer and independently approved offline digest review. Hosted snapshots or backup erasure still require separate evidence.
+
+Signed native SAML verified the optional Workspace policy administration scope in the main and legacy policy editors, the alternate Organization retention writer, and owner recovery. Hosted OIDC still needs its provider-backed test.
+
+Two-project Edge verification now covers published member navigation to the activated destination after the temporary pause and transfer credentials expire. Route publication uses one exact activation proof and records one audit event on retries. The source stays held, and inactive membership or destination retirement blocks the route. The web, admin and worker production builds passed, along with 102 unit tests and live coverage of 708 native signatures across both isolated projects.
+
+The source erasure review now verifies archived room, channel and message removal against exactly one ordered native journal pair and the retained archive. Native and optimized Edge tests showed that stale search data blocks confirmation and requires a new independent review after repair.
+
+Signed native SAML and the rollback fixtures also verified optional Legal Holds ledger access and administration. Both latest Supabase catalogs and permission smoke checks matched 709 callable signatures across the 120-method route inventory. The legal publication row now records a dependency on confirmed operator details and approved effective documents.
+
+Two-project Edge verified guarded rollback preparation after activation and expiry of transfer credentials. The destination hold preserved previously written data, the source owner suspended its member link, and both write boundaries stayed held. The signed SAML browser also verified encrypted compliance downloads and denial after disconnect, with independent offboarding permissions preserved in native tests. Root dependency preflight verified exact owner and independent-reviewer checks for referenced records. The Linux backup timeline suite verified two approved snapshots around a reviewed key event without inferring backup erasure.
+
+Two-project Edge verified the destination rollback review against a baseline recorded during activation. It detected an accepted channel post and a changed Board task, rejected stale evidence after a Storage revision, and recorded one independent confirmation. Both write holds stayed in place. The baseline covers the specified persisted record families and Storage metadata. Recovery bytes and source restoration remain open.
+
+Signed SAML verified protected workspace entry, Board and People access and verified owner recovery. The integrated production build and asset checks passed. Both isolated projects and live REST matched 716 callable signatures across the 120-method route inventory.
+
+Native and optimized Edge verified retirement of one eligible revoked workspace API key after independent review of an exact redacted copy. The live key no longer blocked the root dependency check. Native audit and existing usage stayed intact.
+
+Two-project Edge verified signed transfer of the exact reviewed rollback manifest to the held source. Modified, expired and wrong-plan packets were denied and retries recorded one event. Signed SAML extended workspace entry protection to room and channel conversations, including native managed tickets and guest-link revocation. Native and optimized Edge also verified retirement of an eligible revoked webhook with delivery evidence and original audit preserved.
+
+Two-project Edge verified exact replay of two reviewed Board task completion changes while source writes stayed held. Preservation holds and stale revisions blocked the entire batch. Signed SAML also verified ordinary workspace and room file access, including old locator denial and owner recovery. Native and optimized Edge verified removal of an eligible declined invitation with the original audit and reinvite restriction retained.
+
+Two-project Edge also verified recovery of a new owner-authored Board task after matching both confirmed owner identities, with exact field and author readback. A changed identity or content or a foreign ID collision blocked replay without partial completion. Signed SAML protected outgoing invitations while preserving existing recipient access. Native and optimized Edge verified independent removal of an expired unused link with issuance audit and retired token protection.
+
+Two-project Edge verified task recovery under an ordinary member's exact source identity after approvals in both installations. Missing or withdrawn approval prevented staging or replay. Signed SAML also verified workspace meeting admission, direct token and reconnect checks, and owner recovery using a local signing fixture. Native and optimized Edge verified independent removal of an eligible empty archived workspace group while preserving the original audit and staffed groups.
+
+Two-project Edge verified signed replay of a newly created standard channel and an eligible owner-authored message in the normal source feed. An existing message ID or active hold blocked the entire batch, and reported and other-author messages stayed outside the packet. Signed SAML verified direct recording and summary access, disconnect denial and owner recovery. Native and optimized Edge verified an independently approved withdrawn quote detachment with its financial record and original audit kept immutable.
+
+Two-project Edge verified standard-channel member-message recovery after separate chat approval on each installation. Board approval alone was denied. Source withdrawal blocked the whole staged batch, and renewed approval preserved the source member as its exact author. Signed SAML also verified integration management and fresh-owner recovery while existing automation retained independent authorization.
+
+Native and optimized Edge verified approved removal of an eligible rejected seat-change job. The current allocation and pending and settled jobs stayed in place, with immutable billing custody and no retained lease token.
+
+Two-project Edge verified the source rollback panel against the signed destination manifest. The original owner and independent reviewer saw the same outcomes for restored Board tasks and channel history, with ineligible changes outstanding. An ordinary source member was denied. Native checks also detected later quarantine and confirmed that source writes stayed held.
+
+Signed SAML and Edge verified that managed-room moderation respects workspace SSO. The password-only owner could not see the scoped queue. A signed reviewer verified with TOTP and resolved the case in Safety. The reporter could track the outcome, and verified owner recovery worked after disconnect.
+
+Native and optimized Edge verified independently approved retirement of an eligible suspended workspace membership. The original account, accepted invite and audit remained. Preservation holds, linked records and ordinary staged removal blocked the operation.
+
+Local key-provider tests verified that a deleted regional replica of a multi-Region KMS key cannot satisfy erasure. Contradictory CloudTrail key identifiers were rejected and valid single-Region observations kept their existing digest.
+
+Signed SAML and Edge verified workspace SSO for channel-report review in Safety, including real TOTP, case resolution, reporter tracking, disconnect denial and verified owner recovery. Both isolated databases separately verified managed evidence access and independent Platform handoff.
+
+Two-project Edge verified recording and independent sign-off of all seven changes in a signed recovery manifest. Both write holds stayed in force. Native tests verified exact digest matching, one durable capture and one sign-off event, duplicate retry, active preservation holds, and refusal after a later message quarantine.
+
+Signed SAML and Edge verified workspace billing entry. The password-only owner received API denial, the verified billing delegate opened invoice details, provider disconnect revoked access, and the owner recovered with fresh TOTP. Native tests verified seat and adjustment approvals alongside independent account billing and provider paths.
+
+Signed SAML and Edge verified workspace entry for Organization settings, including direct domain and region APIs. Native tests kept the DNS proof finalizer bound to the same owner, live native session and provider.
+
+Native and optimized Edge verified independent approval of exact audit custody in Offboarding. The audit events and chain kept their original bytes. A new preservation hold restored the workspace root restriction, requiring a fresh review.
+
+Two-project Edge restored a post to its previously migrated standard channel. A mismatched source channel blocked the entire batch. The exact message, author and timestamp were visible in the normal feed after retry, and the source evidence was independently signed with both write holds in force.
+
+Native and optimized Edge verified separately approved custody for the staged offboarding request and approved inventory case. Their original rows and reviewed Storage evidence were retained. A later inventory change restored the workspace link and required a new review.
+
+Edge and disposable GoTrue v2.198.0 completed end-to-end native OIDC against the public HTTPS issuer in a temporary Vercel Sandbox. The test exercised native PKCE, signed token exchange, automatic workspace membership and receipt revocation. The synthetic provider, workspace and active Sandbox session were cleaned up.
+
+Two-project Edge verified recovery into the originally approved `general` channel. The destination claim preserved the source channel ID, failed atomically on an unrelated ID collision, and supported normal history import, guarded activation, rollback and independent source sign-off.
+
+The rollback-only database-owner rehearsal deleted a disposable staged workspace and its four approved native children inside one subtransaction. The executor verified the retained audit, workflow and inventory rows before rolling back. Unexpected transitive dependencies and deletion hooks blocked the operation.
+
+Signed SAML and Edge verified workspace entry for Policy Center, feature pauses and AI settings. The native suite also verified separated effective settings, distinct workspace roles and verified owner recovery.
+
+Signed SAML and Edge verified workspace entry for Compliance Exports and Evidence Vault. Old download tickets still need current authorized workspace SSO. The signed reviewer built and downloaded the encrypted bundle. Disconnect revoked access, and fresh verification restored owner access.
+
+Two-project Edge downloaded a newly added workspace file from private Storage. The signed recovery copy matched the actual bytes, exact approved file and object revisions, and the paired owner's keyed identity. Stale reviews, unreviewed files and other actors were denied. Source staging and restoration remain open.
+
+Native and optimized Edge verified exact retirement of provider key markers after complete provider receipts and independently approved scope. The authorized action retained the native tombstone and provider evidence. Real provider and backup erasure, physical Storage, and permanent workspace deletion remain open.
 
 ## Remaining work by dependency
 

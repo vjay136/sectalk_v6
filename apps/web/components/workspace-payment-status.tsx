@@ -3,7 +3,7 @@
 import {useEffect,useState} from 'react'
 import {db,onReconnect} from '../lib/data'
 
-type PaymentState={mode:'active'|'grace'|'read_only';grace_until?:string}
+type PaymentState={mode:'active'|'grace'|'read_only';grace_until?:string;reason?:'offboarding'|'residency'}
 
 export function WorkspacePaymentStatus({id,owner}:{id:string;owner:boolean}) {
   const [state,setState]=useState<PaymentState|null>(null)
@@ -27,6 +27,14 @@ export function WorkspacePaymentStatus({id,owner}:{id:string;owner:boolean}) {
     const timer=window.setInterval(()=>{if(document.visibilityState==='visible')refresh()},12000)
     return()=>{abort.abort();reconnect();window.clearInterval(timer)}
   },[id])
+  if(state?.mode==='read_only'&&state.reason==='offboarding')return <aside className="panel release-panel" aria-label="Workspace offboarding status">
+    <strong>Workspace is read-only for offboarding</strong>
+    <p>The workspace and its preservation holds remain in place.</p>
+  </aside>
+  if(state?.mode==='read_only'&&state.reason==='residency')return <aside className="panel release-panel" aria-label="Workspace migration status">
+    <strong>Workspace writes are paused for migration</strong>
+    <p>You can still view the workspace content you have permission to access.</p>
+  </aside>
   if(state?.mode==='read_only')return <aside className="panel release-panel" aria-label="Workspace billing status">
     <strong>Workspace is read-only</strong>
     <p>Billing requires attention. You can still view your data and use the exports you have permission to access.</p>

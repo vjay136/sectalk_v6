@@ -1,12 +1,12 @@
 'use client'
 
 import { messageSafetyAction } from '../lib/message-safety-action.mjs'
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { ArrowLeft, ArrowRight, Flag, Shield, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { ArrowRight, Flag, Shield, ShieldCheck } from 'lucide-react'
 import { categories, db, formatError, type Message } from '../lib/data'
 import { Dialog } from './inbox'
 import { SectionTabs } from './section-tabs'
-import { downloadChatFile, type ChatFile } from '../lib/chat-files'
+import { type ChatFile } from '../lib/chat-files'
 import { DeliveryLatency } from './delivery-latency'
 import { UsageMetrics } from './usage-metrics'
 import { ReleaseControls } from './release-controls'
@@ -21,53 +21,20 @@ import { ThreatTrends } from './threat-trends'
 import { OperationalMetrics } from './operational-metrics'
 import { DirectAttachmentHolds, type DirectHoldTarget } from './direct-attachment-holds'
 import { AttachmentQuarantine } from './attachment-quarantine'
-import { SocResponseActions } from './soc-response-actions'
 import { QueueOperations } from './queue-operations'
 import { SecurityIncidents } from './security-incidents'
 import { SecurityCenterOverview } from './security-center-overview'
-import { CaseCollaboration, CaseCollaborationAlerts } from './case-collaboration'
-import { CaseEscalation, CaseEscalationAssignments } from './case-escalation'
-import { CaseBehaviorPanel } from './case-behavior-panel'
 import { MyRoomReports, RoomReportQueue } from './room-reports'
 import { ChannelReportQueue, MyChannelReports } from './channel-reports'
 import { StaffMfa } from './staff-mfa'
 import { EmergencyNotices } from './emergency-notices'
 import { UrlInspection } from './url-inspection'
+import { DisclosureQueue,useDisclosureAccess } from './disclosure-queue'
+import { ModerationQueue, DateLabel, labels, type Report } from './moderation-queue'
+import { isReportTicket, ReportTicket } from './report-ticket'
 
-type Category = keyof typeof categories
-type Report = { id: string; category: Category; status: string; created_at: string }
-type Queue = Report & { subject_handle: string }
-type QueueTimer = Queue & {
-  requested_priority: boolean
-  acknowledge_by: string
-  resolve_by: string
-  acknowledged_at: string | null
-  closed_at: string | null
-  next_due: string | null
-  overdue: boolean
-}
-type Case = Queue & {
-  details: string; evidence: string | null; suspended_until: string | null
-  message_redaction_available: boolean
-  attachment?: ChatFile | null
-  history: { id: number; action: string; note: string; created_at: string }[]
-}
-type TimelineItem = { action:string; at:string }
+type TimelineItem = { action:string; at:string; summary:string|null }
 type Notice = { id:number; action:string; until_at:string|null; created_at:string }
-
-const labels: Record<string, string> = {
-  open: 'Open', reviewing: 'In review', resolved: 'Resolved', dismissed: 'Dismissed',
-  suspend: '24-hour suspension', restore: 'Restriction lifted', viewed: 'Evidence viewed',
-  submitted:'Report received', escalated:'Escalated for review', warn:'Account warning issued',
-  restrict:'Seven-day restriction', remove:'Indefinite restriction',
-  redacted:'Reported message removed',
-  case_note_added:'Collaboration note added', case_note_evidence_viewed:'Linked evidence opened',
-  case_routed:'On-call stage assigned', case_route_acknowledged:'On-call stage acknowledged',
-}
-
-function DateLabel({ value }: { value: string }) {
-  return <time dateTime={value}>{new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>
-}
 
 export function ReportDialog({ chat, message, file, close, inform }: { chat:string;message:Message|null;file?:ChatFile;close:()=>void;inform:(notice:string)=>void }) {
   const [busy, setBusy] = useState(false)
@@ -88,15 +55,16 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
       ...payload, p_revision: message?.edited_at || message?.created_at,
     }) : await db!.rpc('st_v5_report', payload)
     setBusy(false)
-    if (result.error) { setError(formatError(result.error, 'Could not submit your report.')); return }
+    if (result.error || !isReportTicket(result.data)) { setError(formatError(result.error, 'Could not confirm your report submission.')); return }
     close()
-    inform(requested ? 'Priority review requested. Track it in the Safety center.' : 'Report submitted. Track it in the Safety center.')
+    inform(`${requested ? 'Priority review requested.' : 'Report submitted.'} Ticket ${result.data}. Track it in Safety under My reports.`)
   }
   return <Dialog title={message ? 'Report this message' : 'Report this contact'} close={close}><form onSubmit={submit}>
     <p>{message && !message.expires_at ? 'You’re sharing this message and your notes with SecTalk safety staff.' : 'Your notes will be shared with SecTalk safety staff.'}</p>
     {message && !message.expires_at && <blockquote>{message.body}</blockquote>}
     {file&&<label className="task-check"><input type="checkbox" name="share-file"/> Share the attached file with safety staff</label>}
-    <label>Reason<select name="category" required value={category} onChange={event=>setCategory(event.target.value)}>{Object.entries(categories).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
+    <label>Report category<select name="category" aria-label="Report category" required value={category}
+      onChange={event=>setCategory(event.target.value)}>{Object.entries(categories).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
     {priorityAllowed && <label className="task-check"><input type="checkbox" name="priority-review" />
       Request urgent human review</label>}
     <label>Details <span className="muted">(optional)</span><textarea name="details" maxLength={1500} rows={4} placeholder="What happened?" /></label>
@@ -107,8 +75,13 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
 
 export function Safety({ staff, refresh, hints }: { staff: string; refresh: () => Promise<void>; hints: EventTarget }) {
   const [reports, setReports] = useState<Report[]>([])
+  const [reportScope,setReportScope] = useState<'all'|'chat'|'room'|'channel'>('all')
+  const [ticketQuery,setTicketQuery] = useState('')
+  const normalizedTicketQuery=ticketQuery.trim().toLowerCase().replace(/^ticket\s+/,'')
+  const matchingReports=reports.filter(row=>row.id.includes(normalizedTicketQuery))
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports' | 'account-admin' | 'abuse-blocklists' | 'detection-rules' | 'url-inspection' | 'threat-triage'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports' | 'account-admin' | 'abuse-blocklists' | 'detection-rules' | 'url-inspection' | 'threat-triage' | 'disclosures'>('mine')
+  const disclosureAccess=useDisclosureAccess()
   const threatTriage = useThreatTriageAccess()
   const detectionRules = useDetectionRuleAccess()
   const accountOperator = useAccountOperator()
@@ -123,6 +96,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
   const [queueStatus,setQueueStatus]=useState<'none' | 'mfa' | 'verified'>('none')
   const [selected,setSelected]=useState<Report|null>(null)
   const [timeline,setTimeline]=useState<TimelineItem[]|null>(null)
+  const [timelineError,setTimelineError]=useState('')
   const [notices,setNotices]=useState<Notice[]>([])
   const analyticsRevision = useAnalyticsStream(staff === 'verified')
 
@@ -143,10 +117,10 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
     if(!selected)return
     let live=true
     const refreshTimeline=async()=>{
-      const {data,error}=await db!.rpc('st_v5_report_timeline',{p_report:selected.id})
+      const {data,error}=await db!.rpc('st_v8_my_message_report_timeline',{p_report:selected.id})
       if(!live)return
-      if(error)setError('Could not load the report timeline.')
-      else setTimeline(data as TimelineItem[])
+      if(error)setTimelineError('Could not load the report timeline.')
+      else {setTimeline((data as TimelineItem[]).slice().reverse());setTimelineError('')}
     }
     void refreshTimeline()
     const timer=window.setInterval(refreshTimeline,10000)
@@ -228,7 +202,8 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
     ||(view==='workspace-reports'&&roomReviewAccess==='none')||(view==='account-admin'&&accountOperator.access==='none')
     ||(view==='abuse-blocklists'&&abuseBlocks.access==='none')
     ||(view==='detection-rules'&&detectionRules.access==='none')
-    ||(view==='threat-triage'&&threatTriage.access.status==='none')?'mine':view
+    ||(view==='threat-triage'&&threatTriage.access.status==='none')
+    ||(view==='disclosures'&&disclosureAccess.access==='none')?'mine':view
 
   return <section className="content-page safety-page">
     <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
@@ -248,8 +223,10 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
       ...(scanAccess?[['quarantine','Attachment quarantine'] as const]:[]),
       ...(queueAccess!=='none'?[['delivery-queue','Queue operations'] as const]:[]),
       ...(incidentAccess?[['incidents','Incidents'] as const]:[]),
+      ...(disclosureAccess.access!=='none'?[['disclosures','Vulnerability disclosures'] as const]:[]),
     ]}/>
-    {visibleView==='url-inspection'?<UrlInspection/>:
+    {visibleView==='disclosures'?<DisclosureQueue {...disclosureAccess}/>:
+      visibleView==='url-inspection'?<UrlInspection/>:
       visibleView==='overview'?<SecurityCenterOverview/>:
       visibleView==='latency'?<DeliveryLatency revision={analyticsRevision}/>:visibleView==='usage'?<UsageMetrics revision={analyticsRevision}/>:visibleView==='release'?<ReleaseControls/>:
       visibleView==='feedback'?<RiskFeedback/>:
@@ -272,7 +249,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
           explanation="An authenticator code is required to view workspace metadata."/>) :
       visibleView==='workspace-reports' ? (roomReviewAccess==='verified' ? <><RoomReportQueue scope="workspace"/><ChannelReportQueue scope="workspace"/></> :
         <StaffMfa refresh={loadRoomReviewAccess} explanation="Enter a current authenticator code to review eligible workspace reports."/>) :
-      visibleView==='queue' ? (staff === 'verified' ? <><QueuePanel linkIncident={incidentAccess ? reportId => {
+      visibleView==='queue' ? (staff === 'verified' ? <><ModerationQueue linkIncident={incidentAccess ? reportId => {
         setIncidentReport(reportId);setView('incidents')
       } : undefined} /><RoomReportQueue scope="platform"/><ChannelReportQueue scope="platform"/></> : <StaffMfa refresh={refresh}/>) :
       visibleView==='notices'?<div className="panel release-panel"><h2>Account notices</h2>
@@ -285,148 +262,41 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
         <EmergencyNotices hints={hints}/>
       </div> :
       selected?<div className="panel release-panel"><div className="panel-header"><h2>Report timeline</h2>
-        <button className="secondary" onClick={()=>{setSelected(null);setTimeline(null);setError('')}}>Back to reports</button></div>
-        <p>{categories[selected.category]} · {labels[reports.find(row=>row.id===selected.id)?.status||selected.status]}</p>
-        {error&&<p role="alert" className="error">{error}</p>}
-        {!timeline&&!error&&<p role="status">Loading your timeline…</p>}
+        <button className="secondary" onClick={()=>{setSelected(null);setTimeline(null);setTimelineError('')}}>Back to reports</button></div>
+        <p><ReportTicket id={selected.id}/></p>
+        <p>{categories[selected.category]} · <strong>{labels[reports.find(row=>row.id===selected.id)?.status||selected.status]}</strong></p>
+        {timelineError&&<p role="alert" className="error">{timelineError}</p>}
+        {!timeline&&!timelineError&&<p role="status">Loading your timeline…</p>}
         <ol className="audit">{timeline?.map((item,index)=><li key={item.at+item.action+index}>
-          <strong>{labels[item.action]}</strong><small><DateLabel value={item.at}/></small>
+          <strong>{labels[item.action]??'Report updated'}</strong><small><DateLabel value={item.at}/></small>
+          {item.summary&&<p><strong>Response from SecTalk Safety</strong> {item.summary}</p>}
         </li>)}</ol>
       </div> :
-      <div className="panel"><div className="panel-header"><h2>My reports</h2><button className="secondary" onClick={load}>Refresh</button></div>
+      <div className="panel"><div className="panel-header"><h2>My reports</h2><button className="secondary" onClick={()=>{
+        void load();hints.dispatchEvent(new Event('personal_reports_refresh'))
+      }}>Refresh</button></div>
+        <div className="release-section">
+          <SectionTabs label="My report scopes" value={reportScope} onChange={setReportScope}
+            options={[["all","All reports"],["chat","Chat reports"],["room","Room reports"],["channel","Channel reports"]]}/>
+          <label>Filter recent reports by ticket number<input type="search" value={ticketQuery} maxLength={64}
+            onChange={event=>setTicketQuery(event.target.value)} placeholder="Enter a ticket number"/></label>
+        </div>
         {error && <p role="alert" className="error">{error}</p>}
-        {!error && !reports.length && <div className="list-empty"><ShieldCheck size={24}/><strong>No direct chat reports yet</strong><p>Use the flag in a conversation to submit a report.</p></div>}
-        {reports.map(row => <button type="button" className="report-row" key={row.id} onClick={()=>{setTimeline(null);setSelected(row)}}>
-          <Flag size={17}/><span><strong>{categories[row.category]}</strong><small><DateLabel value={row.created_at} /></small></span>
-          <span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/>
-        </button>)}
-        <MyRoomReports/>
-        <MyChannelReports hints={hints}/>
+        {(reportScope==='all'||reportScope==='chat')&&<section className="release-section" aria-label="My chat reports">
+          <h3>My chat reports</h3>
+          {!error && matchingReports.length===0 &&
+            <div className="list-empty"><ShieldCheck size={24}/><strong>{normalizedTicketQuery ? 'No matching chat reports' : 'No chat reports yet'}</strong>
+              {!normalizedTicketQuery&&<p>Use the flag in a conversation to submit a report.</p>}</div>}
+          {matchingReports.map(row =>
+            <button type="button" className="report-row" key={row.id} onClick={()=>{setTimeline(null);setTimelineError('');setSelected(row)}}>
+              <Flag size={17}/><span style={{flex:1,minWidth:0}}><strong>{categories[row.category]}</strong>
+                <small><DateLabel value={row.created_at}/></small>
+                <ReportTicket id={row.id}/></span>
+              <span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/>
+            </button>)}
+        </section>}
+        {(reportScope==='all'||reportScope==='room')&&<MyRoomReports hints={hints} ticketQuery={normalizedTicketQuery}/>}
+        {(reportScope==='all'||reportScope==='channel')&&<MyChannelReports hints={hints} ticketQuery={normalizedTicketQuery}/>}
       </div>}
   </section>
-}
-
-function QueuePanel({linkIncident}: {linkIncident?: (report: string) => void}) {
-  const [rows, setRows] = useState<QueueTimer[] | null>(null)
-  const [selected, setSelected] = useState<Case | null>(null)
-  const [offset, setOffset] = useState(0)
-  const [category, setCategory] = useState('')
-  const [status, setStatus] = useState('active')
-  const [due, setDue] = useState('any')
-  const [error, setError] = useState('')
-  const [working, setWorking] = useState(false)
-  const queueVersion = useRef(0)
-
-  const load = useCallback(async () => {
-    const version = ++queueVersion.current
-    const { data, error } = await db!.rpc('st_v7_priority_abuse_queue', {
-      p_category: category || null, p_status: status, p_due: due, p_offset: offset,
-    })
-    if (version !== queueVersion.current) return
-    if (error) { setRows(null); setError('Could not load the moderation queue.') }
-    else { setError(''); setRows(data as QueueTimer[]) }
-  }, [category, status, due, offset])
-  useEffect(() => {
-    if (selected) return
-    void load()
-    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load() }, 15000)
-    return () => { ++queueVersion.current; window.clearInterval(timer) }
-  }, [load, selected])
-  const timer = selected && rows?.find(row => row.id === selected.id)
-
-  async function open(id: string) {
-    setWorking(true)
-    setError('')
-    const { data, error } = await db!.rpc('st_v5_case', { p_report: id })
-    if (error) setError(formatError(error, 'Could not load case.'))
-    else setSelected(data as Case)
-    setWorking(false)
-    return !error && Boolean(data)
-  }
-
-  async function action(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!selected || working) return
-    const form = event.currentTarget
-    const values = new FormData(form)
-    const decision=values.get('action')
-    setWorking(true)
-    setError('')
-    if(decision==='remove'&&!window.confirm('Restrict this account until staff restore access?')){setWorking(false);return}
-    if(decision==='redact_message'&&!window.confirm('Remove this reported message from the conversation and retain the shared evidence?')){
-      setWorking(false);return
-    }
-    const { error } = decision==='redact_message'
-      ?await db!.rpc('st_v6_case_redact',{p_report:selected.id,p_note:values.get('reason')})
-      :await db!.rpc('st_v5_moderate', { p_report: selected.id, p_action: decision, p_note: values.get('reason') })
-    if (error) { setError(formatError(error, 'Could not record action.')); setWorking(false); return }
-    form.reset()
-    await load()
-    await open(selected.id)
-  }
-
-  return <div className="panel"><div className="panel-header"><h2><ShieldAlert size={20}/> {selected ? 'Report details' : 'Moderation queue'}</h2>
-    <button className="secondary" disabled={working} onClick={() => { if (selected) { setSelected(null); setError('') } else void load() }}>{selected ? 'Back to queue' : 'Refresh'}</button></div>
-    {error && <p className="error" role="alert">{error}</p>}
-    {!selected && <CaseCollaborationAlerts open={open}/>}
-    {!selected && <CaseEscalationAssignments open={open}/>}
-    {selected ? <div className="case">
-      <span className={'pill state-' + selected.status}>{labels[selected.status]}</span>
-      <h2>{categories[selected.category]}</h2><p>@{selected.subject_handle} · <DateLabel value={selected.created_at}/></p>
-      {timer && <dl className="profile-stats">
-        <div><dt>Acknowledge by</dt><dd><DateLabel value={timer.acknowledge_by}/></dd></div>
-        <div><dt>Resolve by</dt><dd><DateLabel value={timer.resolve_by}/></dd></div>
-        {timer.acknowledged_at && <div><dt>Acknowledged</dt><dd><DateLabel value={timer.acknowledged_at}/></dd></div>}
-        {timer.closed_at && <div><dt>Closed</dt><dd><DateLabel value={timer.closed_at}/></dd></div>}
-      </dl>}
-      {selected.suspended_until && new Date(selected.suspended_until) > new Date() && <p className="warning">Restricted until <DateLabel value={selected.suspended_until}/></p>}
-      {selected.suspended_until==='infinity'&&<p className="warning">Restricted until staff restore access</p>}
-      <h3>Reporter notes</h3><p className="case-text">{selected.details || 'No notes provided.'}</p>
-      <h3>Shared evidence</h3>{selected.evidence ? <blockquote>{selected.evidence}</blockquote> : <p>No message was attached.</p>}
-      {linkIncident&&<button type="button" className="secondary" disabled={working}
-        onClick={()=>linkIncident(selected.id)}>Link report to incident</button>}
-      {selected.attachment&&<button type="button" className="secondary" onClick={async()=>{
-        if(!selected.attachment)return
-        try{await downloadChatFile(selected.attachment)}catch{setError('Evidence attachment could not be downloaded.')}
-      }}>Download shared file</button>}
-      <CaseCollaboration key={selected.id} report={selected.id}/>
-      <SocResponseActions key={'response:' + selected.id} report={selected.id}/>
-      <CaseEscalation key={'escalation-' + selected.id} report={selected.id}/>
-      <CaseBehaviorPanel key={'behavior-' + selected.id} report={selected.id}/>
-      <form onSubmit={action}><h3>Record a decision</h3><label>Action<select name="action" required defaultValue="reviewing">
-        <option value="reviewing">Mark in review</option><option value="escalated">Flag for further review</option>
-        {selected.message_redaction_available&&<option value="redact_message">Redact reported message</option>}
-        <option value="warn">Warn account</option><option value="suspend">Restrict for 24 hours</option>
-        <option value="restrict">Restrict for seven days</option><option value="remove">Restrict until restored</option>
-        <option value="restore">Lift restriction</option><option value="resolved">Resolve</option><option value="dismissed">Dismiss</option>
-      </select></label><label>Reason<textarea name="reason" minLength={4} maxLength={500} required rows={3}/></label><button className="primary" disabled={working}>Record decision</button></form>
-      <h3>Audit trail</h3><ol className="audit">{selected.history.map(entry => <li key={entry.id}><strong>{labels[entry.action]}</strong><small><DateLabel value={entry.created_at}/></small>{entry.note && <p>{entry.note}</p>}</li>)}</ol>
-    </div> : <>
-      <div className="release-flex" role="group" aria-label="Moderation queue filters">
-        <label>Report category<select value={category} onChange={event=>{setCategory(event.target.value);setOffset(0)}}>
-          <option value="">All categories</option>
-          {Object.entries(categories).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
-        </select></label>
-        <label>Report status<select value={status} onChange={event=>{setStatus(event.target.value);setOffset(0)}}>
-          <option value="active">Active reports</option><option value="open">Open</option>
-          <option value="reviewing">In review</option><option value="closed">Closed reports</option><option value="any">All reports</option>
-        </select></label>
-        <label>Deadline<select value={due} onChange={event=>{setDue(event.target.value);setOffset(0)}}>
-          <option value="any">Any deadline</option><option value="overdue">Overdue</option><option value="next_day">Due within 24 hours</option>
-        </select></label>
-      </div>
-      {!rows && !error && <p role="status">Loading moderation queue…</p>}
-      {rows?.length === 0 && <div className="list-empty"><ShieldCheck size={24}/><strong>No reports match these filters</strong></div>}
-      {rows?.slice(0, 50).map(row => <button disabled={working} className="report-row" key={row.id} onClick={() => void open(row.id)}>
-        <Flag size={17}/>
-        <div><strong>{categories[row.category]} · @{row.subject_handle}</strong>
-          {row.requested_priority && <small>Priority requested</small>}
-          <small>{row.next_due ? <>{row.overdue ? 'Overdue · ' : ''}{row.acknowledged_at ? 'Resolve by ' : 'Acknowledge by '}
-            <DateLabel value={row.next_due}/></> : <DateLabel value={row.created_at}/>}</small>
-        </div>
-        <span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/>
-      </button>)}
-      {(offset > 0 || (rows?.length ?? 0) > 50) && <div className="pagination"><button className="secondary" disabled={!offset} onClick={() => setOffset(offset - 50)}><ArrowLeft size={15}/> Previous</button><button className="secondary" disabled={(rows?.length ?? 0) <= 50} onClick={() => setOffset(offset + 50)}>Next <ArrowRight size={15}/></button></div>}
-    </>}
-  </div>
 }

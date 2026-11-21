@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
 import { verifyAccountCredential } from '../lib/account-credential'
 import { WorkspaceInvitationTemplates } from './workspace-invitation-templates'
+import { WorkspaceResidency } from './workspace-residency'
+import { WorkspaceOffboarding } from './workspace-offboarding'
+import { organizationSsoMessage, useWorkspaceOrganizationAccess } from './workspace-organization-access'
 
 const colors = { blue: '#2776bc', teal: '#097568', violet: '#7553a8', amber: '#a96509' }
 const accentNames = { blue: 'Blue', teal: 'Teal', violet: 'Violet', amber: 'Amber' }
@@ -39,6 +42,7 @@ export function OrganizationSettings({ workspace, onBrand }: {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [step, setStep] = useState<Step>()
+  const organizationAccess=useWorkspaceOrganizationAccess(workspace)
 
   async function api(action: string, domain?: string, signal?: AbortSignal) {
     const { data } = await db!.auth.getSession()
@@ -59,6 +63,7 @@ export function OrganizationSettings({ workspace, onBrand }: {
   }, [workspace])
 
   useEffect(() => {
+    if(organizationAccess!=='allowed')return
     const controller = new AbortController()
     void rpc('read', undefined, controller.signal).then(data => {
       if (!controller.signal.aborted) setSettings(data)
@@ -72,9 +77,10 @@ export function OrganizationSettings({ workspace, onBrand }: {
     })
     return () => controller.abort()
     // The workspace key scopes this request and the entire settings form.
-  }, [workspace, rpc])
+  }, [organizationAccess, workspace, rpc])
 
   async function handle(perform: () => Promise<void>) {
+    if(organizationAccess!=='allowed')return
     setBusy(true)
     setError('')
     setNotice('')
@@ -90,7 +96,7 @@ export function OrganizationSettings({ workspace, onBrand }: {
 
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!step || busy) return
+    if (!step || busy || organizationAccess!=='allowed') return
     const credential = String(new FormData(event.currentTarget).get('credential') ?? '')
     setBusy(true)
     setError('')
@@ -129,7 +135,10 @@ export function OrganizationSettings({ workspace, onBrand }: {
 
   return <section className="release-section" aria-label="Organization settings">
     <h2>Organization settings</h2>
-    {settings && <form className="release-form" onSubmit={save} key={[settings.name, settings.accent, settings.retentionDays, settings.region].join(':')}>
+    {organizationAccess===undefined&&<p role="status">Checking organization settings access…</p>}
+    {organizationAccess==='required'&&<p role="status">{organizationSsoMessage}</p>}
+    {organizationAccess==='unavailable'&&<p role="alert">Organization settings are unavailable.</p>}
+    {organizationAccess==='allowed'&&settings && <form className="release-form" onSubmit={save} key={[settings.name, settings.accent, settings.retentionDays, settings.region].join(':')}>
       <fieldset disabled={busy || !!step}>
         <legend>Branding, retention and region preference</legend>
         <label>Organization name<input name="name" required maxLength={64} defaultValue={settings.name}/></label>
@@ -149,7 +158,7 @@ export function OrganizationSettings({ workspace, onBrand }: {
         <button type="submit" className="primary">Save organization settings</button>
       </fieldset>
     </form>}
-    {settings && <section aria-label="Organization domains">
+    {organizationAccess==='allowed'&&settings && <section aria-label="Organization domains">
       <h3>Verified domains</h3>
       <p>DNS verification records control of a domain at the time of the check. Workspace invitation rules have their own settings.</p>
       <form className="release-form" onSubmit={event => {
@@ -173,8 +182,10 @@ export function OrganizationSettings({ workspace, onBrand }: {
         <button type="button" className="text-button" disabled={busy || !!step} onClick={() => changeDomain('remove', entry.domain)}>Remove domain</button>
       </li>)}</ul>
     </section>}
-    {settings && <WorkspaceInvitationTemplates workspace={workspace} organization={settings.name} disabled={busy || !!step} authorize={handle}/> }
-    {step && <form className="release-form" aria-label="Verify current sign-in" onSubmit={event => void confirm(event)}>
+    {organizationAccess==='allowed'&&settings && <WorkspaceInvitationTemplates workspace={workspace} organization={settings.name} disabled={busy || !!step} authorize={handle}/> }
+    {organizationAccess==='allowed'&&settings && <WorkspaceResidency key={workspace} workspace={workspace} disabled={busy || !!step} authorize={handle}/>}
+    <WorkspaceOffboarding key={'offboarding-'+workspace} workspace={workspace}/>
+    {organizationAccess==='allowed'&&step && <form className="release-form" aria-label="Verify current sign-in" onSubmit={event => void confirm(event)}>
       <label>{step.assurance === 'totp' ? 'Current authenticator code' : 'Current password'}
         <input name="credential" required type={step.assurance === 'password' ? 'password' : 'text'}
           inputMode={step.assurance === 'totp' ? 'numeric' : undefined}

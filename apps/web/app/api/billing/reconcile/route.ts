@@ -1,4 +1,4 @@
-import {billingWriter, stripe} from '../../../../lib/stripe-server'
+import {billingWriter, stripeReconciliationClient} from '../../../../lib/stripe-server'
 import {couponCheckoutSnapshot} from '../../../../lib/stripe-coupon'
 import {stripeRenewalSnapshot} from '../../../../lib/stripe-renewal'
 import {stripeSubscriptionSnapshot} from '../../../../lib/stripe-reconciliation'
@@ -13,9 +13,9 @@ type Probe = {invoice:string; customer:string; subscription:string; probe_at:str
 
 export async function POST(request: Request) {
   const secret = process.env.SECTALK_STRIPE_RECONCILE_SECRET
-  if (!stripe || !billingWriter || !secret || Buffer.byteLength(secret) < 32) return new Response(null, {status: 503, headers})
+  if (!stripeReconciliationClient || !billingWriter || !secret || Buffer.byteLength(secret) < 32) return new Response(null, {status: 503, headers})
   if (!notificationDrainAuthorized(request, secret)) return new Response(null, {status: 401, headers})
-  const provider = stripe
+  const provider = stripeReconciliationClient
   const store = billingWriter
   const [claims,probes,coupons] = await Promise.all([
     store.rpc('st_v7_stripe_reconcile_claim'), store.rpc('st_v7_renewal_probe_claim'), store.rpc('st_v7_coupon_probe_claim'),
@@ -51,6 +51,6 @@ export async function POST(request: Request) {
     if (session.id===lease.provider_session && snapshot?.hold===lease.id)
       await store.rpc('st_v7_coupon_probe_finish',{p_session:session.id,p_payload:snapshot})
   }))
-  const [outcomes] = await Promise.all([subscriptions,renewals,discounts,closeWorkspaceSeatSubscriptions()])
+  const [outcomes] = await Promise.all([subscriptions,renewals,discounts,closeWorkspaceSeatSubscriptions(provider)])
   return Response.json({processed: outcomes.length, synchronized: outcomes.filter(Boolean).length}, {headers})
 }

@@ -8,13 +8,14 @@ const video=process.env.SECTALK_GROUP_VIDEO==='1'
 const mode=video?'video':'audio'
 const app=new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase=new URL(process.env.SECTALK_STORAGE_TEST_URL)
-assert.equal(app.href,'http://127.0.0.1:3503/')
+const gated=process.env.SECTALK_TEST_LIVEKIT_SIGNAL==='1'
+assert.equal(app.href,gated?'http://127.0.0.1:3581/':'http://127.0.0.1:3503/')
 assert.equal(supabase.hostname,'127.0.0.1')
 const {SECTALK_STORAGE_TEST_PUBLIC_KEY:key,SECTALK_STORAGE_TEST_SERVICE_KEY:serviceKey}=process.env
 assert.ok(key && serviceKey)
 const auth={persistSession:false,autoRefreshToken:false}
 const admin=createClient(supabase.href,serviceKey,{auth})
-const provider=new RoomServiceClient('http://127.0.0.1:7880','devkey','secret')
+const provider=new RoomServiceClient(gated?'http://127.0.0.1:7900':'http://127.0.0.1:7880','devkey','secret')
 const password=randomUUID()+'!1Q'
 const people=[]
 let browser

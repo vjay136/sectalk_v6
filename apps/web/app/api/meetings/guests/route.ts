@@ -1,3 +1,4 @@
+import { liveKitControlUrl } from '../../../../lib/livekit-control-url'
 import { createHash, randomBytes } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk'
@@ -119,7 +120,7 @@ export async function POST(request:Request) {
     let cleanupPending=false
     if (Array.isArray(detach) && detach.length) {
       const room='sectalk-v3-'+meeting
-      const rooms=new RoomServiceClient(settings.livekit.replace(/^ws/,'http'),settings.apiKey,settings.apiSecret,{requestTimeout:4})
+      const rooms=new RoomServiceClient(liveKitControlUrl(settings.livekit),settings.apiKey,settings.apiSecret,{requestTimeout:4})
       try {
         const present=(await rooms.listParticipants(room)).filter(person=>detach.includes(person.identity))
         const removed=await Promise.allSettled(present.map(person=>rooms.removeParticipant(room,person.identity)))

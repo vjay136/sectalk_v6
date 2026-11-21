@@ -8,6 +8,10 @@ const totals = {
   PLT:5, ANL:7, PLAT:13,
 }
 const validStates = ['NOT_STARTED','IN_PROGRESS','DONE','BLOCKED_EXTERNAL']
+const freeOptional = new Set(['AUTH-05','ORG-08','ORG-09','SEC-04','PLAT-13'])
+const fullRelease = process.argv.includes('--release')
+const freeRelease = process.argv.includes('--release-free')
+assert.ok(!(fullRelease && freeRelease),'Choose exactly one release scope.')
 const read = file => readFile(new URL(file, import.meta.url),'utf8')
 const [spec,matrix] = await Promise.all([read('../features.md'),read('../docs/FEATURE_MATRIX.md')])
 const registry = [...spec.matchAll(/^- (([A-Z]+)-(\d{2})) (.+)$/gm)]
@@ -30,18 +34,26 @@ assert.deepEqual([...registryNames.keys()].sort(),expected.sort())
 assert.deepEqual([...states.keys()].sort(),expected)
 const counts = Object.fromEntries(validStates.map(state=>[state,[...states.values()].filter(value=>value===state).length]))
 console.log(JSON.stringify({ registry:expected.length, ...counts }))
-if (process.argv.includes('--release') && counts.DONE!==expected.length) {
-  console.error('Release blocked. All 239 entries must have status DONE.')
-  process.exitCode=1
-} else if (process.argv.includes('--release')) {
-  try {
-    const findings=verifySecrets({build:true})
-    if(findings.length){
-      for(const {file,rule} of findings)console.error(file+' — '+rule)
+if (fullRelease || freeRelease) {
+  const allowed = freeRelease ? freeOptional : new Set()
+  const incomplete = expected.filter(id=>states.get(id)!=='DONE')
+  const blocked = incomplete.filter(id=>!allowed.has(id))
+  if(blocked.length){
+    console.error('Release blocked. Incomplete required entries: '+blocked.join(', '))
+    process.exitCode=1
+  }else{
+    try {
+      const findings=verifySecrets(freeRelease?{buildAll:true}:{build:true})
+      if(findings.length){
+        for(const {file,rule} of findings)console.error(file+' — '+rule)
+        process.exitCode=1
+      }else if(freeRelease){
+        console.log(JSON.stringify({scope:'free',required:expected.length-freeOptional.size,
+          optionalIncomplete:incomplete.map(id=>({id,status:states.get(id)}))}))
+      }
+    } catch {
+      console.error('Release blocked. The browser asset secret checks could not complete.')
       process.exitCode=1
     }
-  } catch {
-    console.error('Release blocked. The browser asset secret checks could not complete.')
-    process.exitCode=1
   }
 }

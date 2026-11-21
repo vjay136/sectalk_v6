@@ -1,5 +1,6 @@
 import {billingIdentity,billingWriter,stripe,stripeLiveMode} from '../../../../lib/stripe-server'
 import {stripeBillingUuid} from '../../../../lib/stripe-reconciliation'
+import {workspaceBillingAccess} from '../../../../lib/workspace-billing-access'
 import {finalizedInvoice, invoiceId, invoicePdf, issueInvoiceTicket, readInvoiceTicket,
   type InvoiceBinding, type InvoiceDocument} from '../../../../lib/stripe-invoice-documents'
 
@@ -11,13 +12,14 @@ const fail = (status:number) => new Response(null,{status,headers})
 export async function GET(request: Request) {
   const actor = await billingIdentity(request)
   if (!actor) return fail(401)
+  const params = new URL(request.url).searchParams
+  const scope = params.get('workspace')
+  if (scope !== null && !stripeBillingUuid.test(scope)) return fail(400)
+  if (scope !== null && await workspaceBillingAccess(actor.client,scope)!=='allowed') return fail(403)
   const secret = process.env.SECTALK_STRIPE_DOCUMENT_SECRET
   if (!stripe || !billingWriter || !secret || Buffer.byteLength(secret)<32) return fail(503)
   const provider = stripe
   const db = billingWriter
-  const params = new URL(request.url).searchParams
-  const scope = params.get('workspace')
-  if (scope !== null && !stripeBillingUuid.test(scope)) return fail(400)
 
   async function binding(): Promise<InvoiceBinding | null> {
     if ((await actor!.client.rpc('st_v7_current_session_valid')).data !== true) throw new Error('Session inactive')

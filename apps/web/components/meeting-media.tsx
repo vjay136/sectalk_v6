@@ -9,6 +9,7 @@ import { MoreHorizontal, Signal, VideoOff } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import '@livekit/components-styles'
 import { createCallQos } from '../lib/call-qos'
+import { parseMeetingMediaIdentity } from '../lib/meeting-media-identity'
 import { useMeetingNetwork } from './meeting-network'
 import { deviceConstraint, type MeetingChoices } from './meeting-prejoin'
 import { MeetingScreenShare } from './meeting-screen-share'
@@ -90,7 +91,7 @@ function ConferenceStage({ focus, meeting, screenShareDisabled }: { focus: strin
     { source: Track.Source.Camera, withPlaceholder: true },
     { source: Track.Source.ScreenShare, withPlaceholder: false },
   ], { onlySubscribed: false })
-  const focused = tracks.find(track => track.source === Track.Source.Camera && track.participant.identity === focus)
+  const focused = tracks.find(track => track.source === Track.Source.Camera && parseMeetingMediaIdentity(track.participant.identity)?.actor === focus)
     ?? tracks.find(track => track.source === Track.Source.ScreenShare && track.publication?.isSubscribed)
 
   return <div className="lk-video-conference">
@@ -106,7 +107,7 @@ function ConferenceStage({ focus, meeting, screenShareDisabled }: { focus: strin
         <VideoOff size={24} aria-hidden="true"/>
         <strong>Video paused to keep audio clear</strong>
         <span>Video resumes automatically when the connection improves.</span>
-      </div> : focused ? <div className={`lk-focus-layout-wrapper ${styles.videoStage}`} data-focused-participant={focused.participant.identity}>
+      </div> : focused ? <div className={`lk-focus-layout-wrapper ${styles.videoStage}`} data-focused-participant={parseMeetingMediaIdentity(focused.participant.identity)?.actor}>
         <FocusLayoutContainer>
           <CarouselLayout tracks={tracks.filter(track => track !== focused)}>
             <ParticipantTile/>

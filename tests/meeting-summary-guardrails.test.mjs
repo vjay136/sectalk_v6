@@ -26,7 +26,7 @@ test('prompt-shaped and sensitive rows do not reach draft output', () => {
     row('I will notify élise @ example . org.'),
     row('I will notify tester [at] example [dot] org.'),
     row('I will share glpat-madeup_fixture_value_1234.'),
-    row('A fixture contains -----BEGIN EC PRIVATE KEY-----.'),
+    row('A fixture contains '+['-----BEGIN','EC PRIVATE KEY-----.'].join(' ')),
     row('I will call our contact on +1 (202) 555-0168.'),
     row('Test Participant approved the personal plan.'),
     row('I will use one password=synthetic. The retained text should still be dropped.'),

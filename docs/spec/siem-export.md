@@ -4,7 +4,7 @@ An enterprise workspace owner with a recent native authenticator verification ca
 
 ## Configure
 
-Set these variables in the application server's private environment.
+Set the signing key and connector configuration in the private environments of both the consumer web app and worker app so queued deliveries and downloads use the same signer and destination list. Set the drain bearer and service credential in the worker environment.
 
 - `SECTALK_SIEM_SIGNING_KEY` holds a base64url-encoded PKCS#8 DER Ed25519 private key. Distribute the associated SPKI public key to recipients independently. Keep a stable key for queued deliveries and retain previous public keys if changing the signing key.
 - `SECTALK_SIEM_DRAIN_SECRET` is a dedicated bearer secret of at least 32 bytes. `SECTALK_SIEM_SERVICE_KEY` is the server-side Supabase service credential. Configure a private scheduler to POST to `/api/siem/drain` with this bearer every minute. Each pass handles at most one delivery per configured workspace and channel.

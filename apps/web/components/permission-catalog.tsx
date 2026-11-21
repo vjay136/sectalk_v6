@@ -3,10 +3,11 @@
 import {useEffect,useState} from 'react'
 import {db} from '../lib/data'
 
-type Decision='allowed'|'verification_required'|'not_allowed'|'plan_required'
+type Decision='allowed'|'verification_required'|'sso_required'|'not_allowed'|'plan_required'
 type Scope={id:string;name:string}
 type Catalog={
   workspaces:Scope[];rooms:Scope[];workspace_role:string|null;room_role:string|null;operator_role:string|null
+  room_requires_sso?:boolean
   workspace:Record<string,Decision>;room:Record<string,Decision>;platform:Record<string,Decision>
 }
 
@@ -31,6 +32,7 @@ const names:Record<string,string>={
 const decisions:Record<Decision,string>={
   allowed:'Allowed for this role',
   verification_required:'Fresh security verification required',
+  sso_required:'Workspace single sign-on required',
   not_allowed:'Unavailable for this role or scope',
   plan_required:'Requires an eligible workspace plan',
 }
@@ -59,6 +61,7 @@ export function PermissionCatalog() {
   const current=result?.workspace===workspace&&result.room===room?result:null
   const catalog=current?.catalog
   const options=result?.catalog
+  const roomOptions=result?.workspace===workspace?result.catalog?.rooms??[]:[]
   return <section className="panel mfa-panel" aria-label="Permission catalog">
     <h2>Permission catalog</h2>
     <button type="button" className="secondary" aria-expanded={open} onClick={()=>setOpen(!open)}>
@@ -71,12 +74,13 @@ export function PermissionCatalog() {
         setWorkspace(event.target.value);setRoom('')
       }}><option value="">Choose a workspace</option>{options.workspaces.map(item=>
         <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-      {workspace&&options?.rooms.length!==0&&<label>Room for permissions<select value={room} onChange={event=>setRoom(event.target.value)}>
-        <option value="">Choose a room</option>{options?.rooms.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
+      {workspace&&roomOptions.length>0&&<label>Room for permissions<select value={room} onChange={event=>setRoom(event.target.value)}>
+        <option value="">Choose a room</option>{roomOptions.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
       </select></label>}
       {!current&&<p role="status">Checking permissions…</p>}
       {current&&!catalog&&<p role="alert">Could not load your permissions. Verify your session and try again.</p>}
       {catalog&&<>
+        {catalog.room_requires_sso&&<p role="status">Sign in with workspace single sign-on to view room permissions.</p>}
         {catalog.workspace_role&&<section aria-label="Workspace permissions">
           <h3>Workspace role: {catalog.workspace_role}</h3>
           <Actions value={catalog.workspace}/>

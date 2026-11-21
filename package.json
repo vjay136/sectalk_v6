@@ -3,7 +3,9 @@
   "version": "6.0.0-alpha.1",
   "private": true,
   "workspaces": [
-    "apps/web"
+    "apps/admin",
+    "apps/web",
+    "apps/workers"
   ],
   "engines": {
     "node": "^24.7.0 || 26.x"
@@ -11,9 +13,12 @@
   "scripts": {
     "dev": "npm run dev -w @sectalk/web",
     "build": "npm run build -w @sectalk/web",
+    "build:admin": "npm run build -w @sectalk/admin",
+    "build:workers": "npm run build -w @sectalk/workers",
     "start": "npm run start -w @sectalk/web",
     "typecheck": "npm run typecheck -w @sectalk/web",
     "test": "node --test tests/*.test.mjs",
+    "test:load:smoke": "node tests/messaging-load-smoke.e2e.mjs",
     "preflight": "node scripts/preflight.mjs",
     "verify:registry": "node scripts/verify-registry.mjs",
     "verify:secrets": "node scripts/verify-secrets.mjs",

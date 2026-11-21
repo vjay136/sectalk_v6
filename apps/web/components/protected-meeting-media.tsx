@@ -3,6 +3,7 @@
 import { ControlBar, GridLayout, LiveKitRoom, ParticipantTile, RoomAudioRenderer, useTracks } from '@livekit/components-react'
 import { ExternalE2EEKeyProvider, Room, RoomEvent, Track, isE2EESupported, type RemoteTrackPublication } from 'livekit-client'
 import { useEffect, useState } from 'react'
+import { parseMeetingMediaIdentity } from '../lib/meeting-media-identity'
 import '@livekit/components-styles'
 
 function Stage() {
@@ -27,19 +28,23 @@ export default function ProtectedMeetingMedia({access,keyBytes,roster,close}:{ac
       const provider=new ExternalE2EEKeyProvider()
       instance=new Room({encryption:{keyProvider:provider,worker},publishDefaults:{simulcast:false,videoCodec:'vp8'}})
       const current=instance
+      function isInRoster(identity:string) {
+        const parsed=parseMeetingMediaIdentity(identity)
+        return parsed!==null && roster.includes(parsed.actor)
+      }
       function check(publication:RemoteTrackPublication,identity:string) {
-        if (!publication.isEncrypted || !roster.includes(identity)) {
+        if (!publication.isEncrypted || !isInRoster(identity)) {
           close()
           return
         }
         publication.setSubscribed(true)
       }
       current.on(RoomEvent.TrackPublished,(publication,participant)=>check(publication,participant.identity))
-      current.on(RoomEvent.ParticipantConnected,participant=>{if (!roster.includes(participant.identity)) close()})
+      current.on(RoomEvent.ParticipantConnected,participant=>{if (!isInRoster(participant.identity)) close()})
       current.on(RoomEvent.EncryptionError,close)
       current.on(RoomEvent.Connected,()=>{
         for (const participant of current.remoteParticipants.values()) {
-          if (!roster.includes(participant.identity)) { close(); return }
+          if (!isInRoster(participant.identity)) { close(); return }
           for (const publication of participant.trackPublications.values()) check(publication,participant.identity)
         }
         setConnected(true)

@@ -3,16 +3,18 @@ import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
 import {createClient} from '@supabase/supabase-js'
 import {RoomServiceClient,TokenVerifier,TrackSource} from 'livekit-server-sdk'
+import {SignalResponse} from '@livekit/protocol'
 
 const app=new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase=new URL(process.env.SECTALK_STORAGE_TEST_URL)
-assert.equal(app.href,'http://127.0.0.1:3502/')
+const gated=process.env.SECTALK_TEST_LIVEKIT_SIGNAL==='1'
+assert.equal(app.href,gated?'http://127.0.0.1:3581/':'http://127.0.0.1:3502/')
 assert.equal(supabase.hostname,'127.0.0.1')
 const {SECTALK_STORAGE_TEST_PUBLIC_KEY:key,SECTALK_STORAGE_TEST_SERVICE_KEY:serviceKey}=process.env
 assert.ok(key && serviceKey)
 const auth={persistSession:false,autoRefreshToken:false}
 const admin=createClient(supabase.href,serviceKey,{auth})
-const provider=new RoomServiceClient('http://127.0.0.1:7880','devkey','secret')
+const provider=new RoomServiceClient(gated?'http://127.0.0.1:7900':'http://127.0.0.1:7880','devkey','secret')
 const verifier=new TokenVerifier('devkey','secret')
 const password=randomUUID()+'!1Q'
 const people=[]
@@ -68,8 +70,23 @@ try {
   const {chromium}=await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
   browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER,
     args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']})
+  const refreshGrants=new WeakMap()
   async function open(person) {
     const page=await browser.newPage({locale:'en-US',permissions:['microphone','camera']})
+    if(gated){
+      const grants=[]
+      refreshGrants.set(page,grants)
+      page.on('websocket',socket=>{
+        const origin=new URL(socket.url())
+        if(origin.origin!=='ws://127.0.0.1:3580') return
+        socket.on('framereceived',({payload})=>{
+          try {
+            const frame=typeof payload==='string' ? SignalResponse.fromJsonString(payload) : SignalResponse.fromBinary(payload)
+            if(frame.message.case==='refreshToken') grants.push(frame.message.value)
+          } catch { /* Non-signaling frames do not contain a refresh grant. */ }
+        })
+      })
+    }
     await page.addInitScript(()=>{
       const Peer=window.RTCPeerConnection
       window.protectedTestPeers=[]
@@ -175,10 +192,48 @@ try {
     console.log('Native LiveKit encoded transforms',native)
   }
   const participants=await provider.listParticipants(room)
-  assert.deepEqual(participants.map(person=>person.identity).sort(),[host.id,second.id,third.id].sort())
+  assert.deepEqual(participants.map(person=>person.identity.split('.')[0]).sort(),[host.id,second.id,third.id].sort())
+  for(const person of participants) assert.equal(person.identity.split('.')[1],person.attributes['sectalk.media.binding'])
   for (const person of participants) {
     assert.deepEqual(person.tracks.map(track=>track.source).sort(),[TrackSource.CAMERA,TrackSource.MICROPHONE].sort())
     assert.ok(person.tracks.every(track=>track.encryption===1))
+  }
+  if(gated){
+    const departed=participants.find(person=>person.identity.startsWith(third.id+'.')).identity
+    const refreshName='Protected QA refresh'
+    await provider.updateParticipant(room,departed,{name:refreshName})
+    let replacement
+    const refreshDeadline=Date.now()+12000
+    do {
+      for(const token of refreshGrants.get(pages[2])){
+        const claims=await verifier.verify(token)
+        if(claims.name!==refreshName) continue
+        assert.equal(claims.sub,departed)
+        assert.equal(claims.attributes['sectalk.media.binding'],departed.split('.')[1])
+        replacement=token
+        break
+      }
+      if(!replacement) await new Promise(resolve=>setTimeout(resolve,250))
+    } while(!replacement && Date.now()<refreshDeadline)
+    assert.ok(replacement,'Expected a provider-issued replacement grant')
+    const validation=new URL('http://127.0.0.1:3580/rtc/validate')
+    validation.searchParams.set('access_token',replacement)
+    assert.equal((await fetch(validation)).status,200)
+    const authToken=await pages[2].evaluate(()=>{
+      const storageKey=Object.keys(localStorage).find(name=>name.endsWith('-auth-token'))
+      return JSON.parse(localStorage.getItem(storageKey)).access_token
+    })
+    data(await admin.auth.admin.signOut(authToken,'local'))
+    assert.equal((await fetch(validation)).status,403)
+    const deadline=Date.now()+35000
+    let connected
+    do {
+      connected=(await provider.listParticipants(room)).map(person=>person.identity)
+      if(!connected.includes(departed)) break
+      await new Promise(resolve=>setTimeout(resolve,500))
+    } while(Date.now()<deadline)
+    assert.deepEqual(connected.sort(),participants.map(person=>person.identity).filter(identity=>identity!==departed).sort())
+    console.log('A real refreshed LiveKit grant retained its native binding, failed reentry after revocation, and the gateway removed only that connected session.')
   }
   data(await third.client.rpc('st_v3_leave',{p_meeting:meeting}))
   await Promise.all(pages.slice(0,2).map(page=>panel(page).getByText(/The protected roster is closed/).waitFor()))
