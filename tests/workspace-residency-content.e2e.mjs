@@ -42,6 +42,7 @@ const checkSourceSignoff = process.env.SECTALK_RESIDENCY_SOURCE_SIGNOFF_QA === '
 const checkExistingChannelReplay = process.env.SECTALK_RESIDENCY_EXISTING_CHANNEL_QA === '1'
 const checkDefaultChannelReplay = process.env.SECTALK_RESIDENCY_DEFAULT_CHANNEL_QA === '1'
 const checkRollbackFileCopy = process.env.SECTALK_RESIDENCY_ROLLBACK_FILE_QA === '1'
+const checkDestinationRetirement = process.env.SECTALK_RESIDENCY_RETIRE_DESTINATION_QA === '1'
 const existingChannelName = checkDefaultChannelReplay?'general':'approved-channel'
 assert.ok(!checkComparisonReceipt||checkDestinationComparison)
 assert.ok(!checkBothFileScopes||(checkDestinationComparison&&checkRoomFileImport))
@@ -59,6 +60,7 @@ assert.ok(!checkMemberChannelReplay||checkChannelReplay)
 assert.ok(!checkExistingChannelReplay||(checkCutover&&checkChannelReplay&&checkSourceReplayReview))
 assert.ok(!checkDefaultChannelReplay||(checkExistingChannelReplay&&checkSourceSignoff))
 assert.ok(!checkRollbackFileCopy||checkRollbackManifest)
+assert.ok(!checkDestinationRetirement||checkRollbackManifest)
 if(checkDestinationComparison)assert.ok(checkChannelHistory&&checkRoomTaskImport&&sourceApp&&targetApp)
 if(checkRoomTaskImport)assert.ok(checkRoomImport)
 if(checkRoomFileImport)assert.ok(sourceApp&&targetApp&&checkRoomImport)
@@ -1346,6 +1348,13 @@ try {
       assert.equal((await fetch(routeUrl,memberRequest)).status,404)
       console.log('Edge verified activation-proof publication, durable member navigation after expiry, one idempotent event and retired-cell denial.')
       if(checkRollbackHold){
+        const retirement=(client,p_action='status')=>client.rpc('st_v8_residency_retire_destination',{
+          p_workspace:workspace,p_action,p_confirmation:workspace,
+        })
+        if(checkDestinationRetirement){
+          assert.equal(data(await retirement(verifiedDestination)).state,'inactive')
+          assert.equal((await retirement(verifiedDestination,'issue')).error?.code,'42501')
+        }
         const manifestAction=(client,p_action='status',p_packet)=>client.rpc('st_v8_residency_rollback_manifest',{
           p_workspace:workspace,p_action,p_confirmation:workspace,p_packet,
         })
@@ -1426,6 +1435,10 @@ try {
           }
           const first=await capture()
           assert.equal(first.state,'pending')
+          if(checkDestinationRetirement){
+            assert.equal(data(await retirement(verifiedDestination)).state,'review_required')
+            assert.equal((await retirement(verifiedDestination,'issue')).error?.code,'PT409')
+          }
           assert.ok(first.changes.some(item=>item.kind==='channel_message'&&item.id===acceptedDestinationPost&&item.state==='added'))
           const changedTask=first.changes.find(item=>item.kind==='workspace_task'&&item.id===updatedTargetTask)
           assert.ok(changedTask?.state==='changed'&&changedTask.before!==changedTask.after)
@@ -1511,6 +1524,34 @@ try {
             assert.deepEqual(manifestRecord.changes,second.changes)
             assert.ok(!rollbackPacket.payload.includes('Activated destination')&&!rollbackPacket.payload.includes('Selected synthetic task'))
             assert.equal((await manifestAction(verifiedOwner,'receive',rollbackPacket)).error?.code,'42501')
+            if(checkDestinationRetirement){
+              assert.equal((await retirement(verifiedForeign,'issue')).error?.code,'42501')
+              assert.equal(data(await retirement(verifiedOwner)).state,'inactive')
+              const retiring=manifestPanel.getByRole('region',{name:'Destination retirement',exact:true})
+              await retiring.getByLabel('Confirm destination retirement workspace ID').fill(workspace)
+              const download=page.waitForEvent('download')
+              await retiring.getByRole('button',{name:'Retire destination and download proof',exact:true}).click()
+              const file=await download
+              assert.equal(file.suggestedFilename(),'sectalk-retired-destination-'+workspace+'.json')
+              const packet=JSON.parse(await readFile(await file.path(),'utf8'))
+              const proof=JSON.parse(packet.payload)
+              assert.equal(packet.signature,createHmac('sha256',recoverySigner).update(packet.payload).digest('hex'))
+              assert.deepEqual({...proof,expires:undefined,receipt:undefined},{format:'sectalk-residency-retired-destination-v1',
+                workspace,handoff:handoffId,approval,source:sourceProject,destination:destinationProject,
+                review:manifestRecord.review,digest:manifestRecord.digest,plan:manifestRecord.plan,expires:undefined,receipt:undefined})
+              await retiring.getByText(proof.receipt,{exact:true}).waitFor()
+              const renewal=data(await retirement(verifiedDestination,'issue'))
+              assert.equal(renewal.receipt,proof.receipt)
+              assert.equal((await verifiedDestination.rpc('st_v2_post',{
+                p_channel:general(targetSql),p_id:randomUUID(),p_body:'Retired destination stays held',
+              })).error?.code,'PT423')
+              assert.equal(targetSql(`begin;
+                delete from sectalk_private.st_v8_residency_rollback_holds where workspace='${workspace}';
+                select sectalk_private.st_v7_workspace_payment_mode('${workspace}')->>'mode'; rollback;`),'read_only')
+              assert.equal(targetSql(`select count(*) from public.st_v2_workspace_audit
+                where workspace_id='${workspace}' and event='workspace.residency_rollback_destination_retired' and target='${proof.receipt}';`),'1')
+              console.log('Edge retired the reviewed destination and downloaded its signed receipt. Native writes stayed held.')
+            }
             if(checkChannelReplay){
               if(checkMemberChannelReplay){
                 const boardConsent=p_action=>verifiedTargetMember.rpc('st_v8_residency_board_author_consent',{
@@ -2004,6 +2045,13 @@ try {
           }
         }
         await rollbackContext.close()
+        if(checkDestinationRetirement){
+          targetSql(`update storage.objects set metadata=metadata||'{"retirementDrift":true}'::jsonb
+            where (bucket_id,name)=('sectalk-workspace-files','${workspace}/${fileId}');`)
+          assert.equal((await retirement(verifiedDestination,'issue')).error?.code,'PT409')
+          assert.equal(data(await retirement(verifiedDestination)).retired,true)
+          console.log('Later destination Storage drift blocked proof renewal while the retirement hold remained active.')
+        }
         assert.equal((await memberLink()).status,404)
         assert.equal((await routing(verifiedOwner,'publish',destinationRouteProof)).error?.code,'PT409')
         assert.equal((await verifiedOwner.rpc('st_v2_post',{p_channel:general(sourceSql),p_id:randomUUID(),p_body:'Source must remain held'})).error?.code,'PT423')

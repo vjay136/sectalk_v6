@@ -14,6 +14,8 @@ type ManifestState={
   changeCount?:number
   packet?:{payload:string;signature:string}
 }
+type RetirementState={state:'inactive'|'review_required'|'admission_required'|'review_changed'|'ready'|'retired';
+  retired?:boolean;receipt?:string;packet?:{payload:string;signature:string}}
 
 export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string}) {
   const [manifest,setManifest]=useState<ManifestState>()
@@ -21,10 +23,18 @@ export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string
   const [error,setError]=useState('')
   const [issued,setIssued]=useState(false)
   const [staged,setStaged]=useState('')
+  const [retirement,setRetirement]=useState<RetirementState>()
   const refresh=useCallback(async (signal?:AbortSignal)=>{
     const query=db!.rpc('st_v8_residency_rollback_manifest',{p_workspace:workspace})
     const result=await (signal?query.abortSignal(signal):query)
-    if(!signal?.aborted&&!result.error)setManifest(result.data as ManifestState)
+    if(signal?.aborted||result.error)return
+    const next=result.data as ManifestState
+    setManifest(next)
+    if(next.side==='destination'){
+      const token=db!.rpc('st_v8_residency_retire_destination',{p_workspace:workspace})
+      const destination=await (signal?token.abortSignal(signal):token)
+      if(!signal?.aborted&&!destination.error)setRetirement(destination.data as RetirementState)
+    }else setRetirement(undefined)
   },[workspace])
 
   useEffect(()=>{
@@ -82,6 +92,38 @@ export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string
     finally{setBusy(false)}
   }
 
+  async function retireDestination(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if(busy||!retirement||!['ready','retired'].includes(retirement.state))return
+    const form=event.currentTarget
+    const fields=new FormData(form)
+    const confirmation=String(fields.get('workspace')||'')
+    setBusy(true);setError('')
+    try {
+      if(confirmation!==workspace)throw new Error('Enter the exact workspace ID shown above.')
+      await verifyCredential(fields)
+      const result=await db!.rpc('st_v8_residency_retire_destination',{
+        p_workspace:workspace,p_action:'issue',p_confirmation:confirmation,
+      })
+      if(result.error)throw result.error
+      const next=result.data as RetirementState
+      if(next.state!=='retired'||!next.packet)throw new Error('The destination retirement receipt could not be verified.')
+      downloadPacket(next.packet,'sectalk-retired-destination-'+workspace+'.json')
+      setRetirement({state:'retired',receipt:next.receipt})
+      form.reset()
+    }catch(cause){setError(formatError(cause,'Could not issue the destination retirement proof.'))}
+    finally{setBusy(false)}
+  }
+
+  function downloadPacket(packet:{payload:string;signature:string},filename:string){
+    const url=URL.createObjectURL(new Blob([JSON.stringify(packet)],{type:'application/json'}))
+    const link=document.createElement('a')
+    link.href=url
+    link.download=filename
+    link.click()
+    window.setTimeout(()=>URL.revokeObjectURL(url),1000)
+  }
+
   async function transfer(event:FormEvent<HTMLFormElement>){
     event.preventDefault()
     if(busy||manifest?.state!=='ready')return
@@ -105,12 +147,7 @@ export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string
       if(result.error)throw result.error
       const next=result.data as ManifestState
       if(issue&&next.packet){
-        const url=URL.createObjectURL(new Blob([JSON.stringify(next.packet)],{type:'application/json'}))
-        const link=document.createElement('a')
-        link.href=url
-        link.download='sectalk-rollback-manifest-'+workspace+'.json'
-        link.click()
-        window.setTimeout(()=>URL.revokeObjectURL(url),1000)
+        downloadPacket(next.packet,'sectalk-rollback-manifest-'+workspace+'.json')
         setIssued(true)
       }else setManifest(next)
       form.reset()
@@ -146,6 +183,20 @@ export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string
       <button className="secondary" type="submit" disabled={busy}>{destination?'Download recovery manifest':'Verify recovery manifest'}</button>
     </form>}
     {issued&&<p role="status">The signed recovery manifest was prepared for download.</p>}
+    {destination&&retirement&&(retirement.state==='ready'||retirement.state==='retired')&&
+      <section aria-label="Destination retirement">
+        <h5>Destination retirement</h5>
+        <p>{retirement.state==='retired'?'Destination writes are durably retired. A new proof expires after five minutes.':
+          'Retiring this installation keeps destination writes disabled. The proof binds retirement to the current independent change review.'}</p>
+        {retirement.receipt&&<p role="status">Destination retirement receipt <code>{retirement.receipt}</code></p>}
+        <form className="release-form" onSubmit={event=>void retireDestination(event)}>
+          <label>Confirm destination retirement workspace ID<input name="workspace" autoComplete="off" required disabled={busy}/></label>
+          <label>Authenticator code for destination retirement if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" disabled={busy}/></label>
+          <button className="secondary" type="submit" disabled={busy}>{retirement.state==='retired'?'Download fresh retirement proof':'Retire destination and download proof'}</button>
+        </form>
+      </section>}
+    {destination&&retirement?.retired&&retirement.state!=='retired'&&
+      <p role="status">Destination writes remain retired. A current review and recovery credential are required to issue a proof.</p>}
     {manifest.state!=='received'&&<button className="secondary" disabled={busy} onClick={()=>void refresh()}>Refresh manifest status</button>}
     {error&&<p role="alert">{error}</p>}
   </section>
