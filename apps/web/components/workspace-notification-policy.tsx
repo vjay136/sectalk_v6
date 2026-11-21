@@ -22,7 +22,11 @@ export function WorkspaceNotificationPolicy({workspace, manager}: {workspace: st
     const request = ++requestVersion.current
     const {data, error} = await db!.rpc('st_v6_workspace_notification_settings', {p_workspace: workspace})
     if (request !== requestVersion.current) return
-    if (error) setError('Could not load the notification policy.')
+    if (error) {
+      setPolicy(null)
+      setSaved(false)
+      setError('Could not load the notification policy.')
+    }
     else {
       setError('')
       setPolicy(data as Policy)

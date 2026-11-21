@@ -9,7 +9,7 @@ export const dlpLabels = {
 } as const
 type Category = keyof typeof dlpLabels
 type Action = 'allow' | 'warn' | 'block' | 'redact'
-type Policy = { access: 'mfa' } | { access: 'verified'; revision: number; rules: Record<Category, Action> }
+type Policy = { access: 'mfa' | 'sso' } | { access: 'verified'; revision: number; rules: Record<Category, Action> }
 
 export function WorkspaceDlp({ workspace }: { workspace: string }) {
   const [policy, setPolicy] = useState<Policy | null>(null)
@@ -58,6 +58,7 @@ export function WorkspaceDlp({ workspace }: { workspace: string }) {
     <h2>Data loss controls</h2>
     <p>Apply rules to managed room and channel messages. Redaction replaces matching text with […].</p>
     {!policy && !error && <p role="status">Loading workspace rules…</p>}
+    {policy?.access === 'sso' && <p>Sign in with workspace single sign-on to manage data loss controls.</p>}
     {policy?.access === 'mfa' && <StaffMfa refresh={() => load()} explanation="Enter a current authenticator code to manage workspace data loss controls."/>}
     {policy?.access === 'verified' && <form className="release-form" onSubmit={save} key={policy.revision}>
       {Object.entries(dlpLabels).map(([category, label]) => <label key={category}>{label}

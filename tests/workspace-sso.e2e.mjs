@@ -747,6 +747,9 @@ try{
     await btn(config,'Disconnect workspace SSO').waitFor()
   }
   let policyPasswordPage
+  const notificationPolicy=client=>client.rpc('st_v6_workspace_notification_settings',{p_workspace:workspace})
+  const availabilityPolicy=client=>client.rpc('st_v6_workspace_presence_policy',{p_workspace:workspace})
+  const dlpPolicy=client=>client.rpc('st_v7_workspace_dlp',{p_workspace:workspace})
   if(policyAdminTest){
     if(entryPolicyAdminTest){
       await btn(entryPolicy,'Require SSO for workspace entry').click()
@@ -757,6 +760,8 @@ try{
     }
     assert.deepEqual(data(await assuredOwner.rpc('st_v7_workspace_policies',{p_workspace:workspace,p_domain:'messaging'})),{access:'sso'})
     assert.equal((await assuredOwner.rpc('st_v6_set_workspace_reactions',{p_workspace:workspace,p_set:'native',p_limit:3})).error?.code,'42501')
+    assert.deepEqual(data(await dlpPolicy(assuredOwner)),{access:'sso'})
+    assert.equal((await assuredOwner.rpc('st_v6_set_workspace_presence_policy',{p_workspace:workspace,p_required:true})).error?.code,'42501')
     const organization=async(client,days)=>{
       const org=data(await client.rpc('st_v7_org_settings',{p_workspace:workspace}))
       return client.rpc('st_v7_org_settings',{p_workspace:workspace,p_action:'save',p_name:org.name,
@@ -771,6 +776,11 @@ try{
       assert.equal(data(await assuredOwner.rpc('st_v6_tenant_feature_state',{p_workspace:workspace})),null)
       assert.equal((await assuredOwner.rpc('st_v6_set_tenant_feature_pause',
         {p_workspace:workspace,p_feature:'task_creation',p_paused:true})).error?.code,'42501')
+      assert.equal((await notificationPolicy(assuredOwner)).error?.code,'42501')
+      assert.equal((await availabilityPolicy(assuredOwner)).error?.code,'42501')
+      assert.equal((await assuredOwner.rpc('st_v6_set_workspace_notification_policy',{
+        p_workspace:workspace,p_categories:['mention'],p_quiet_minutes:15,
+      })).error?.code,'42501')
     }else{
       assert.equal((await organization(assuredOwner,60)).error?.code,'42501')
       assert.equal(data(await organization(assuredOwner,30)).retentionDays,30)
@@ -814,6 +824,22 @@ try{
         data(await scoped.rpc('st_v6_set_tenant_feature_pause',{p_workspace:workspace,p_feature:'task_creation',p_paused:true}))
         const features=data(await scoped.rpc('st_v6_tenant_feature_state',{p_workspace:workspace}))
         assert.equal(features.features.find(feature=>feature.feature==='task_creation')?.paused,true)
+        const workspaceTabs=memberPage.getByRole('group',{name:'Workspace sections'})
+        await btn(workspaceTabs,'People').click()
+        const notifications=memberPage.getByRole('region',{name:'Notification policy',exact:true})
+        await notifications.getByLabel('Room mentions',{exact:true}).check()
+        await notifications.getByLabel('Maximum quiet minutes',{exact:true}).fill('15')
+        await btn(notifications,'Save notification policy').click()
+        await notifications.getByText('Notification policy saved.',{exact:true}).waitFor()
+        assert.deepEqual(data(await notificationPolicy(scoped)),{mandatory_categories:['mention'],max_quiet_minutes:15})
+        data(await scoped.rpc('st_v6_set_workspace_presence_policy',{p_workspace:workspace,p_required:true}))
+        assert.equal(data(await availabilityPolicy(scoped)),true)
+        await btn(workspaceTabs,'Data loss controls').click()
+        const dlp=memberPage.getByRole('region',{name:'Data loss controls',exact:true})
+        await dlp.getByLabel('Email addresses',{exact:true}).selectOption('warn')
+        await btn(dlp,'Save data loss rules').click()
+        await dlp.getByText('Workspace data loss policy saved.',{exact:true}).waitFor()
+        assert.equal(data(await dlpPolicy(scoped)).rules.pii,'warn')
       }
     }finally{
       setOwner(owner.id,session.user)
@@ -1816,7 +1842,13 @@ try{
     await btn(policyPasswordPage,'Policies').click()
     await policyPasswordPage.getByRole('region',{name:'Messaging policy',exact:true}).getByText('Current revision 1',{exact:true}).waitFor()
     assert.equal(data(await read()).current.limit,3)
-    assert.equal(data(await assuredOwner.rpc('st_v6_workspace_policy_versions',{p_workspace:workspace,p_policy:'notifications'})).version,0)
+    assert.equal(data(await assuredOwner.rpc('st_v6_workspace_policy_versions',{p_workspace:workspace,p_policy:'notifications'})).version,entryPolicyAdminTest?1:0)
+    if(entryPolicyAdminTest){
+      assert.equal(data(await notificationPolicy(assuredOwner)).max_quiet_minutes,15)
+      assert.equal(data(await availabilityPolicy(assuredOwner)),true)
+      assert.equal(data(await dlpPolicy(assuredOwner)).rules.pii,'warn')
+      console.log('Passed native workspace-entry SSO for notification policy, availability policy and data loss controls, including owner recovery.')
+    }
     console.log('Passed signed native workspace policy SSO, legacy editor denial, protected preview and apply, organization retention, and fresh owner recovery.')
   }
   if(customRoleAdminTest){
