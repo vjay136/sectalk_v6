@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash,timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 import { promisify } from 'node:util'
+import { cloudTrailKeyMaterialEvidence } from './cloudtrail-key-material.mjs'
 
 const aws=promisify(execFile)
 const cli='/usr/local/aws-cli/v2/current/bin/aws'
@@ -41,6 +42,7 @@ export function awsErasureObserver(env,run=aws) {
         const elements=event?.responseElements
         if (elements!==null&&elements!==undefined&&(typeof elements!=='object'||Array.isArray(elements)||
           ('keyId' in elements&&elements.keyId!==keyId))) continue
+        if (cloudTrailKeyMaterialEvidence(event?.additionalEventData) === null) continue
         if (event?.eventName==='DeleteKey' && event.eventSource==='kms.amazonaws.com' && event.eventType==='AwsServiceEvent' &&
           event.awsRegion===region && event.recipientAccountId===expectedAccount && event.readOnly===false && event.errorCode===undefined &&
           Date.parse(event.eventTime)>=Date.parse(stagedAt) && Array.isArray(event.resources) && event.resources.some(resource=>

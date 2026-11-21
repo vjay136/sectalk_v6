@@ -65,3 +65,42 @@ test('single-Region evidence requires agreement for the modern response ARN and 
   assert.deepEqual(check(modern),legacyResult)
   assert.deepEqual(check(event(single,[])),{state:'unavailable'})
 })
+
+test('custom key store deletion requires successful evidence for every listed backing key',async()=>{
+  const cloudHsm={customKeyStoreId:'cks-1234567890abcdef0',clusterId:'cluster-abc123',
+    backingKeys:JSON.stringify([{backingKeyId:'one'},{backingKeyId:'two'}])}
+  const success=[{backingKeyId:'one',deletionStatus:'SUCCESS'},{backingKeyId:'two',deletionStatus:'SUCCESS'}]
+  const withDetails=additionalEventData=>({...event(single,{keyId:single}),additionalEventData})
+  const complete=withDetails({...cloudHsm,backingKeysDeletionStatus:JSON.stringify(success)})
+  const rejected=[
+    withDetails(cloudHsm),
+    withDetails({...cloudHsm,backingKeysDeletionStatus:'invalid'}),
+    withDetails({...cloudHsm,backingKeysDeletionStatus:JSON.stringify([success[0]])}),
+    withDetails({...cloudHsm,backingKeysDeletionStatus:JSON.stringify([success[0],success[0]])}),
+    withDetails({...cloudHsm,backingKeysDeletionStatus:JSON.stringify([success[0],{...success[1],deletionStatus:'FAILURE'}])}),
+    withDetails({...cloudHsm,backingKeysDeletionStatus:JSON.stringify([success[0],{...success[1],backingKeyId:'unrelated'}])}),
+    withDetails({customKeyStoreId:cloudHsm.customKeyStoreId,xksKeyId:'external-key'}),
+    withDetails({customKeyStoreType:'AWS_CLOUDHSM'}),
+    withDetails({customKeyStoreType:'EXTERNAL_KEY_STORE'}),
+  ]
+  const address={keyId:single,region,stagedAt}
+  let entries=rejected
+  const observe=awsErasureObserver({},async(_binary,args)=>{
+    if(args[1]==='describe-key')throw awsNotFound()
+    return {stdout:JSON.stringify({Events:entries.map(value=>JSON.stringify(value))})}
+  })
+  const check=value=>providerErasureObservation({keyId:single,state:'not_found',event:value},single,stagedAt,now)
+  assert.deepEqual(await observe(address),{state:'not_found'})
+  for(const entry of rejected) assert.deepEqual(check(entry),{state:'unavailable'})
+
+  entries=[...rejected,complete]
+  assert.deepEqual(await observe(address),{state:'not_found',event:complete})
+  const receipt=check(complete)
+  assert.equal(receipt.state,'deleted_event')
+  assert.notEqual(receipt.sha256,check(event(single,null)).sha256)
+  assert.notEqual(receipt.sha256,check(withDetails({...complete.additionalEventData,clusterId:'cluster-other'})).sha256)
+  assert.deepEqual(receipt,check(withDetails({...complete.additionalEventData,
+    backingKeys:JSON.stringify([{backingKeyId:'two'},{backingKeyId:'one'}]),
+    backingKeysDeletionStatus:JSON.stringify([...success].reverse()),
+  })))
+})

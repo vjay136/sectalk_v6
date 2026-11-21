@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { cloudTrailKeyMaterialEvidence } from '../../../services/tenant-dek-aws/cloudtrail-key-material.mjs'
 
 export const providerErasureArn=/^arn:aws:kms:([a-z]{2}-[a-z]+-[1-9][0-9]?):([0-9]{12}):key\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|mrk-[a-f0-9]{32})$/
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/
@@ -26,8 +27,11 @@ export function providerErasureObservation(report:unknown,keyId:string,stagedAt:
     ('keyId' in result&&result.keyId!==keyId))) return {state:'unavailable'}
   const eventTime=Date.parse(event.eventTime)
   if (!Number.isFinite(eventTime) || eventTime<since || eventTime>now+30_000) return {state:'unavailable'}
+  const keyMaterial=cloudTrailKeyMaterialEvidence(event.additionalEventData)
+  if (keyMaterial===null) return {state:'unavailable'}
   const timestamp=new Date(eventTime).toISOString()
-  const canonical=JSON.stringify(['sectalk/aws-kms-delete-event/v1',keyId,event.eventID,timestamp,event.eventSource,
-    event.eventName,event.eventType,event.awsRegion,event.recipientAccountId])
+  const canonical=JSON.stringify([keyMaterial.length?'sectalk/aws-kms-delete-event/v2':'sectalk/aws-kms-delete-event/v1',
+    keyId,event.eventID,timestamp,event.eventSource,event.eventName,event.eventType,event.awsRegion,event.recipientAccountId,
+    ...keyMaterial])
   return {state:'deleted_event',event:event.eventID,eventTime:timestamp,sha256:createHash('sha256').update(canonical).digest('hex')}
 }

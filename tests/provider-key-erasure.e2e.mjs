@@ -28,6 +28,7 @@ const ref='synthetic_custody'
 const hold=randomUUID(),requestId=randomUUID(),caseId=randomUUID()
 const commandTrace=[]
 let workspace,provider,child,browser,mode='pending',providerTime=new Date().toISOString()
+let primaryFailure=false
 const sql=statement=>execFileSync('docker',['exec','-i','supabase_db_v4-auth-qa','psql','-X','-At','-v','ON_ERROR_STOP=1',
   '-U','postgres','-d','postgres'],{input:statement,encoding:'utf8',windowsHide:true}).trim()
 const hashed=(value,kind='hex')=>createHash('sha256').update(JSON.stringify(value)).digest(kind)
@@ -68,6 +69,12 @@ try {
     const event={eventID:eventId,eventTime,eventSource:'kms.amazonaws.com',eventName:'DeleteKey',eventType:'AwsServiceEvent',
       awsRegion:'us-east-1',recipientAccountId:'123456789012',readOnly:false,
       resources:[{ARN:resource,type:'AWS::KMS::Key',accountId:'123456789012'}]}
+    if(mode==='cloudhsm_incomplete'||mode==='deleted') {
+      event.additionalEventData={customKeyStoreId:'cks-synthetickms',clusterId:'cluster-synthetic',
+        backingKeys:JSON.stringify([{backingKeyId:'synthetic-backing-key'}]),
+        backingKeysDeletionStatus:JSON.stringify([{backingKeyId:'synthetic-backing-key',
+          deletionStatus:mode==='deleted'?'SUCCESS':'FAILURE'}])}
+    }
     return {stdout:JSON.stringify({Events:mode==='missing'?[]:[JSON.stringify(event)],NextToken:null})}
   })
   provider=createProviderErasureAttestor({token:awsToken,bindings,observe})
@@ -122,7 +129,8 @@ try {
   assert.equal(statusBefore.canVerify,false)
   assert.deepEqual(statusBefore.versions,[{version:1,eventDigest:null,eventTime:null}])
   assert.equal(data(await outsider.client.rpc('st_v8_tenant_provider_erasure_status',{p_workspace:workspace})),null)
-  for(const [state,expected] of [['pending','pending_deletion'],['denied','unavailable'],['missing','unavailable'],['foreign','unavailable'],['prestage','unavailable']]) {
+  for(const [state,expected] of [['pending','pending_deletion'],['denied','unavailable'],['missing','unavailable'],['foreign','unavailable'],
+    ['prestage','unavailable'],['cloudhsm_incomplete','unavailable']]) {
     mode=state
     const response=await call(reviewer)
     assert.equal(response.status,200)
@@ -180,6 +188,9 @@ try {
   assert.equal((await reviewer.client.rpc('st_v8_commit_tenant_provider_erasure',{p_ticket:randomUUID(),p_actor:reviewer.id,
     p_event:eventId,p_event_time:providerTime,p_sha256:'a'.repeat(64)})).error?.code,'42501')
   console.log('Passed staged workspace provider proof via Edge, native MFA, exact AWS key lifecycle, immutable independent receipt and distinct unverified source/backup state.')
+} catch(error) {
+  primaryFailure=true
+  throw error
 } finally {
   await browser?.close()
   if(child&&child.exitCode===null) {
@@ -187,11 +198,20 @@ try {
     else child.kill('SIGTERM')
   }
   if(provider)await new Promise(resolve=>provider.close(resolve))
-  if(workspace)sql(`begin; set local session_replication_role=replica;
-    delete from sectalk_private.st_v8_provider_erasure_receipts where workspace='${workspace}'; commit;
-    delete from sectalk_private.st_v8_offboarding_requests where workspace='${workspace}';
-    delete from sectalk_private.st_v7_tenant_key_versions where workspace='${workspace}';
-    delete from sectalk_private.st_v7_tenant_key_state where workspace='${workspace}';
-    delete from public.st_v2_workspaces where id='${workspace}';`)
-  for(const user of users)await service.auth.admin.deleteUser(user)
+  try {
+    if(workspace)sql(`begin; set local session_replication_role=replica;
+      delete from sectalk_private.st_v8_provider_erasure_receipts where workspace='${workspace}';
+      delete from sectalk_private.st_v8_offboarding_requests where workspace='${workspace}';
+      delete from sectalk_private.st_v7_compliance_cases where workspace_id='${workspace}';
+      delete from public.st_v2_workspace_audit where workspace_id='${workspace}';
+      delete from sectalk_private.st_v8_workspace_audit_custody where workspace='${workspace}';
+      set local session_replication_role=origin;
+      delete from sectalk_private.st_v7_tenant_key_versions where workspace='${workspace}';
+      delete from sectalk_private.st_v7_tenant_key_state where workspace='${workspace}';
+      delete from public.st_v2_workspaces where id='${workspace}'; commit;`)
+    for(const user of users)data(await service.auth.admin.deleteUser(user))
+  }catch(error) {
+    if(!primaryFailure)throw error
+    console.error('Disposable provider-evidence fixture cleanup failed.')
+  }
 }
