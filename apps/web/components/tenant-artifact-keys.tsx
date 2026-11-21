@@ -37,12 +37,12 @@ export function TenantArtifactKeys({ workspace }: { workspace: string }) {
     const [response,scheduled,erasure]=await Promise.all([
       db!.rpc('st_v7_tenant_key_status',{p_workspace:workspace}),
       db!.rpc('st_v8_tenant_rotation_schedule',{p_workspace:workspace}),
-      db!.rpc('st_v8_tenant_provider_erasure_status',{p_workspace:workspace}),
+      isFreeRelease ? null : db!.rpc('st_v8_tenant_provider_erasure_status',{p_workspace:workspace}),
     ])
     if (response.error) { setError('Could not load workspace key state.');return }
     setState(response.data as KeyState)
     setSchedule(scheduled.error ? null : scheduled.data as RotationSchedule)
-    setProvider(erasure.error ? null : erasure.data as ProviderErasure|null)
+    setProvider(!erasure || erasure.error ? null : erasure.data as ProviderErasure|null)
   },[workspace])
   useEffect(()=>{void refresh()},[refresh])
 

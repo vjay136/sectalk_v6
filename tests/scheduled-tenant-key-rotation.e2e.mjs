@@ -53,6 +53,10 @@ try {
   await page.locator('button.submit-auth').click()
   await button(page.getByRole('navigation',{name:'SecTalk features'}),'Workspaces').click()
   const sections=page.getByRole('group',{name:'Workspace sections'})
+  const providerStatusRequests=[]
+  page.on('request',request=>{
+    if(new URL(request.url()).pathname.endsWith('/rpc/st_v8_tenant_provider_erasure_status'))providerStatusRequests.push(request)
+  })
   await button(sections,'Compliance exports').click()
   await verifyStaffPanel(page)
   const keys=page.getByRole('region',{name:'Managed artifact keys',exact:true})
@@ -64,6 +68,8 @@ try {
   await button(keys,'Save rotation schedule').click()
   await keys.getByText('Managed-key rotation schedule saved.',{exact:true}).waitFor()
   await keys.getByText(/Every 30 days · Next due/).waitFor()
+  const freeRelease=await keys.getByText('External key custody and provider erasure verification are planned for a future release.',{exact:false}).isVisible()
+  assert.equal(providerStatusRequests.length>0,!freeRelease)
 
   await button(sections,'Channels').click()
   await page.getByText('New channel encryption policy',{exact:true}).click()
