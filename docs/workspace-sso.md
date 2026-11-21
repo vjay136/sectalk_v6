@@ -56,7 +56,9 @@ Direct-chat tasks, meeting schedules and workspace membership keep their existin
 | Workspace invitation administration | The **Workspace invitation management** scope adds a current provider receipt to staff listing and issuance, email link and invitation domain policy. Existing invitations still use their own recipient acceptance checks. |
 | API key and webhook administration | The **Workspace API keys and webhooks** scope requires the pinned provider receipt and fresh authenticator verification to view or change integration settings. Issued keys and authorized delivery jobs retain their own capability checks. |
 | Custom-role administration | The **Workspace custom roles** scope requires the pinned provider receipt and fresh authenticator verification for the role editor and its resource selectors. Existing member assignments retain the rules of the operation they authorize. |
-| Billing, workspace administration, SCIM and scheduled operations | Existing role, assurance and capability boundaries apply. Owner recovery uses a current native authenticator. |
+| Workspace overview and analytics | Workspace entry enforcement requires the pinned provider receipt for both dashboard reads. Analytics also requires fresh authenticator verification. |
+| SCIM credential management | Workspace entry enforcement requires the pinned provider receipt and fresh authenticator verification to view settings, rotate or revoke a provisioning token. Existing machine credentials continue under the SCIM endpoint's own checks until rotated, revoked or expired. |
+| Billing, other workspace administration and scheduled operations | Existing role, assurance and capability boundaries also apply. Owner recovery uses a current native authenticator. |
 
 Workspace-wide enforcement remains pending. Native SAML has been exercised against an isolated signed fixture. Native OpenID Connect completion requires an approved, reachable HTTPS provider. The local-only fixture is rejected by Supabase's private-network guard.
 

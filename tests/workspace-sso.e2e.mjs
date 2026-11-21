@@ -497,15 +497,30 @@ try{
   const integrationRead=()=>fetch(new URL('/api/v1/workspace',app),{
     headers:{Authorization:'Bearer '+originalIntegrationKey},
   })
+  const scimSettings=(client,p_action='read',p_domain)=>client.rpc('st_v8_scim_settings',{p_workspace:workspace,p_action,p_domain})
+  const scimRead=token=>fetch(new URL('/api/scim/v2/Users',app),{headers:{Authorization:'Bearer '+token}})
+  const overview=client=>client.rpc('st_v6_workspace_admin_overview',{p_workspace:workspace})
+  const analytics=client=>client.rpc('st_v6_workspace_analytics',{p_workspace:workspace})
   if(integrationAdminTest){
     const original=await mutateIntegration('keys',ownerAccess,{action:'create',label:'Original QA integration',lifetime:7,scopes:['workspace:read']})
     assert.equal(original.status,201)
     const credential=await original.json()
     originalIntegrationKey=credential.key
     assert.equal((await integrationRead()).status,200)
+    let previousScim
     if(entryIntegrationTest){
+      previousScim=data(await scimSettings(assuredOwner,'rotate',domain)).token
+      assert.equal((await scimRead(previousScim)).status,200)
+      assert.equal(data(await overview(assuredOwner)).plan,'enterprise')
+      assert.ok(data(await analytics(assuredOwner)))
       await btn(entryPolicy,'Require SSO for workspace entry').click()
       await adminPage.getByRole('region',{name:'Workspace sign-in required',exact:true}).waitFor()
+      for(const action of ['read','rotate','revoke']){
+        assert.deepEqual(data(await scimSettings(assuredOwner,action,domain)),{access:'sso'})
+      }
+      assert.equal((await overview(assuredOwner)).error?.code,'42501')
+      assert.equal((await analytics(assuredOwner)).error?.code,'42501')
+      assert.equal((await scimRead(previousScim)).status,200)
     }else{
       await btn(integrationAdminPolicy,'Require SSO for API keys and webhooks').click()
       await integrationAdminPolicy.getByText('Workspace single sign-on is required for API key and webhook management.').waitFor()
@@ -555,6 +570,23 @@ try{
       assert.equal(replacement.status,201)
       const created=await replacement.json()
       assert.equal((await mutateIntegration('keys',integrationAccess,{action:'revoke',key:created.id})).status,204)
+      if(entryIntegrationTest){
+        assert.equal(data(await overview(scoped)).plan,'enterprise')
+        assert.ok(data(await analytics(scoped)))
+        await btn(integrations,'SCIM').click()
+        const provisioning=integrations.getByRole('region',{name:'Enterprise directory provisioning',exact:true})
+        await provisioning.getByLabel('Verified domain').selectOption(domain)
+        await btn(provisioning,'Rotate provisioning token').click()
+        const key=await provisioning.getByLabel('New provisioning token').inputValue()
+        assert.match(key,/^stscim_[0-9a-f]{64}$/)
+        assert.equal((await scimRead(previousScim)).status,401)
+        assert.equal((await scimRead(key)).status,200)
+        await btn(provisioning,'Revoke provisioning token').click()
+        await provisioning.getByText('Provisioning token revoked.',{exact:true}).waitFor()
+        assert.equal((await scimRead(key)).status,401)
+        await btn(memberPage.getByRole('group',{name:'Workspace sections'}),'Overview').click()
+        await memberPage.getByRole('heading',{name:'Workspace seats',exact:true}).waitFor()
+      }
     }finally{
       setOwner(owner.id,session.user)
     }
@@ -1817,6 +1849,12 @@ try{
     await btn(integrationPasswordPage,'Integrations').click()
     await btn(integrationPasswordPage,'Create API key').waitFor()
     assert.equal(data(await assuredOwner.rpc('st_v6_integration_access',{p_workspace:workspace})),'verified')
+    if(entryIntegrationTest){
+      assert.equal(data(await scimSettings(assuredOwner)).access,'verified')
+      assert.equal(data(await overview(assuredOwner)).plan,'enterprise')
+      assert.ok(data(await analytics(assuredOwner)))
+      console.log('Passed workspace entry enforcement for SCIM credential management, overview and analytics, including machine credential continuity and signed owner recovery.')
+    }
     console.log('Passed signed native API key and webhook SSO, second-factor management, external credential continuity and owner recovery.')
   }
   if(invitationAdminTest){

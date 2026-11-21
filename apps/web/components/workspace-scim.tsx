@@ -5,7 +5,7 @@ import { db } from '../lib/data'
 import { StaffMfa } from './staff-mfa'
 
 type ScimSettings = {
-  access: 'none' | 'mfa' | 'verified'
+  access: 'none' | 'sso' | 'mfa' | 'verified'
   enterprise?: boolean
   domains?: string[]
   setup?: { domain: string; expires: string } | null
@@ -20,8 +20,14 @@ export function WorkspaceScim({ workspace, onManageDomains }: { workspace: strin
   const [error, setError] = useState('')
   const load = useCallback(async () => {
     const result = await db!.rpc('st_v8_scim_settings', { p_workspace: workspace })
-    if (result.error) setError('Provisioning settings are unavailable.')
-    else setSettings(result.data)
+    if (result.error) {
+      setSettings(undefined)
+      setToken('')
+      setError('Provisioning settings are unavailable.')
+    } else {
+      if (result.data.access !== 'verified') setToken('')
+      setSettings(result.data)
+    }
   }, [workspace])
   useEffect(() => {
     setEndpoint(new URL('/api/scim/v2', window.location.origin).href)
@@ -57,6 +63,7 @@ export function WorkspaceScim({ workspace, onManageDomains }: { workspace: strin
     <p>Connect an identity provider using SCIM 2.0. Provisioning manages ordinary members and directory groups in this workspace.</p>
     {!settings && !error && <p role="status">Checking directory provisioning access…</p>}
     {settings?.access === 'none' && <p>Directory provisioning is unavailable.</p>}
+    {settings?.access === 'sso' && <p>Sign in with workspace single sign-on to manage provisioning credentials.</p>}
     {settings?.access === 'mfa' &&
       <StaffMfa refresh={load} explanation="Verify your authenticator to manage provisioning credentials." />}
     {settings?.access === 'verified' && <>
