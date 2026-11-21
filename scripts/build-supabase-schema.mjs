@@ -73,22 +73,30 @@ $sectalk_upgrade_preflight$;
 `
 }
 
-const [output,mode,baseline,...extra]=process.argv.slice(2)
+const [output,...options]=process.argv.slice(2)
 
 try{
-  if(!output||extra.length||(mode!==undefined&&(mode!=='--after'||!baseline))){
-    throw new Error('Usage: node scripts/build-supabase-schema.mjs OUTPUT [--after MIGRATION_VERSION]')
+  const usage='Usage: node scripts/build-supabase-schema.mjs OUTPUT [--after MIGRATION_VERSION] [--through MIGRATION_VERSION]'
+  if(!output||options.length%2!==0)throw new Error(usage)
+  const bounds=new Map()
+  for(let index=0;index<options.length;index+=2){
+    const [name,version]=options.slice(index,index+2)
+    if(!['--after','--through'].includes(name)||bounds.has(name)||!/^\d{12,14}$/.test(version))throw new Error(usage)
+    bounds.set(name,version)
   }
+  const baseline=bounds.get('--after')
+  const target=bounds.get('--through')
   const files=(await readdir(migrations,{withFileTypes:true})).filter(entry=>entry.isFile()&&entry.name.endsWith('.sql'))
     .map(entry=>entry.name).sort()
   if(!files.length||files.some(name=>!pattern.test(name))||new Set(files.map(name=>name.match(pattern)[1])).size!==files.length){
     throw new Error('Every migration needs a unique timestamped filename.')
   }
-  const start=baseline===undefined?0:files.findIndex(name=>name.match(pattern)[1]===baseline)+1
-  if(baseline!==undefined&&(!start||start===files.length)){
-    throw new Error('The baseline must be a repository migration version with newer migrations available.')
-  }
-  const sections=await Promise.all(files.slice(start).map(async (name,index)=>{
+  const versions=files.map(name=>name.match(pattern)[1])
+  const start=baseline===undefined?0:versions.indexOf(baseline)+1
+  const end=target===undefined?files.length:versions.indexOf(target)+1
+  if(target!==undefined&&!end)throw new Error('The target must be a repository migration version.')
+  if(baseline!==undefined&&(!start||start>=end))throw new Error('The baseline must be a repository migration version before the target.')
+  const sections=await Promise.all(files.slice(start,end).map(async (name,index)=>{
     const source=(await readFile(new URL(name,migrations),'utf8')).replace(/\r\n/g,'\n').trimEnd()
     if(!source)throw new Error('Empty migration: '+name)
     const [,version,description]=name.match(pattern)
@@ -97,17 +105,18 @@ try{
     if(leadingTransaction!==trailingTransaction)throw new Error('Unexpected migration transaction boundary: '+name)
     let body=leadingTransaction?source.replace(/\ncommit;$/i,''):'begin;\n'+source
     if(start){
-      const previous=files[start+index-1].match(pattern)[1]
+      const previous=versions[start+index-1]
       body=body.replace(/^(\s*(?:--[^\n]*\n\s*)*begin;)/i,`$1\n${verifyUpgradePrefix(previous)}`)
     }
     return '-- Migration '+name+'\n'+body+'\n\n'+
       `insert into supabase_migrations.schema_migrations(version,name) values('${version}','${description}');\ncommit;\n`
   }))
-  const header=start?upgradeManifest(files):preflight
+  const header=start?upgradeManifest(files.slice(0,end)):preflight
   const cleanup=start?'\ndrop table pg_temp.sectalk_expected_migrations;\n':''
   const bundle=header+'\n\n'+sections.join('\n')+cleanup
   await writeFile(resolve(output),bundle,{encoding:'utf8',mode:0o600,flag:'wx'})
-  console.log(JSON.stringify({migrations:sections.length,...(start?{after:baseline}:{}),sha256:createHash('sha256').update(bundle).digest('hex')}))
+  console.log(JSON.stringify({migrations:sections.length,...(start?{after:baseline}:{}),
+    ...(target?{through:target}:{}),sha256:createHash('sha256').update(bundle).digest('hex')}))
 }catch(error){
   console.error(error?.code==='EEXIST'?'Choose a new output path. The schema bundle already exists.':error.message)
   process.exitCode=1
