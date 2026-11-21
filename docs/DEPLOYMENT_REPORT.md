@@ -16,6 +16,8 @@ The local 382-migration installation advanced to 387 through `20261121210000` us
 
 Local production builds passed for Web, Admin and Workers with loopback fixture settings. The isolated Web build passed its browser asset scan. The Free-tier gate passed the three project asset scans. A synthetic full-gate check verified that a server-only value in a Workers browser asset blocks release and the error redacts the value.
 
+Windows ran 114 passing unit tests with three Linux-only skips, and all workspace type checks passed at checkpoint `530587d`. After the permission matrix check normalized line endings, all 117 unit tests passed with zero skips in an isolated Linux Node 24 container. The Linux-only checks cover OIDC fixture discovery over trusted TLS, streaming exact S3 recovery copies, and the binary key adapter pipe. They use synthetic providers. Hosted OIDC and AWS recovery still require verification.
+
 | Optional in the Free-tier scope | Current boundary |
 | --- | --- |
 | AUTH-05 Enterprise SSO | Native OIDC and signed SAML have local evidence. Configure enterprise providers only after hosted gateway verification. |

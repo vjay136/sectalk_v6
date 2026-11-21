@@ -121,6 +121,7 @@ for(const entry of inventory) {
 for(const fn of Object.values(databaseEntryPoints)) {
   assert.ok(inventory.some(entry=>entry.rpc.startsWith('public.'+fn+'(')),'Catalog references an unavailable direct RPC: '+fn)
 }
-assert.equal(readFileSync(resolve(root,'docs/spec/permission-matrix.md'),'utf8'),renderPermissionMatrix(),
+const checkedInMatrix=readFileSync(resolve(root,'docs/spec/permission-matrix.md'),'utf8').replace(/\r\n/g,'\n')
+assert.equal(checkedInMatrix,renderPermissionMatrix().replace(/\r\n/g,'\n'),
   'Regenerate the checked-in permission matrix')
 console.log('Permission coverage passed for '+mapped.size+' live permissions, '+routes.size+' HTTP methods, and '+inventory.length+' native signatures.')
