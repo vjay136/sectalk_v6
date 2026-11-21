@@ -7,7 +7,8 @@ export class WorkspaceFileRequestError extends Error {
 }
 
 export async function workspaceFileRequest(workspace: string, method: string, options: {
-  id?: string; file?: File; action?: 'view' | 'share'; signal?: AbortSignal; room?: boolean; rollbackReview?: string
+  id?: string; file?: File; action?: 'view' | 'share'; signal?: AbortSignal; room?: boolean; rollbackReview?: string;
+  rollbackProof?: string
 } = {}) {
   const { data } = await db!.auth.getSession()
   if (!data.session) throw new Error('Sign in to access workspace files.')
@@ -16,6 +17,10 @@ export async function workspaceFileRequest(workspace: string, method: string, op
   if (options.action) query.set('action', options.action)
   if (options.rollbackReview) query.set('residency-rollback', options.rollbackReview)
   const headers = new Headers({ Authorization: 'Bearer ' + data.session.access_token })
+  if (options.rollbackProof) {
+    query.set('residency-rollback-stage', '1')
+    headers.set('X-SecTalk-Rollback-File-Proof', options.rollbackProof)
+  }
   if (options.file) {
     headers.set('X-SecTalk-File-Name', encodeURIComponent(options.file.name))
     headers.set('Content-Type', options.file.type || 'application/octet-stream')

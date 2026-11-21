@@ -83,6 +83,7 @@ const fileName = 'residency-approved.txt'
 const fileBytes = Buffer.from('Approved source file '+randomUUID())
 const workspaceFile={id:randomUUID(),bytes:Buffer.from('Approved workspace file '+randomUUID()),name:'second-approved-file.txt'}
 const rollbackFile={id:randomUUID(),bytes:Buffer.from('New reviewed recovery file '+randomUUID()),name:'reviewed-rollback.txt'}
+let rollbackStagingPath
 const expectedRecords = (sourceApp ? 27 : 26)+(checkChannelImport ? 4 : 0)+(checkRoomImport ? 3 : 0)+(checkChannelHistory?1:0)+
   (checkRoomTaskImport?3:0)+(checkRoomHistory?2:0)+(checkBothFileScopes?1:0)+(checkExistingChannelReplay?1:0)
 assert.ok(!checkRoomHistory||(checkRoomMemberImport&&checkChannelHistory))
@@ -1633,6 +1634,41 @@ try {
             assert.equal(sourceSql(`select count(*) from sectalk_private.st_v6_workspace_files where (workspace,id)=('${workspace}','${rollbackFile.id}');`),'0')
             assert.equal(sourceSql(`select count(*) from storage.objects where (bucket_id,name)=('sectalk-workspace-files','${workspace}/${rollbackFile.id}');`),'0')
             console.log('The held source verified the signed file proof and exact browser-computed hash without publishing a file.')
+
+            assert.equal((await verifiedOwner.rpc('st_v8_residency_source_file_stage',{
+              p_workspace:workspace,p_file:rollbackFile.id,p_proof:proof,p_sha256:sha256,p_bytes:fileBytes.length,
+            })).error?.code,'42501')
+            const stage=(token,bytes)=>fetch(sourceApp+'/api/workspace-files?'+new URLSearchParams({
+              workspace,file:rollbackFile.id,'residency-rollback-stage':'1',
+            }),{method:'POST',body:bytes,headers:{Authorization:'Bearer '+token,'Content-Type':'application/octet-stream',
+              'X-SecTalk-Rollback-File-Proof':Buffer.from(JSON.stringify(proof)).toString('base64url'),
+            }})
+            assert.equal((await stage(sourceMemberProof.session.access_token,fileBytes)).status,404)
+            assert.equal((await stage(ownerProof.session.access_token,Buffer.from('Wrong bytes'))).status,404)
+            rollbackStagingPath=[workspace,handoffId,rollbackFile.id,sha256].join('/')
+            await sourceManifest.getByLabel('Signed recovery file',{exact:true}).setInputFiles({
+              name:'reviewed-file.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(rollbackFileCopy)),
+            })
+            const stagedResponse=sourceReviewPage.waitForResponse(response=>response.url().includes('residency-rollback-stage=1'))
+            await sourceManifest.getByRole('button',{name:'Stage reviewed file copy',exact:true}).click()
+            const staged=await stagedResponse
+            assert.equal(staged.status(),200,await staged.text())
+            await sourceManifest.getByText(/was staged in private storage/).waitFor()
+            const retries=await Promise.all([stage(ownerProof.session.access_token,fileBytes),stage(ownerProof.session.access_token,fileBytes)])
+            const receipt=await staged.json()
+            for(const retry of retries){
+              assert.equal(retry.status,200,await retry.clone().text())
+              assert.deepEqual(await retry.json(),receipt)
+            }
+            const stagedFiles=source.storage.from('sectalk-residency-recovery')
+            const stored=data(await stagedFiles.download(rollbackStagingPath))
+            assert.deepEqual(Buffer.from(await stored.arrayBuffer()),fileBytes)
+            assert.ok((await verifiedOwner.storage.from('sectalk-residency-recovery').download(rollbackStagingPath)).error)
+            assert.equal(sourceSql(`select count(*) from sectalk_private.st_v8_residency_source_file_copies where (handoff,file)=('${handoffId}','${rollbackFile.id}');`),'1')
+            assert.equal(sourceSql(`select count(*) from public.st_v2_workspace_audit where workspace_id='${workspace}' and event='workspace.residency_file_replay_staged' and target='${rollbackFile.id}';`),'1')
+            assert.equal(sourceSql(`select count(*) from sectalk_private.st_v6_workspace_files where (workspace,id)=('${workspace}','${rollbackFile.id}');`),'0')
+            assert.equal(sourceSql(`select count(*) from storage.objects where (bucket_id,name)=('sectalk-workspace-files','${workspace}/${rollbackFile.id}');`),'0')
+            console.log('Edge staged a reviewed file in private recovery Storage. Exact retries retained one receipt and the live workspace remained held.')
           }
           let sourceChatAuthor
           if(checkChannelReplay){
@@ -1882,6 +1918,7 @@ try {
 } finally {
   await browser?.close()
   if(scanner)await new Promise(resolve=>scanner.close(resolve))
+  if(rollbackStagingPath)await source.storage.from('sectalk-residency-recovery').remove([rollbackStagingPath])
   if(sourceApp&&workspace){
     const path=checkRoomFileImport?workspace+'/rooms/'+room+'/'+fileId:workspace+'/'+fileId
     const paths=checkBothFileScopes?[path,workspace+'/'+workspaceFile.id]:[path]
