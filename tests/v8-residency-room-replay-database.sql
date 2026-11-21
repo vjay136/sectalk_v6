@@ -10,7 +10,7 @@ declare
   anchor uuid:=gen_random_uuid(); first_post uuid:=gen_random_uuid(); second_post uuid:=gen_random_uuid();
   approval uuid:=gen_random_uuid(); handoff uuid:=gen_random_uuid(); review_id uuid:=gen_random_uuid();
   held uuid:=gen_random_uuid(); source_marker uuid; secret_id uuid; before_time timestamptz:=now()-interval '1 minute';
-  signing_key bytea:=decode(repeat('d',64),'hex'); owner_tag text; wire text; packet jsonb; result jsonb;
+  signing_key bytea:=decode(repeat('d',64),'hex'); owner_tag text; wire text; orphan_wire text; packet jsonb; result jsonb;
   records jsonb:='[]'; changes jsonb:='[]'; entry jsonb; revision text; member_id uuid;
 begin
   select least(first_post,second_post),greatest(first_post,second_post) into first_post,second_post;
@@ -57,6 +57,7 @@ begin
   foreach member_id in array array[first_post,second_post] loop
     entry:=jsonb_build_object('kind','room_message','id',member_id,'room',source_room,'roomName','Approved project room',
       'body','Reviewed destination room message '||member_id,'createdAt',now());
+    if member_id=second_post then entry:=entry||jsonb_build_object('parent',first_post); end if;
     revision:=encode(sha256(convert_to(to_jsonb(sectalk_private.st_v8_rollback_room_message(destination_owner,entry))::text,
       'UTF8')),'hex');
     records:=records||jsonb_build_array(entry||jsonb_build_object('digest',revision));
@@ -81,6 +82,12 @@ begin
   begin
     perform public.st_v8_residency_rollback_rooms(ws,'stage',ws::text,jsonb_set(packet,'{signature}',to_jsonb(repeat('e',64))));
     raise exception 'A tampered packet was accepted';
+  exception when insufficient_privilege then null; end;
+  orphan_wire:=jsonb_set(wire::jsonb,'{records}',jsonb_build_array(records->1))::text;
+  begin
+    perform public.st_v8_residency_rollback_rooms(ws,'stage',ws::text,jsonb_build_object('payload',orphan_wire,
+      'signature',encode(extensions.hmac(convert_to(orphan_wire,'UTF8'),signing_key,'sha256'),'hex')));
+    raise exception 'A signed reply without its reviewed root was accepted';
   exception when insufficient_privilege then null; end;
   result:=public.st_v8_residency_rollback_rooms(ws,'stage',ws::text,packet);
   if result->>'state' is distinct from 'staged' or jsonb_array_length(result->'records')<>2
@@ -130,7 +137,8 @@ begin
   exception when sqlstate 'PT423' then null; end;
   reset role;
   if (select count(*) from public.st_v6_room_posts p where p.room_id=source_room and p.id in (first_post,second_post)
-      and p.sender=owner_id and p.created_at=now() and p.parent_id is null and p.edited_at is null)<>2
+      and p.sender=owner_id and p.created_at=now() and p.edited_at is null
+      and p.parent_id is not distinct from case when p.id=second_post then first_post end)<>2
     or (select count(*) from public.st_v2_workspace_audit a where a.workspace_id=ws and a.target=handoff
       and a.event in ('workspace.residency_room_replay_applied','workspace.residency_room_replay_staged'))<>2
     or exists(select 1 from sectalk_private.st_v8_residency_channel_write_permits)
@@ -139,7 +147,8 @@ begin
     where (p.room_id,p.id)=(source_room,first_post);
   set local role authenticated;
   result:=public.st_v8_residency_source_replay_review(ws);
-  if not coalesce(result->'records' @> jsonb_build_array(jsonb_build_object('id',first_post,'result','source_changed')),false)
+  if not coalesce(result->'records' @> jsonb_build_array(jsonb_build_object('id',first_post,'result','source_changed'),
+        jsonb_build_object('id',second_post,'result','source_changed')),false)
     or public.st_v8_residency_source_evidence(ws)->>'coverage' is distinct from 'incomplete' then
     raise exception 'Later source moderation did not invalidate recovery evidence'; end if;
   reset role;
@@ -151,7 +160,8 @@ declare
   ws uuid; paired_room uuid:=gen_random_uuid(); unpaired_room uuid:=gen_random_uuid();
   approval uuid:=gen_random_uuid(); handoff uuid:=gen_random_uuid(); cell uuid:=gen_random_uuid(); secret_id uuid;
   post_id uuid:=gen_random_uuid(); member_post uuid:=gen_random_uuid(); reply_id uuid:=gen_random_uuid();
-  edited_post uuid:=gen_random_uuid(); other_post uuid:=gen_random_uuid();
+  edited_post uuid:=gen_random_uuid(); other_post uuid:=gen_random_uuid(); old_root uuid:=gen_random_uuid();
+  old_root_reply uuid:=gen_random_uuid(); member_root_reply uuid:=gen_random_uuid();
   signing_key bytea:=decode(repeat('c',64),'hex'); review jsonb; packet jsonb; wire jsonb;
   destination text:='room-replay-'||left(handoff::text,8);
 begin
@@ -186,12 +196,16 @@ begin
     values(cell,ws,'synthetic-origin',approval,paired_room,'Imported project room',owner_id,1,now()-interval '2 minutes');
   insert into sectalk_private.st_v8_residency_write_handoffs(workspace,approval,handoff,source_project,destination_project,phase,changed_at)
     values(ws,approval,handoff,'synthetic-origin',destination,'activated',now()-interval '1 minute');
+  insert into public.st_v6_room_posts(room_id,id,sender,body,kind)
+    values(paired_room,old_root,owner_id,'A preexisting root awaiting separate recovery evidence','message');
   insert into sectalk_private.st_v8_residency_rollback_baselines(handoff,snapshot)
     values(handoff,sectalk_private.st_v8_residency_rollback_snapshot(ws));
   insert into public.st_v6_room_posts(room_id,id,sender,body,kind,parent_id,edited_at)
     values(paired_room,post_id,owner_id,'An eligible exact owner message','message',null,null),
       (paired_room,member_post,reviewer_id,'A different author','message',null,null),
-      (paired_room,reply_id,owner_id,'A reply awaiting separate recovery','message',post_id,null),
+      (paired_room,reply_id,owner_id,'An eligible reply to the exact new root','message',post_id,null),
+      (paired_room,old_root_reply,owner_id,'The old root reply needs separate evidence','message',old_root,null),
+      (paired_room,member_root_reply,owner_id,'A reply to a different author','message',member_post,null),
       (paired_room,edited_post,owner_id,'An edited post awaiting separate recovery','message',null,now()),
       (unpaired_room,other_post,owner_id,'A room without an approved pairing','message',null,null);
   insert into sectalk_private.st_v8_residency_rollback_holds(workspace,approval,handoff,side)
@@ -214,9 +228,10 @@ begin
   perform set_config('request.jwt.claims',claims->>owner_id::text,true);
   packet:=public.st_v8_residency_rollback_rooms(ws,'issue',ws::text)->'packet';
   wire:=(packet->>'payload')::jsonb;
-  if jsonb_array_length(wire->'records') is distinct from 1
+  if jsonb_array_length(wire->'records') is distinct from 2
     or not coalesce(wire->'records' @> jsonb_build_array(jsonb_build_object('id',post_id,'room',paired_room,
-      'body','An eligible exact owner message')),false)
+      'body','An eligible exact owner message'),jsonb_build_object('id',reply_id,'room',paired_room,'parent',post_id,
+      'body','An eligible reply to the exact new root')),false)
     or wire->>'digest' is distinct from review->>'digest'
     or packet->>'signature' is distinct from encode(extensions.hmac(convert_to(packet->>'payload','UTF8'),
       signing_key,'sha256'),'hex') then raise exception 'The destination packet did not pin only the exact independent revision'; end if;
@@ -229,5 +244,5 @@ begin
   exception when sqlstate 'PT409' then null; end;
 end $$;
 
-select 'passed: independent destination issuance, signed source replay, atomic collisions, holds, exact revisions and later drift';
+select 'passed: independent room thread issuance, signed parent and reply replay, atomic collisions, holds, exact revisions and parent drift';
 rollback;

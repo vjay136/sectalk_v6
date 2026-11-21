@@ -6,7 +6,8 @@ import {db,formatError} from '../lib/data'
 
 type Replay={state:'inactive'|'ready'|'staged'|'applied';side?:'source'|'destination';role?:'owner'|'reviewer';
   tasks?:{id:string;completed:boolean;kind?:'added';title?:string;details?:string;dueAt?:string|null}[];
-  records?:{id:string;kind:'channel'|'channel_message'|'room_message';name?:string;body?:string;existingChannelName?:string;roomName?:string}[];
+  records?:{id:string;kind:'channel'|'channel_message'|'room_message';name?:string;body?:string;existingChannelName?:string;
+    roomName?:string;parent?:string}[];
   packet?:{payload:string;signature:string}}
 
 const replayScopes={
@@ -95,9 +96,10 @@ export function WorkspaceResidencyBoardReplay({workspace,scope='board'}:{workspa
     </details>}
     {replay.state==='staged'&&!!replay.records?.length&&<details><summary>Review the staged {records}</summary>
       <ul>{replay.records.map(record=><li key={record.kind+record.id}>
-        <code>{record.id}</code> · {record.kind==='channel'?'Channel':'Message'}
+        <code>{record.id}</code> · {record.kind==='channel'?'Channel':record.parent?'Thread reply':'Message'}
         {record.existingChannelName&&<span> · Previously migrated channel <strong>{record.existingChannelName}</strong></span>}
         {record.roomName&&<span> · Previously migrated room <strong>{record.roomName}</strong></span>}
+        {record.parent&&<span> · Reply to <code>{record.parent}</code></span>}
         <p>{record.name??record.body}</p>
       </li>)}</ul>
     </details>}

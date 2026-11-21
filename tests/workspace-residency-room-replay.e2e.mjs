@@ -17,8 +17,10 @@ const destination={
   users:[],
 }
 const workspace=randomUUID(),room=randomUUID(),anchor=randomUUID(),post=randomUUID(),handoff=randomUUID(),approval=randomUUID()
+const reply=randomUUID()
 const cell=randomUUID(),plan=randomBytes(32).toString('hex'),secret=randomBytes(32).toString('hex')
 const roomName='Reviewed project room',body='Recovered owner room message '+post.slice(0,8)
+const replyBody='Recovered owner thread reply '+reply.slice(0,8)
 let browser
 
 function sql(site,input){
@@ -41,7 +43,7 @@ async function actor(site,label,email){
   await fixtureAuthenticator(api)
   return {id:user.id,api}
 }
-function hold(site,side){
+function hold(side){
   return `insert into sectalk_private.st_v8_residency_rollback_holds(workspace,approval,handoff,side)
     values('${workspace}','${approval}','${handoff}','${side}');`
 }
@@ -77,9 +79,9 @@ async function submit(panel,confirmation,button){
   await panel.getByLabel(confirmation,{exact:true}).fill(workspace)
   await panel.getByRole('button',{name:button,exact:true}).click()
 }
-async function recoveredRow(who){
+async function recoveredRow(who,id=post){
   return data(await who.api.from('st_v6_room_posts').select('room_id,id,sender,body,created_at,parent_id')
-    .eq('room_id',room).eq('id',post).single())
+    .eq('room_id',room).eq('id',id).single())
 }
 
 try{
@@ -106,7 +108,7 @@ try{
       select '${approval}',1,e.kind,e.scope_id,e.record_id,encode(sha256(convert_to(e.item::text,'UTF8')),'hex')
       from sectalk_private.st_v8_content_export_records('${workspace}','${sourceOwner.id}','${sourceReviewer.id}',
         'room_message','${room}','${anchor}') e;
-    ${hold(source,'source')} commit;`)
+    ${hold('source')} commit;`)
   sql(destination,`begin;
     insert into sectalk_private.st_v8_residency_cells values('${cell}','eu','rr-${cell}','Disposable room recovery','fixture',null);
     insert into sectalk_private.st_v8_residency_content_admissions values('${cell}','${workspace}','${source.project}',
@@ -119,8 +121,10 @@ try{
       values('${handoff}',sectalk_private.st_v8_residency_rollback_snapshot('${workspace}'));
     commit;`)
   data(await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:post,p_body:body}))
+  data(await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:reply,p_body:replyBody,p_parent:post}))
   const original=await recoveredRow(destinationOwner)
-  sql(destination,hold(destination,'destination'))
+  const originalReply=await recoveredRow(destinationOwner,reply)
+  sql(destination,hold('destination'))
 
   const destinationOwnerPage=await pageFor(destination,destinationOwner)
   await submit(review(destinationOwnerPage),'Confirm change review workspace ID','Capture destination changes')
@@ -141,7 +145,9 @@ try{
   assert.equal(download.suggestedFilename(),'sectalk-room-message-recovery-'+workspace+'.json')
   const packetBytes=await readFile(await download.path())
   const wire=JSON.parse(JSON.parse(packetBytes.toString()).payload)
-  assert.deepEqual(wire.records.map(({id,room,body})=>({id,room,body})),[{id:post,room,body}])
+  assert.deepEqual(wire.records.map(({id,room,body,parent})=>({id,room,body,parent})),[
+    {id:post,room,body,parent:undefined},{id:reply,room,body:replyBody,parent:post},
+  ])
 
   const sourceOwnerPage=await pageFor(source,sourceOwner)
   await recovery(sourceOwnerPage).getByLabel('Signed room message recovery file',{exact:true}).setInputFiles({
@@ -150,22 +156,26 @@ try{
   await submit(recovery(sourceOwnerPage),'Confirm room message recovery workspace ID','Stage room message recovery file')
   await recovery(sourceOwnerPage).getByText('The original independent source reviewer can apply the staged room messages.',{exact:true}).waitFor()
   assert.equal(await recovery(sourceOwnerPage).getByRole('button',{name:'Apply reviewed room messages',exact:true}).count(),0)
-  assert.equal(data(await sourceOwner.api.from('st_v6_room_posts').select('id').eq('room_id',room).eq('id',post)).length,0)
+  assert.equal(data(await sourceOwner.api.from('st_v6_room_posts').select('id').eq('room_id',room).in('id',[post,reply])).length,0)
 
   const sourceReviewerPage=await pageFor(source,sourceReviewer)
   const reviewerPanel=recovery(sourceReviewerPage)
   await reviewerPanel.getByText('Review the staged room messages',{exact:true}).click()
   await reviewerPanel.getByText(body,{exact:true}).waitFor()
-  await reviewerPanel.getByText(roomName,{exact:true}).waitFor()
+  const stagedReply=reviewerPanel.getByRole('listitem').filter({hasText:replyBody})
+  await stagedReply.getByText(roomName,{exact:true}).waitFor()
+  assert.match(await stagedReply.textContent(),/Thread reply/)
+  await stagedReply.getByText(post,{exact:true}).waitFor()
   await submit(reviewerPanel,'Confirm room message recovery workspace ID','Apply reviewed room messages')
   await reviewerPanel.getByText('Reviewed room messages were replayed. Workspace writes remain held.',{exact:true}).waitFor()
   assert.deepEqual(await recoveredRow(sourceOwner),{...original,sender:sourceOwner.id})
+  assert.deepEqual(await recoveredRow(sourceOwner,reply),{...originalReply,sender:sourceOwner.id,parent_id:post})
   assert.equal((await sourceOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:randomUUID(),p_body:'Ordinary held write'})).error?.code,'PT423')
   assert.equal((await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:randomUUID(),p_body:'Ordinary held write'})).error?.code,'PT423')
   await sourceReviewerPage.reload()
   await sourceReviewerPage.getByRole('region',{name:'Source rollback verification',exact:true})
-    .getByText('1 of 1 reviewed changes verified at the source. Workspace writes are held.',{exact:true}).waitFor()
-  console.log('Edge verified independent destination review, signed room download and upload, source reviewer apply, exact room readback and both write holds.')
+    .getByText('2 of 2 reviewed changes verified at the source. Workspace writes are held.',{exact:true}).waitFor()
+  console.log('Edge verified signed room thread recovery, the paired reply marker, exact native parent linkage and both write holds.')
 } finally {
   await browser?.close()
   for(const site of [source,destination]){
