@@ -17,6 +17,18 @@ import { clearWorkspaceLink, workspaceLink } from '../lib/workspace-link'
 
 type Access = { user: string; state: 'allowed' | 'challenge' | 'error'; lockdown?: AccountLock; risk?: 'email' | 'refresh' }
 
+function workspaceSessionId(token: string | undefined) {
+  const payload = token?.split('.')[1]
+  if (!payload) return null
+  try {
+    const { session_id } = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof session_id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(session_id)
+      ? session_id : null
+  } catch {
+    return null
+  }
+}
+
 export default function Home() {
   const { t } = useLocale()
   const [session, setSession] = useState<Session | null>(null)
@@ -128,7 +140,7 @@ export default function Home() {
   const requestedWorkspace=workspaceLink(window.location.search)
   return <CommunityRulesGate key={user}>
     <WorkspaceContextProvider user={user} requestedWorkspace={requestedWorkspace}>
-      <Inbox user={user} openWorkspaces={requestedWorkspace!==null}/>
+      <Inbox user={user} workspaceSession={workspaceSessionId(token)} openWorkspaces={requestedWorkspace!==null}/>
     </WorkspaceContextProvider>
   </CommunityRulesGate>
 }

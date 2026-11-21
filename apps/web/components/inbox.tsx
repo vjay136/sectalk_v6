@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import dynamic from 'next/dynamic'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import {
   ArrowLeft, Ban, Bell, BellOff, Bookmark, CalendarClock, CalendarDays, Check, ChevronRight, CircleHelp, Copy, CreditCard, Flag, Folder, Inbox as InboxIcon, LogOut,
   Download, Hash, ListChecks, LockKeyhole, MessageCircle, MoreHorizontal, Paperclip, Phone, Pin, Search, Send, Shield, ShieldCheck, Smile, UserPlus, UserRound, Users, Video, X,
@@ -64,7 +65,7 @@ type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id
 type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'|'invisible'; expires_at:string }
 type PresenceSettings = { required: boolean; sharing: boolean }
 
-export function Inbox({ user, openWorkspaces }: { user: string; openWorkspaces:boolean }) {
+export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string; workspaceSession:string|null; openWorkspaces:boolean }) {
   const accountAppearance = useAccountAppearance(user)
   const { t } = useLocale()
   const {reload:reloadWorkspaces,select:selectWorkspace}=useWorkspaceContext()
@@ -169,18 +170,7 @@ export function Inbox({ user, openWorkspaces }: { user: string; openWorkspaces:b
     const syncStatus = () => void refreshInboxStatus()
     syncStatus()
     hints.addEventListener('read_local', syncStatus)
-    const account = db!.channel('st:account:' + user, { config: { private: true } })
-      .on('broadcast', { event: 'inbox' }, ({ payload }) => {
-        if (typeof payload?.chat_id === 'string') {
-          hints.dispatchEvent(new MessageEvent('inbox', { data: payload.chat_id }))
-          void refresh()
-          void refreshInboxStatus(payload.chat_id)
-        }
-      })
-      .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
-      .on('broadcast', { event: 'presence' }, () => { hints.dispatchEvent(new Event('presence')); void refresh() })
-      .on('broadcast', { event: 'availability' }, () => hints.dispatchEvent(new Event('availability')))
-      .on('broadcast', { event: 'draft_change' }, ({payload}) => notifyDraftChange(payload||{}))
+    const activityHandlers = (topic: RealtimeChannel) => topic
       .on('broadcast', { event: 'room_activity' }, ({ payload }) => {
         if (typeof payload?.room_id === 'string') {
           announceAlert(payload.mention_kind==='mention.user'?'You were mentioned directly in a room.':
@@ -204,6 +194,18 @@ export function Inbox({ user, openWorkspaces }: { user: string; openWorkspaces:b
           case 'admin.room': announceAlert('New activity in a workspace admin room.',payload.priority); break
         }
       })
+    const account = activityHandlers(db!.channel('st:account:' + user, { config: { private: true } }))
+      .on('broadcast', { event: 'inbox' }, ({ payload }) => {
+        if (typeof payload?.chat_id === 'string') {
+          hints.dispatchEvent(new MessageEvent('inbox', { data: payload.chat_id }))
+          void refresh()
+          void refreshInboxStatus(payload.chat_id)
+        }
+      })
+      .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
+      .on('broadcast', { event: 'presence' }, () => { hints.dispatchEvent(new Event('presence')); void refresh() })
+      .on('broadcast', { event: 'availability' }, () => hints.dispatchEvent(new Event('availability')))
+      .on('broadcast', { event: 'draft_change' }, ({payload}) => notifyDraftChange(payload||{}))
       .on('broadcast', { event: 'case_collaboration' }, () => {
         void db!.rpc('st_v6_case_collaboration_alerts', { p_unread_only: true }).then(({ data, error }) => {
           if (!error && Array.isArray(data) && data.length) setNotice('You have a new staff case mention.')
@@ -278,6 +280,9 @@ export function Inbox({ user, openWorkspaces }: { user: string; openWorkspaces:b
           syncStatus()
         }
       })
+    const workspaceActivity = workspaceSession ? activityHandlers(db!.channel(
+      'st:workspace-session:' + user + ':' + workspaceSession, { config: { private: true } }
+    )).subscribe() : null
     const channel = liveChannel('inbox:' + user, () => { setOnline(true); void refresh() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'st_chats', filter: 'member_a=eq.' + user }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'st_chats', filter: 'member_b=eq.' + user }, refresh)
@@ -297,9 +302,10 @@ export function Inbox({ user, openWorkspaces }: { user: string; openWorkspaces:b
       window.clearInterval(timer)
       subscription.data.subscription.unsubscribe()
       void db!.removeChannel(account)
+      if (workspaceActivity) void db!.removeChannel(workspaceActivity)
       void db!.removeChannel(channel)
     }
-  }, [user, refresh, hints, refreshInboxStatus, reloadWorkspaces, announceAlert, acknowledgeAdminAlert])
+  }, [user, workspaceSession, refresh, hints, refreshInboxStatus, reloadWorkspaces, announceAlert, acknowledgeAdminAlert])
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
