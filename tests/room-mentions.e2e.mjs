@@ -64,7 +64,36 @@ try {
     return page
   }
 
-  const [sender, recipient] = await Promise.all([open(owner), open(member)])
+  const [sender, recipient, secondDevice] = await Promise.all([open(owner), open(member), open(member)])
+  await Promise.all([goto(recipient, 'Notifications'), goto(secondDevice, 'Notifications')])
+  await secondDevice.getByRole('button', exact('Unread')).click()
+  await secondDevice.getByText('You have no unread notifications.', { exact: true }).waitFor()
+  const meetingTitles = ['Notification check ' + suffix, 'Bulk notification check ' + suffix]
+  const start = new Date(Date.now() + 60 * 60 * 1000)
+  const end = new Date(start.getTime() + 30 * 60 * 1000)
+  for (const title of meetingTitles) {
+    data(await owner.client.rpc('st_v3_schedule', {
+      p_workspace: workspace, p_id: randomUUID(), p_title: title, p_agenda: '',
+      p_start: start.toISOString(), p_end: end.toISOString(),
+    }))
+  }
+  const meetingNotice = (page, title) => page.getByRole('article').filter({ has: page.getByText(title, { exact: true }) })
+  for (const title of meetingTitles) {
+    await meetingNotice(recipient, title).getByRole('button', exact('Mark read')).waitFor()
+    await meetingNotice(secondDevice, title).waitFor()
+  }
+  await meetingNotice(recipient, meetingTitles[0]).getByRole('button', exact('Mark read')).click()
+  await meetingNotice(secondDevice, meetingTitles[0]).waitFor({ state: 'detached' })
+  await meetingNotice(secondDevice, meetingTitles[1]).waitFor()
+  await recipient.getByRole('button', exact('Mark all read')).click()
+  await secondDevice.getByText('You have no unread notifications.', { exact: true }).waitFor()
+  await secondDevice.getByRole('button', exact('All updates')).click()
+  for (const title of meetingTitles) {
+    await meetingNotice(secondDevice, title).waitFor()
+    assert.equal(await meetingNotice(secondDevice, title).getByRole('button', exact('Mark read')).count(), 0)
+  }
+  console.log('Passed two-session meeting notification delivery and individual and bulk read synchronization.')
+
   await goto(recipient, 'Notifications')
   await recipient.getByRole('button', exact('Mentions')).click()
   await recipient.getByText('You have no notifications yet.', { exact: true }).waitFor()
