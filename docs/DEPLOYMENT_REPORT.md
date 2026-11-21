@@ -1,8 +1,8 @@
 # V6 deployment status
 
-The existing SecTalk v5 Vercel project and GitHub release are the live baseline. The v6 source can be published with the Free-tier scope below. A working deployment still requires an isolated backend and verification of the enabled services.
+The existing SecTalk v5 Vercel project and GitHub release are the live baseline. The [v6 Free-tier candidate](https://github.com/vjay136/sectalk_v6/commit/37ca511f4883ace1137f35b7706d669433199642) is published to GitHub. The v6 Vercel deployment still requires its own backend and hosted verification of the enabled services.
 
-Publish v6 to `main` in the separate [SecTalk v6 GitHub repository](https://github.com/vjay136/sectalk_v6) using the local `v6` remote. GitHub reported a public, empty repository with write access. The existing `origin` points to the v5 repository. Vercel's signed-in New Project page shows `sectalk_v6` as available to import under `silent-soldier-vjay`. Use that import after the release commit is published.
+Publish future v6 updates to `main` in the separate [SecTalk v6 GitHub repository](https://github.com/vjay136/sectalk_v6) using the local `v6` remote. The existing `origin` points to the v5 repository. Import the v6 repository into a separate Vercel project under `silent-soldier-vjay` and configure it with the v6 backend.
 
 Run `npm run verify:registry -- --release-free` to check the 234 required rows and the Web, Admin and Workers browser assets before publishing the Free-tier source. The full-scope gate remains `npm run verify:registry -- --release` and requires all 239 rows. The structural registry check runs separately as `npm run verify:registry`.
 
@@ -16,7 +16,17 @@ Run `npm run verify:registry -- --release-free` to check the 234 required rows a
 
 The Free-tier source may be imported into Vercel once a separate backend has been chosen. Run the hosted readiness, integration, security, accessibility, load and recovery checks for enabled services before opening it to users.
 
-A later Supabase Pro upgrade can provide hosted infrastructure for further verification. Keep enterprise providers, regional cutover, permanent erasure and external key operations gated by their specific configuration and authorization. Finish each outstanding matrix check before declaring full-scope availability. Configure effective legal documents separately from the infrastructure plan.
+Keep the Free-tier defaults when upgrading the v6 backend. Enable each optional capability after its own hosted check passes:
+
+| Capability | Activation check after upgrade |
+| --- | --- |
+| Enterprise SSO | Configure the workspace identity provider and exact hosted callback. Verify sign-in and revocation with a named test account before requiring SSO for that workspace. |
+| Regional residency | Verify a separate destination in the requested region. Rehearse migration, rollback, and recovery of private files before enabling routing. |
+| Permanent tenant erasure | Verify actual erasure and retention rules across the database, Storage, backups, and key provider before enabling the terminal executor. |
+| External tenant keys | Configure a scoped KMS and rehearse key rotation and recovery against a matching database and private Storage restore. Use managed application keys until those checks pass. |
+| Effective legal documents | Publish the operator-approved documents and verify versioned acceptance with a fresh account. This can be configured on either plan. |
+
+Before opening the Free-tier deployment and again after enabling any optional capability, check signup confirmation, password reset, chat, audio and video calls, and a report from submission through operator review. Use test accounts on v6 so that these checks leave v5 traffic and data in place. Supabase lists daily database backups and SAML for Pro. Point-in-time recovery is a separate add-on. [Supabase plan comparison](https://supabase.com/pricing)
 
 The release uses the `sectalk-web`, `sectalk-admin` and `sectalk-workers` Vercel projects, rooted at `apps/web`, `apps/admin` and `apps/workers` respectively. Enable source files outside the app root for the shared npm workspaces. Apply the v6 migrations to the separate v6 backend before enabling traffic or job schedules.
 
