@@ -138,8 +138,14 @@ begin
     end;
   end loop;
   perform set_config('request.jwt.claims',jsonb_build_object('sub',member_id,'role','authenticated','aal','aal1')::text,true);
+  begin
+    perform public.st_v6_workspace_notification_settings(space);
+    raise exception 'A password-only member read entry-protected notification settings';
+  exception when insufficient_privilege then null;
+  end;
+  perform set_config('request.jwt.claims',signed_claim::text,true);
   if public.st_v6_workspace_notification_settings(space)->'mandatory_categories' is distinct from '["task"]'::jsonb then
-    raise exception 'Entry SSO interrupted effective account notification settings'; end if;
+    raise exception 'Signed owner lost effective workspace notification settings'; end if;
   perform set_config('request.jwt.claims',(signed_claim||'{"aal":"aal2"}')::text,true);
   if public.st_v7_workspace_policies(space,'messaging')->>'access' is distinct from 'verified'
     or public.st_v6_tenant_feature_state(space)->>'verified' is distinct from 'true'

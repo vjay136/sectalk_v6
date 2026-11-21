@@ -44,6 +44,12 @@ begin
     raise exception 'File SSO enabled without observed provider session'; end if;
   perform public.st_v6_room_create(room,workspace,'Enrolled file room','private','project');
   perform public.st_v6_room_create(sibling,workspace,'Independent private room','private','project');
+  perform public.st_v6_set_workspace_reactions(workspace,'native',3);
+  perform public.st_v6_set_workspace_reactions(second_workspace,'essential',2);
+  perform public.st_v6_set_workspace_file_history_policy(workspace,true);
+  if public.st_v6_workspace_file_history_policy_status(workspace) is distinct from
+      '{"enabled":true,"can_manage":true}'::jsonb then
+    raise exception 'Ordinary owner could not read existing file history settings'; end if;
   reset role;
   insert into public.st_v6_room_members(room_id,user_id,role) values(room,actor,'member');
   insert into sectalk_private.st_v6_workspace_files(workspace,id,uploader,filename,size_bytes,published_at,created_at)
@@ -66,6 +72,11 @@ begin
   perform set_config('request.jwt.claims',owner_claim,true);
   if public.st_v8_workspace_entry_policy(workspace,true)->>'required' is distinct from 'true' then
     raise exception 'Fresh owner could not require file SSO'; end if;
+  if public.st_v6_workspace_file_history_policy_status(workspace) is not null
+    or public.st_v6_workspace_file_history_policy_status(second_workspace) is null
+    or exists(select 1 from public.st_v6_workspace_reaction_policy where workspace_id=workspace)
+    or not exists(select 1 from public.st_v6_workspace_reaction_policy where workspace_id=second_workspace) then
+    raise exception 'Password owner saw protected room or file policy metadata or lost an unrelated workspace'; end if;
   perform set_config('request.jwt.claims',plain_claim,true);
   if public.st_v8_app_file_context('workspace',workspace)->>'access' is distinct from 'sso_required'
     or public.st_v8_app_file_context('room',room)->>'access' is distinct from 'unavailable'
@@ -81,6 +92,19 @@ begin
     or public.st_v7_explain_file_egress('room',room,room_file,'download')->>'allowed' is distinct from 'true'
     or public.st_v6_workspace_file_access_history(workspace,file)->>'filename' is distinct from 'workspace-file-sso.txt' then
     raise exception 'Live receipt lost file policy or history access'; end if;
+  if not exists(select 1 from public.st_v6_workspace_reaction_policy
+      where workspace_id=workspace and emoji_set='native' and per_person=3) then
+    raise exception 'Signed member could not read permitted reaction metadata'; end if;
+  reset role;
+  insert into sectalk_private.st_v7_workspace_sso_sessions(session,workspace,principal,protocol,provider)
+    values(owner_session,workspace,owner_id,'oidc',provider);
+  set local role authenticated;
+  perform set_config('request.jwt.claims',owner_claim,true);
+  if public.st_v8_workspace_policy_admin_policy(workspace,true)->>'required' is distinct from 'true' then
+    raise exception 'Could not require the independent policy administration gate'; end if;
+  if public.st_v6_workspace_file_history_policy_status(workspace) is distinct from
+      '{"enabled":true,"can_manage":true}'::jsonb then
+    raise exception 'Signed owner could not access history settings under both SSO policies'; end if;
   reset role;
 
   set local role service_role;
@@ -111,11 +135,19 @@ begin
     raise exception 'Fresh owner could not recover file access'; end if;
   if public.st_v8_app_file_context('workspace',workspace)->>'access' is distinct from 'allowed' then
     raise exception 'Current owner session stayed blocked after recovery'; end if;
+  if public.st_v6_workspace_file_history_policy_status(workspace) is not null
+    or not exists(select 1 from public.st_v6_workspace_reaction_policy where workspace_id=workspace) then
+    raise exception 'Workspace entry recovery incorrectly reset the independent policy administration gate'; end if;
+  if public.st_v8_workspace_policy_admin_policy(workspace,false)->>'required' is distinct from 'false' then
+    raise exception 'Fresh owner could not clear the policy administration gate'; end if;
+  if public.st_v6_workspace_file_history_policy_status(workspace) is distinct from
+      '{"enabled":true,"can_manage":true}'::jsonb then
+    raise exception 'Fresh owner could not recover file history settings'; end if;
   reset role;
   if has_function_privilege('authenticated','public.st_v8_app_file_command(text,uuid,uuid,uuid,text,uuid,text,integer,text)','execute')
     or has_function_privilege('service_role','public.st_v8_app_file_context(text,uuid)','execute')
     or has_function_privilege('anon','public.st_v8_app_file_context(text,uuid)','execute') then
     raise exception 'Scoped context or storage handoff has an unexpected grant'; end if;
 end $$;
-select 'passed: workspace entry file gates, trusted workflows, exact native sessions and maintenance';
+select 'passed: workspace entry files, history settings, reaction metadata, exact native sessions and maintenance';
 rollback;
