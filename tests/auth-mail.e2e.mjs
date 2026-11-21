@@ -37,9 +37,14 @@ const resend = resendPort && createServer(async (request, response) => {
     if (payload.email !== email || payload.type !== 'signup') return response.writeHead(400).end()
     response.setHeader('Content-Type', 'application/json')
     if (++resendAttempts === 1) return response.writeHead(503).end('{"message":"Synthetic delivery outage"}')
+    const headers = new Headers()
+    for (const name of ['authorization','apikey','content-type']) {
+      const value = request.headers[name]
+      if (typeof value === 'string') headers.set(name,value)
+    }
     const forwarded = await fetch(url, {
       method: 'POST', body, redirect: 'error',
-      headers: Object.fromEntries(['authorization','apikey','content-type'].map(name => [name, request.headers[name]])),
+      headers,
     })
     response.writeHead(forwarded.status).end(await forwarded.text())
   } catch {
