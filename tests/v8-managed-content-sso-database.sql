@@ -1,5 +1,6 @@
 begin;
 do $$
+<<fixture>>
 declare
   owner_id uuid:=gen_random_uuid(); actor uuid:=gen_random_uuid(); factor uuid:=gen_random_uuid();
   owner_session uuid:=gen_random_uuid(); sso_session uuid:=gen_random_uuid(); password_session uuid:=gen_random_uuid();
@@ -71,7 +72,6 @@ begin
   exception when insufficient_privilege then null;
   end;
   reset role;
-
   set local role service_role;
   if public.st_v8_read_managed_channel(stale_channel,actor,null,null,10) is not null
     or public.st_v8_managed_room_work(stale_room,actor,'read') is not null then
@@ -92,17 +92,47 @@ begin
     raise exception 'Provider receipt was not accepted through the service ticket boundary'; end if;
   reset role;
 
+  set local role authenticated;
+  perform set_config('request.jwt.claims',owner_claim,true);
+  if public.st_v8_workspace_entry_policy(workspace,true)->>'required' is distinct from 'true' then
+    raise exception 'Fresh owner could not enable workspace entry for the typing fixture'; end if;
+  perform set_config('request.jwt.claims',plain_claim,true);
+  perform public.st_v6_room_typing(room_id,null,true);
+  if public.st_v6_room_typing_status(room_id,null) is distinct from '{}'::jsonb then
+    raise exception 'Password session could read managed room typing under entry SSO'; end if;
+  reset role;
+  if exists(select 1 from sectalk_private.room_typing t where t.room_id=fixture.room_id and t.user_id=actor
+      and t.expires_at is not null) then
+    raise exception 'Password session published managed room typing under entry SSO'; end if;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',provider_claim,true);
+  if public.st_v6_room_typing_status(room_id,null)->>'share_own_typing' is distinct from 'true' then
+    raise exception 'Active provider session could not read managed room typing'; end if;
+  perform public.st_v6_room_typing(room_id,null,true);
+  reset role;
+  if not exists(select 1 from sectalk_private.room_typing t where t.room_id=fixture.room_id and t.user_id=actor
+      and t.expires_at is not null) then
+    raise exception 'Active provider session could not publish managed room typing'; end if;
+
   update auth.custom_oauth_providers set enabled=false where identifier=provider;
   set local role service_role;
   if public.st_v8_managed_room_work(pending_room,actor,'read') is not null then
     raise exception 'Disabled provider could redeem previously authorized ticket'; end if;
   reset role;
   set local role authenticated;
+  perform set_config('request.jwt.claims',provider_claim,true);
+  if public.st_v6_room_typing_status(room_id,null) is distinct from '{}'::jsonb then
+    raise exception 'Disabled provider could still read managed room typing'; end if;
   perform set_config('request.jwt.claims',owner_claim,true);
+  if public.st_v8_workspace_entry_policy(workspace,false)->>'required' is distinct from 'false' then
+    raise exception 'Fresh owner could not restore entry access'; end if;
   if public.st_v8_workspace_managed_content_policy(workspace,false)->>'required' is distinct from 'false' then
     raise exception 'Fresh owner could not restore managed message access'; end if;
   perform set_config('request.jwt.claims',plain_claim,true);
-  if public.st_v8_managed_room_readable(room_id) is not true then raise exception 'Restore left the room inaccessible'; end if;
+  if public.st_v8_managed_room_readable(room_id) is not true
+     or public.st_v6_room_typing_status(room_id,null)->>'share_own_typing' is distinct from 'true' then
+    raise exception 'Restore left the room inaccessible'; end if;
   reset role;
   if has_function_privilege('authenticated','sectalk_private.st_v8_managed_room_ticket(uuid,uuid,text)','execute')
     or has_function_privilege('service_role','sectalk_private.st_v8_managed_room_work(uuid,uuid,text,jsonb)','execute')
