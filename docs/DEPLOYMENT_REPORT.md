@@ -58,4 +58,8 @@ The connected Supabase organization currently lists two active projects and no s
 
 The current Supabase budget is Free tier. The two active projects occupy the available slots. Local Docker projects supply isolated database and browser verification. The portable recovery drill supports manual database and Storage backups. Managed branching, automatic backups and point-in-time recovery are outside the Free plan. [Supabase Free plan limits](https://supabase.com/pricing) · [Manual recovery drill](DISASTER_RECOVERY.md)
 
+The public v5 JavaScript bundles reference the existing `sectalk` Supabase project. Its recorded migration history has eight applied entries and the v6 RPCs are absent. Seven applied SQL digests match the v5 tag after accounting for trailing whitespace. The deployed live-notifications SQL has a different digest and needs reconciliation before a shared-schema upgrade.
+
+The disposable v5 upgrade rehearsal passed the tagged v5 database tests and uploaded and downloaded a synthetic attachment via v5's normal Storage calls. After the first v6 file download migration, the same v5 recipient could no longer download it directly. The original private bytes remained intact. V6 intentionally checks downloads on its server. A shared-project upgrade requires a v5 attachment compatibility release and a verified cutover, or a separate v6 Supabase project. The hosted `sectalk` schema was inspected read-only.
+
 The matrix uses BLOCKED_EXTERNAL only when the implementation and its test-mode proof are present. Missing configuration and missing code are tracked separately.
