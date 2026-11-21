@@ -3,6 +3,7 @@ set local timezone='UTC';
 set local datestyle='ISO, YMD';
 
 do $$
+<<source_fixture>>
 declare
   owner_id uuid:=gen_random_uuid(); reviewer_id uuid:=gen_random_uuid(); destination_owner uuid:=gen_random_uuid();
   actor_id uuid; sid uuid; factor uuid; claims jsonb:='{}';
@@ -71,15 +72,29 @@ begin
     revision:=encode(sha256(convert_to(to_jsonb(sectalk_private.st_v8_rollback_room_message(destination_owner,entry))::text,
       'UTF8')),'hex');
     records:=records||jsonb_build_array(entry||jsonb_build_object('digest',revision));
-    changes:=changes||jsonb_build_array(jsonb_build_object('id',member_id,'kind','room_message','state','added','after',revision));
+    changes:=changes||jsonb_build_array(jsonb_build_object('id',member_id,'kind','room_message','state','added','before',null,'after',revision));
   end loop;
   entry:=jsonb_build_object('kind','room_message','id',migrated_reply,'room',source_room,'roomName','Approved project room',
     'body','Reviewed reply to an existing migrated room root','createdAt',now(),'parent',anchor,'existingParent',proof);
   revision:=encode(sha256(convert_to(to_jsonb(sectalk_private.st_v8_rollback_room_message(destination_owner,entry))::text,'UTF8')),'hex');
   records:=records||jsonb_build_array(entry||jsonb_build_object('digest',revision));
-  changes:=changes||jsonb_build_array(jsonb_build_object('id',migrated_reply,'kind','room_message','state','added','after',revision));
-  insert into sectalk_private.st_v8_residency_rollback_manifests(handoff,workspace,review,review_sha256,packet_sha256,plan_sha256,changes)
-    values(handoff,ws,review_id,repeat('1',64),repeat('2',64),repeat('3',64),changes);
+  changes:=changes||jsonb_build_array(jsonb_build_object('id',migrated_reply,'kind','room_message','state','added','before',null,'after',revision));
+  wire:=jsonb_build_object('format','sectalk-residency-recovery-manifest-v1','workspace',ws,'handoff',handoff,
+    'approval',approval,'source','synthetic-origin','destination','synthetic-destination','review',review_id,
+    'digest',repeat('1',64),'plan',repeat('3',64),'changes',changes,
+    'expires',floor(extract(epoch from clock_timestamp()+interval '4 minutes')))::text;
+  bad_wire:=jsonb_set(wire::jsonb,'{changes}',changes||jsonb_build_array(changes->0))::text;
+  set local role authenticated;
+  perform set_config('request.jwt.claims',claims->>owner_id::text,true);
+  begin
+    perform public.st_v8_residency_rollback_manifest(ws,'receive',ws::text,jsonb_build_object('payload',bad_wire,
+      'signature',encode(extensions.hmac(convert_to(bad_wire,'UTF8'),signing_key,'sha256'),'hex')));
+    raise exception 'A signed manifest with ambiguous record IDs was admitted';
+  exception when insufficient_privilege then null; end;
+  result:=public.st_v8_residency_rollback_manifest(ws,'receive',ws::text,jsonb_build_object('payload',wire,
+    'signature',encode(extensions.hmac(convert_to(wire,'UTF8'),signing_key,'sha256'),'hex')));
+  if result->>'state' is distinct from 'received' then raise exception 'The unambiguous manifest was not admitted'; end if;
+  reset role;
   owner_tag:=encode(extensions.hmac(convert_to('sectalk-room-replay-owner-v1:'||handoff::text||':'||owner_id::text||
     '@example.invalid','UTF8'),signing_key,'sha256'),'hex');
   wire:=jsonb_build_object('format','sectalk-residency-room-replay-v1','workspace',ws,'handoff',handoff,
@@ -164,6 +179,25 @@ begin
   perform set_config('request.jwt.claims',claims->>owner_id::text,true);
   if public.st_v8_residency_source_evidence(ws)->>'coverage' is distinct from 'ready' then
     raise exception 'Matched room messages did not contribute to source sign-off'; end if;
+  result:=public.st_v8_residency_source_evidence(ws);
+  reset role;
+  -- A project on an older build may already have received an ambiguous manifest.
+  update sectalk_private.st_v8_residency_rollback_manifests m
+    set changes=source_fixture.changes||jsonb_build_array(source_fixture.changes->0)
+    where m.handoff=source_fixture.handoff;
+  set local role authenticated;
+  if public.st_v8_residency_source_evidence(ws)->>'coverage' is distinct from 'incomplete' then
+    raise exception 'An older ambiguous source manifest appeared ready for sign-off'; end if;
+  begin
+    perform public.st_v8_residency_source_evidence(ws,'capture',ws::text,null,result->>'evidenceDigest');
+    raise exception 'An older ambiguous source manifest was captured';
+  exception when sqlstate 'PT409' then
+    if sqlerrm is distinct from 'The admitted rollback manifest has ambiguous record IDs.' then raise; end if;
+  end;
+  reset role;
+  update sectalk_private.st_v8_residency_rollback_manifests m set changes=source_fixture.changes
+    where m.handoff=source_fixture.handoff;
+  set local role authenticated;
   begin
     source_marker:=gen_random_uuid();
     perform public.st_v6_room_post(source_room,source_marker,'Ordinary post during hold','message',null);
@@ -193,6 +227,7 @@ begin
 end $$;
 
 do $$
+<<destination_fixture>>
 declare
   owner_id uuid:=gen_random_uuid(); reviewer_id uuid:=gen_random_uuid(); actor_id uuid; sid uuid; factor uuid; claims jsonb:='{}';
   ws uuid; paired_room uuid:=gen_random_uuid(); unpaired_room uuid:=gen_random_uuid();
@@ -201,7 +236,7 @@ declare
   edited_post uuid:=gen_random_uuid(); other_post uuid:=gen_random_uuid(); old_root uuid:=gen_random_uuid();
   old_root_reply uuid:=gen_random_uuid(); member_root_reply uuid:=gen_random_uuid();
   unproven_root uuid:=gen_random_uuid(); unproven_reply uuid:=gen_random_uuid();
-  snapshot_digest text; approval_digest text; approved_author_tag text;
+  snapshot_digest text; approval_digest text; approved_author_tag text; original_snapshot jsonb;
   signing_key bytea:=decode(repeat('c',64),'hex'); review jsonb; packet jsonb; wire jsonb;
   destination text:='room-replay-'||left(handoff::text,8);
 begin
@@ -256,12 +291,40 @@ begin
       (paired_room,unproven_reply,owner_id,'No import receipt means no reply replay','message',unproven_root,null),
       (paired_room,member_root_reply,owner_id,'A reply to a different author','message',member_post,null),
       (paired_room,edited_post,owner_id,'An edited post awaiting separate recovery','message',null,now()),
-      (unpaired_room,other_post,owner_id,'A room without an approved pairing','message',null,null);
+      (unpaired_room,other_post,owner_id,'A room without an approved pairing','message',null,null),
+      (unpaired_room,post_id,owner_id,'A different record with the same ID','message',null,null);
   insert into sectalk_private.st_v8_residency_rollback_holds(workspace,approval,handoff,side)
     values(ws,approval,handoff,'destination');
   secret_id:=vault.create_secret(encode(signing_key,'hex'));
   insert into sectalk_private.st_v8_residency_rollback_manifest_admissions
     values(handoff,secret_id,repeat('3',64),now()+interval '1 hour');
+  set local role authenticated;
+  if public.st_v8_residency_rollback_reconcile(ws)->>'state' is distinct from 'ambiguous_record_ids' then
+    raise exception 'A live duplicate across rooms did not block review'; end if;
+  begin
+    perform public.st_v8_residency_rollback_reconcile(ws,'capture',null,ws::text);
+    raise exception 'A duplicate destination record ID allowed capture';
+  exception when sqlstate 'PT409' then null; end;
+  begin
+    perform public.st_v8_residency_rollback_manifest(ws,'issue',ws::text);
+    raise exception 'A destination with duplicate record IDs issued a signed manifest';
+  exception when sqlstate 'PT409' then null; end;
+  begin
+    perform public.st_v8_residency_retire_destination(ws,'issue',ws::text);
+    raise exception 'A destination with duplicate record IDs issued retirement proof';
+  exception when sqlstate 'PT409' then null; end;
+  reset role;
+  delete from public.st_v6_room_posts where (room_id,id)=(unpaired_room,post_id);
+  select b.snapshot into strict original_snapshot from sectalk_private.st_v8_residency_rollback_baselines b
+    where b.handoff=destination_fixture.handoff;
+  update sectalk_private.st_v8_residency_rollback_baselines b set snapshot=jsonb_set(b.snapshot,'{room_message,records}',
+    b.snapshot#>'{room_message,records}'||jsonb_build_array(b.snapshot#>'{room_message,records,0}'))
+    where b.handoff=destination_fixture.handoff;
+  set local role authenticated;
+  if public.st_v8_residency_rollback_reconcile(ws)->>'state' is distinct from 'ambiguous_record_ids' then
+    raise exception 'A historical duplicate blocked by the baseline was missed'; end if;
+  reset role;
+  update sectalk_private.st_v8_residency_rollback_baselines b set snapshot=original_snapshot where b.handoff=destination_fixture.handoff;
   set local role authenticated;
   begin
     perform public.st_v8_residency_rollback_rooms(ws,'issue',ws::text);
@@ -307,5 +370,5 @@ begin
   exception when sqlstate 'PT409' then null; end;
 end $$;
 
-select 'passed: independent room thread issuance, signed parent and reply replay, atomic collisions, holds, exact revisions and imported parent proof';
+select 'passed: duplicate live and baseline IDs, signed manifest admission, room thread replay, holds, exact revisions and imported parent proof';
 rollback;

@@ -8,7 +8,7 @@ import {workspaceFileRequest} from '../lib/workspace-files-client'
 
 type Change={kind:string;id:string;state:'added'|'removed'|'changed';before:string|null;after:string|null}
 type Review={
-  state:'inactive'|'ready'|'pending'|'reviewed'|'changed'|'baseline_missing'|'capacity_exceeded'
+  state:'inactive'|'ready'|'pending'|'reviewed'|'changed'|'baseline_missing'|'capacity_exceeded'|'ambiguous_record_ids'
   role?:'owner'|'reviewer'
   id?:string
   digest?:string
@@ -95,6 +95,7 @@ export function WorkspaceResidencyRollbackReview({workspace}:{workspace:string})
     <h3>Destination rollback change review</h3>
     {review.state==='baseline_missing'&&<p role="status">This activation has no captured baseline. It requires separate recovery evidence.</p>}
     {review.state==='capacity_exceeded'&&<p role="status">At least one record type exceeds the review limit. It requires a separate inventory.</p>}
+    {review.state==='ambiguous_record_ids'&&<p role="status">Some records of the same type share an ID. Exact rollback review requires a separate inventory. Workspace writes remain held.</p>}
     {review.state==='ready'&&<p role="status">The destination owner can capture changes against the activation baseline.</p>}
     {review.state==='pending'&&<p role="status">Awaiting independent review.</p>}
     {review.state==='changed'&&<p role="status">The evidence or reviewer access changed. Capture a new review.</p>}

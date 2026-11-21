@@ -86,6 +86,8 @@ SecTalk captures a private baseline in the same transaction that activates guard
 
 An assigned independent reviewer opens the same panel on the destination, checks the record revisions and confirms the digest with the exact workspace ID and a current authenticator session. Drift or a lost reviewer assignment requires a fresh review. Activations that predate the baseline and record families beyond the 500-record comparison limit require a separate inventory. Confirmation records the review and keeps both write holds in place.
 
+The current transfer format requires unique IDs within each record type across the workspace. If two rooms contain a record of the same type with the same ID in the activation baseline or current census, the review requires a separate inventory and the write hold stays in place. A manifest with repeated type-and-ID pairs cannot be admitted or signed off at the source.
+
 ## Transfer the reviewed rollback manifest
 
 Trusted installation operators provision a separate short-lived manifest admission in each Supabase project. Both admissions bind the exact handoff and the same approved recovery-plan digest, and each refers to its installation's Vault copy of a fresh random 32-byte transfer key. Retire these admissions and keys when the transfer is complete.

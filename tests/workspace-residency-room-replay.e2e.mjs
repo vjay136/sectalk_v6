@@ -19,6 +19,7 @@ const destination={
   users:[],
 }
 const workspace=randomUUID(),room=randomUUID(),anchor=randomUUID(),post=randomUUID(),handoff=randomUUID(),approval=randomUUID()
+const secondRoom=randomUUID()
 const reply=randomUUID(),anchorReply=randomUUID(),task=randomUUID()
 const attachment=randomUUID(),attachmentName='Reviewed room attachment.txt'
 const attachmentBytes=Buffer.from('Synthetic attachment '+attachment+'\n')
@@ -187,6 +188,8 @@ try{
       values('${cell}','${workspace}','${source.project}','${approval}','${room}','${roomName}','${destinationOwner.id}',1,now()-interval '2 minutes');
     insert into sectalk_private.st_v8_residency_room_history(workspace,approval,room,post,actor,record_digest,imported_at)
       values('${workspace}','${approval}','${room}','${anchor}','${destinationReviewer.id}','${approvedRootDigest}',now()-interval '2 minutes');
+    insert into public.st_v6_rooms(id,workspace_id,name,kind,template,creator)
+      values('${secondRoom}','${workspace}','Duplicate ID control room','public','blank','${destinationOwner.id}');
     insert into sectalk_private.st_v8_residency_rollback_baselines(handoff,snapshot)
       values('${handoff}',sectalk_private.st_v8_residency_rollback_snapshot('${workspace}'));
     commit;`)
@@ -203,9 +206,17 @@ try{
   const originalReply=await recoveredRow(destinationOwner,reply)
   const originalAnchorReply=await recoveredRow(destinationOwner,anchorReply)
   const originalTask=await recoveredTask(destinationOwner)
-  sql(destination,hold('destination'))
+  sql(destination,`begin;
+    insert into public.st_v6_room_posts(room_id,id,sender,body,kind)
+      values('${secondRoom}','${post}','${destinationOwner.id}','Disposable duplicate ID','message');
+    ${hold('destination')} commit;`)
 
   const destinationOwnerPage=await pageFor(destination,destinationOwner)
+  await review(destinationOwnerPage)
+    .getByText('Some records of the same type share an ID. Exact rollback review requires a separate inventory. Workspace writes remain held.',{exact:true}).waitFor()
+  assert.equal(await review(destinationOwnerPage).getByRole('button',{name:'Capture destination changes',exact:true}).count(),0)
+  sql(destination,`delete from public.st_v6_room_posts where (room_id,id)=('${secondRoom}','${post}');`)
+  await review(destinationOwnerPage).getByRole('button',{name:'Refresh change review',exact:true}).click()
   await submit(review(destinationOwnerPage),'Confirm change review workspace ID','Capture destination changes')
   await review(destinationOwnerPage).getByText('Awaiting independent review.',{exact:true}).waitFor()
   const destinationReviewerPage=await pageFor(destination,destinationReviewer)
@@ -376,7 +387,7 @@ try{
   assert.equal((await destinationOwner.api.rpc('st_v6_room_post',{
     p_room:room,p_id:randomUUID(),p_body:'Destination remains held after source reactivation',
   })).error?.code,'PT423')
-  console.log('Edge verified all six restored room records, locked evidence, independent sign-off and source-only write reactivation.')
+  console.log('Edge verified duplicate-ID review blocking, six restored room records, independent sign-off and source-only reactivation.')
 } finally {
   await browser?.close()
   if(scanner?.listening)await new Promise(resolve=>scanner.close(resolve))
