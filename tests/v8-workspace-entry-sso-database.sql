@@ -4,6 +4,7 @@ declare
   owner_id uuid:=gen_random_uuid(); member_user uuid:=gen_random_uuid();
   factor uuid:=gen_random_uuid(); owner_session uuid:=gen_random_uuid(); signed_session uuid:=gen_random_uuid();
   space uuid:=gen_random_uuid(); other_space uuid; task uuid;
+  room uuid:=gen_random_uuid(); channel uuid;
   provider text:='custom:workspace-entry-rollback'; domain text:='entry-sso.example.invalid';
   owner_claim jsonb:=jsonb_build_object('sub',owner_id,'session_id',owner_session,'role','authenticated','aal','aal2');
   signed_claim jsonb:=jsonb_build_object('sub',member_user,'session_id',signed_session,'role','authenticated','aal','aal1');
@@ -26,9 +27,12 @@ begin
   perform set_config('request.jwt.claims',owner_claim::text,true);
   space:=public.st_v6_create_typed_workspace(space,'Locked entry fixture','enterprise');
   other_space:=public.st_v2_create_workspace('Unprotected entry control');
+  perform public.st_v6_room_create(room,space,'Protected settings room','public','blank');
+  channel:=public.st_v2_create_channel(space,'protected-settings');
   task:=public.st_v2_add_item(space,'task','Protected task','Synthetic workspace task',null);
   reset role;
   insert into public.st_v2_members(workspace_id,user_id,role) values(space,member_user,'member');
+  insert into public.st_v6_room_members(room_id,user_id,role) values(room,member_user,'member');
   insert into sectalk_private.st_v7_org_domains(workspace,domain,verified_at) values(space,domain,now());
   set local role authenticated;
   perform public.st_v7_workspace_sso_settings(space,'save',domain,'oidc',false);
@@ -57,6 +61,30 @@ begin
   begin
     perform public.st_v2_add_item(space,'task','Unauthorized board item','Synthetic denied task',null);
     raise exception 'Password owner wrote to protected planning';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v6_room_retirement(room);
+    raise exception 'Password owner read the room retirement state';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v6_room_retirement(room,'cancel');
+    raise exception 'Password owner attempted to cancel room retirement';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v6_room_quiet_settings(room);
+    raise exception 'Password owner read room quiet hours';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v6_set_room_quiet(room,'mute',true);
+    raise exception 'Password owner changed room quiet hours';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v6_channel_quiet_settings(channel);
+    raise exception 'Password owner read channel quiet hours';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v6_set_channel_quiet(channel,'mute',true);
+    raise exception 'Password owner changed channel quiet hours';
   exception when insufficient_privilege then null; end;
   begin
     perform public.st_v2_set_member(space,member_user,'admin');
@@ -91,6 +119,12 @@ begin
     or public.st_v8_workspace_entry_policy(space,false)->>'access' is distinct from 'none' then
     raise exception 'Signed member lost full workspace or accessed owner recovery'; end if;
   perform public.st_v2_complete_task(task,true);
+  perform public.st_v6_set_room_quiet(room,'mute',true);
+  perform public.st_v6_set_channel_quiet(channel,'mute',true);
+  if public.st_v6_room_quiet_settings(room)->>'muted' is distinct from 'true'
+    or public.st_v6_channel_quiet_settings(channel)->>'muted' is distinct from 'true'
+    or public.st_v6_room_retirement(room)->>'can_manage' is distinct from 'false' then
+    raise exception 'Signed member lost personal preferences or gained retirement controls'; end if;
   begin
     perform public.st_v6_impersonation_watch_list(space);
     raise exception 'Signed member read manager-only watch entries';
@@ -117,6 +151,9 @@ begin
   if settings->>'shadow' is distinct from 'profile-rules-v2' then
     raise exception 'Signed owner could not stage the new registry version';
   end if;
+  perform public.st_v6_manage_room(room,'archive');
+  if public.st_v6_room_retirement(room,'schedule')->>'requested_at' is null then
+    raise exception 'Signed and freshly verified owner could not schedule retirement'; end if;
   -- Prove the independently enabled planner restriction survives entry recovery.
   perform set_config('request.jwt.claims',owner_claim::text,true);
   perform public.st_v8_workspace_planner_policy(space,true);
@@ -131,6 +168,10 @@ begin
     perform public.st_v6_impersonation_watch_list(space);
     raise exception 'Disabled provider retained watch access';
   exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v6_channel_quiet_settings(channel);
+    raise exception 'Disabled provider retained channel quiet settings';
+  exception when insufficient_privilege then null; end;
   perform set_config('request.jwt.claims',owner_claim::text,true);
   settings:=public.st_v8_workspace_entry_policy(space,false);
   if settings->>'required' is distinct from 'false'
@@ -141,6 +182,10 @@ begin
     or public.st_v7_workspace_rule_registry(space)->>'shadow' is distinct from 'profile-rules-v2'
     or exists(select 1 from public.st_v2_items where id=task) then
     raise exception 'Fresh owner could not recover workspace entry or recovery reset planner policy'; end if;
+  if public.st_v6_room_retirement(room,'cancel')->>'requested_at' is not null
+    or public.st_v6_room_quiet_settings(room)->>'muted' is distinct from 'false'
+    or public.st_v6_channel_quiet_settings(channel)->>'muted' is distinct from 'false' then
+    raise exception 'Recovery did not restore the owner’s settings and retirement controls'; end if;
 end $$;
 select 'passed: private workspace entry, roster, planner, impersonation watch and rule registry, independent scopes and recovery' as result;
 rollback;

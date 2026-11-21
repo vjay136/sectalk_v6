@@ -123,9 +123,20 @@ export function liveRpcInventory() {
     })
 }
 
-if(process.argv[1]&&pathToFileURL(process.argv[1]).href===import.meta.url&&process.argv.includes('--write')) {
+if(process.argv[1]&&pathToFileURL(process.argv[1]).href===import.meta.url) {
   const result=liveRpcInventory()
   const missing=result.filter(item=>item.gate==='Unclassified')
   if(missing.length)throw new Error('Classify remaining RPCs: '+missing.map(item=>item.rpc).join(', '))
-  writeFileSync(inventoryPath,'[\n'+result.map(item=>'  '+JSON.stringify(item)).join(',\n')+'\n]\n')
+  if(process.argv.includes('--write')) {
+    writeFileSync(inventoryPath,'[\n'+result.map(item=>'  '+JSON.stringify(item)).join(',\n')+'\n]\n')
+  } else {
+    const expected=new Map(rpcInventory().map(entry=>[entry.rpc,entry]))
+    const mismatches=result.filter(entry=>JSON.stringify(expected.get(entry.rpc))!==JSON.stringify(entry))
+    const live=new Set(result.map(entry=>entry.rpc))
+    const removed=[...expected.keys()].filter(rpc=>!live.has(rpc))
+    if(mismatches.length||removed.length) {
+      throw new Error('RPC inventory differs from live database: '+[...mismatches.map(entry=>entry.rpc),...removed].join(', '))
+    }
+    console.log('Verified '+result.length+' live RPC signatures against the checked-in inventory.')
+  }
 }
