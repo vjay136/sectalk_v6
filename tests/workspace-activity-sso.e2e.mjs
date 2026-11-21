@@ -169,6 +169,27 @@ try {
     assert.equal(draftHint(events,room),undefined)
   }
 
+  const [protectedTask,ordinaryTask]=await Promise.all([room,ordinaryRoom].map(async roomId=>
+    data(await signed.client.rpc('st_v6_task_create',{
+      p_id:randomUUID(),p_room:roomId,p_chat:null,p_title:'Synthetic task reminder',
+    }))))
+  const reminders=events=>events.filter(({event,payload})=>event==='category_alert'&&payload.kind==='task.due')
+  sql(`begin;
+    delete from sectalk_private.st_v8_workspace_entry_sso where workspace='${workspace}';
+    insert into sectalk_private.st_v8_workspace_planner_sso values('${workspace}','oidc','${provider}');
+    insert into public.st_v6_task_notices(recipient,task_id,kind,due_at) values
+      ('${owner.id}','${protectedTask}','due',now()+interval '7 days'),
+      ('${owner.id}','${ordinaryTask}','due',now()+interval '7 days');
+    commit;`)
+  await waitFor(()=>[signedSessionEvents,signedAccountEvents,plainAccountEvents].every(events=>reminders(events).length>=1),
+    'planner-only reminder on the signed session and ordinary reminder on both account subscriptions')
+  assert.deepEqual([signedSessionEvents,signedAccountEvents,plainAccountEvents,plainSessionEvents]
+    .map(events=>reminders(events).length),[1,1,1,0])
+  const taskUpdates=client=>client.from('st_v6_task_notices').select('task_id').in('task_id',[protectedTask,ordinaryTask])
+  assert.deepEqual(data(await taskUpdates(signed.client)).map(({task_id})=>task_id).sort(),[protectedTask,ordinaryTask].sort())
+  assert.deepEqual(data(await taskUpdates(plain.client)).map(({task_id})=>task_id),[ordinaryTask])
+  sql(`insert into sectalk_private.st_v8_workspace_entry_sso values('${workspace}','oidc','${provider}');`)
+
   let verifiedInbox,passwordInbox
   const mention='You were mentioned directly in a room.'
   const channelNotice='New activity in one of your workspace channels.'
@@ -216,11 +237,15 @@ try {
   assert.equal((await saveDraft(signed.client,protectedDraft,'Denied after revocation',1)).error?.code,'42501')
   // The recipient-side check also covers a committed alert from an independent background writer.
   sql(`select sectalk_private.st_v8_send_conversation_activity('${room}',null,'${owner.id}','room_activity',
-    '{"room_id":"${room}","mention_kind":"mention.user","priority":"high"}');`)
+    '{"room_id":"${room}","mention_kind":"mention.user","priority":"high"}');
+    insert into public.st_v6_task_notices(recipient,task_id,kind,due_at)
+      values('${owner.id}','${protectedTask}','due',now()+interval '8 days');`)
   const ordinaryCount=plainAccountEvents.length
   await post(ordinaryRoom,'Control after revocation')
   await waitFor(()=>plainAccountEvents.length>ordinaryCount,'ordinary account events after revocation')
   assert.equal(signedSessionEvents.length,previous)
+  assert.equal(reminders(plainAccountEvents).length,1)
+  assert.deepEqual(data(await taskUpdates(signed.client)).map(({task_id})=>task_id),[ordinaryTask])
   if(verifiedInbox) {
     for(const inbox of [verifiedInbox,passwordInbox]) {
       await notice(inbox,ordinaryNotice).waitFor()
@@ -228,7 +253,7 @@ try {
     }
     console.log('Passed live browser alerts in two isolated Inbox sessions, including provider revocation.')
   }
-  console.log('Passed native session routing, account isolation, room and channel alerts, protected draft sync, and provider revocation.')
+  console.log('Passed native session routing, account isolation, room and channel alerts, protected draft sync and planner reminders, and provider revocation.')
 } finally {
   await browser?.close()
   await Promise.allSettled(clients.map(client=>client.removeAllChannels()))
