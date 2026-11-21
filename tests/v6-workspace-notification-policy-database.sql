@@ -64,7 +64,7 @@ begin
   begin
     perform public.st_v6_workspace_notification_settings(other_workspace);
     raise exception 'An outsider read a workspace policy' using errcode='P0100';
-  exception when sqlstate 'P0001' then null; end;
+  exception when insufficient_privilege then null; end;
   perform set_config('request.jwt.claim.sub',admin_id::text,true);
   begin
     perform public.st_v6_set_workspace_notification_policy(workspace,array['dm'],60);

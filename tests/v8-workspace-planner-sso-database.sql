@@ -5,6 +5,7 @@ declare
   owner_session uuid:=gen_random_uuid(); sso_session uuid:=gen_random_uuid(); password_session uuid:=gen_random_uuid();
   workspace uuid; room uuid:=gen_random_uuid(); task uuid; event uuid; direct_chat uuid;
   room_task uuid:=gen_random_uuid(); direct_task uuid:=gen_random_uuid(); checklist uuid:=gen_random_uuid();
+  protected_notice bigint; ordinary_notice bigint; ordinary_topic text; signed_topic text; password_topic text;
   provider text:='custom:planner-sso-rollback'; domain text:='planner-sso.example.invalid';
   member_handle text:='planner_'||left(replace(actor::text,'-',''),12);
   owner_claim text:=jsonb_build_object('sub',owner_id,'session_id',owner_session,'role','authenticated','aal','aal2')::text;
@@ -62,6 +63,26 @@ begin
   perform set_config('request.jwt.claims',owner_claim,true);
   if public.st_v8_workspace_planner_policy(workspace,true)->>'required' is distinct from 'true' then
     raise exception 'Fresh owner could not enable planning SSO'; end if;
+  reset role;
+  ordinary_topic:='st:account:'||actor;
+  signed_topic:='st:workspace-session:'||actor||':'||sso_session;
+  password_topic:='st:workspace-session:'||actor||':'||password_session;
+  insert into public.st_v6_task_notices(recipient,task_id,kind,due_at) values(actor,room_task,'due',now())
+    returning id into protected_notice;
+  if not exists(select 1 from realtime.messages m where m.topic=signed_topic and m.event='category_alert' and m.payload->>'kind'='task.due')
+    or exists(select 1 from realtime.messages m where m.topic in (ordinary_topic,password_topic) and m.event='category_alert' and m.payload->>'kind'='task.due')
+    or sectalk_private.st_v6_web_push_allowed(actor,'task.due',room,null,null)
+    or (select tasks from sectalk_private.st_v6_notification_email_counts(actor,array['task'],now()-interval '1 hour',clock_timestamp()))<>0 then
+    raise exception 'Protected task reminder was misrouted or remained eligible for push or digest email';
+  end if;
+  insert into public.st_v6_task_notices(recipient,task_id,kind,due_at) values(actor,direct_task,'due',now())
+    returning id into ordinary_notice;
+  if not exists(select 1 from realtime.messages m where m.topic=ordinary_topic and m.event='category_alert' and m.payload->>'kind'='task.due')
+    or not sectalk_private.st_v6_web_push_allowed(actor,'task.due',null,direct_chat,null)
+    or (select tasks from sectalk_private.st_v6_notification_email_counts(actor,array['task'],now()-interval '1 hour',clock_timestamp()))<>1 then
+    raise exception 'Direct task delivery changed under workspace planning SSO';
+  end if;
+  set local role authenticated;
   perform set_config('request.jwt.claims',pass_claim,true);
   if not public.st_v8_workspace_planner_requires_sso(workspace)
     or not exists(select 1 from public.st_v2_members where workspace_id=workspace and user_id=actor)
@@ -70,10 +91,13 @@ begin
     or exists(select 1 from public.st_v4_checklist where id=checklist)
     or exists(select 1 from public.st_v6_tasks where id=room_task)
     or exists(select 1 from public.st_v6_task_audit where task_id=room_task)
+    or exists(select 1 from public.st_v6_task_notices where id=protected_notice)
+    or not exists(select 1 from public.st_v6_task_notices where id=ordinary_notice)
     or not exists(select 1 from public.st_v6_tasks where id=direct_task)
     or exists(select 1 from public.st_v6_search('Planner receipt sentinel','board') where id=task)
     or exists(select 1 from public.st_v6_search('Planner receipt sentinel','board','{}') where id=task) then
     raise exception 'Password session leaked protected planning data or lost membership/direct tasks'; end if;
+  perform public.st_v6_task_notice_read(protected_notice);
   begin
     perform public.st_v2_add_item(workspace,'event','Blocked event','',now());
     raise exception 'Password session wrote a protected event';
@@ -106,9 +130,14 @@ begin
     or not exists(select 1 from public.st_v2_items where id=event)
     or not exists(select 1 from public.st_v4_task_assignments where task_id=task and assignee=actor)
     or not exists(select 1 from public.st_v6_tasks where id=room_task)
+    or not exists(select 1 from public.st_v6_task_notices where id=protected_notice and read_at is null)
     or not exists(select 1 from public.st_v6_search('Planner receipt sentinel','board') where id=task)
     or not exists(select 1 from public.st_v6_search('Planner receipt sentinel','board','{}') where id=task) then
     raise exception 'Current provider session lost protected planning data'; end if;
+  perform public.st_v6_task_notice_read(protected_notice);
+  if not exists(select 1 from public.st_v6_task_notices where id=protected_notice and read_at is not null) then
+    raise exception 'Current provider session could not acknowledge the protected task notice';
+  end if;
   perform public.st_v4_task_change(task,'checklist.toggle',null,checklist,null,true);
   perform public.st_v2_complete_task(task,true);
   if not exists(select 1 from public.st_v4_checklist where id=checklist and completed)
@@ -120,6 +149,9 @@ begin
     raise exception 'Ordinary member could change the planning SSO policy'; end if;
   reset role;
   update auth.custom_oauth_providers set enabled=false where identifier=provider;
+  insert into public.st_v6_task_notices(recipient,task_id,kind,due_at) values(actor,room_task,'due',now()+interval '1 minute');
+  if (select count(*) from realtime.messages m where m.topic=signed_topic and m.event='category_alert' and m.payload->>'kind'='task.due')<>1 then
+    raise exception 'Disconnected provider still received new task reminders'; end if;
 
   set local role authenticated;
   if not public.st_v8_workspace_planner_requires_sso(workspace)
@@ -131,6 +163,11 @@ begin
   if not exists(select 1 from public.st_v2_items where id=task) then
     raise exception 'Planning access remained blocked after owner recovery'; end if;
   reset role;
+  insert into sectalk_private.st_v8_workspace_entry_sso(workspace,protocol,provider) values(workspace,'oidc',provider);
+  if sectalk_private.st_v6_web_push_allowed(actor,'task.completed',room,null,null)
+    or (select tasks from sectalk_private.st_v6_notification_email_counts(actor,array['task'],now()-interval '1 hour',clock_timestamp()))<>1 then
+    raise exception 'Workspace entry SSO alone allowed external task delivery';
+  end if;
   if has_function_privilege('anon','public.st_v8_workspace_planner_policy(uuid,boolean)','execute')
     or has_function_privilege('anon','public.st_v8_workspace_planner_requires_sso(uuid)','execute')
     or has_table_privilege('authenticated','sectalk_private.st_v8_workspace_planner_sso','select') then
