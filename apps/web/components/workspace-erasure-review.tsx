@@ -11,6 +11,8 @@ const labels:Record<string,string>={
   preservedVersions:'Preserved message versions',holds:'Legal hold records',meetings:'Meetings',
   meetingRecordings:'Meeting recording records',tenantKeyVersions:'Tenant key versions',tenantKeyState:'Tenant key state',
   artifactEnvelopes:'Protected artifact envelopes',
+  residencyRecoveryFileReceipts:'Regional recovery file receipts',residencyDestinationRetirements:'Regional destination retirement receipts',
+  residencySourceReactivations:'Regional source reactivation receipts',residencyRecoveryPaths:'Private regional recovery Storage paths',
   workspaceTaskReceipts:'Workspace task deletion receipts',channelPostReceipts:'Channel post deletion receipts',
   roomPostReceipts:'Room message deletion receipts',roomTaskReceipts:'Room task deletion receipts',batchReceipts:'Batch deletion receipts',
   roomThreadReceipts:'Complete thread deletion receipts',workspaceRegistrationReceipts:'Workspace file registration removal receipts',

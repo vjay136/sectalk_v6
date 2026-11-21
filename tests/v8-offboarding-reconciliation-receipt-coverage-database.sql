@@ -13,6 +13,8 @@ declare
   workspace_file uuid:=gen_random_uuid(); room_file uuid:=gen_random_uuid(); other_workspace uuid:=gen_random_uuid();
   file_sha text:=repeat('a',64); thread_plan uuid:=gen_random_uuid(); retained_hash text:=repeat('d',64);
   workspace_path text; room_path text;
+  residency_handoff uuid:=gen_random_uuid(); residency_review uuid:=gen_random_uuid();
+  residency_receipt uuid:=gen_random_uuid(); recovery_object uuid:=gen_random_uuid(); recovery_path text;
 
 begin
   foreach actor in array array[owner_id,reviewer_id] loop
@@ -100,6 +102,7 @@ begin
     or first_review#>>'{summary,verifiedDeletionReceipts,roomRegistrationReceipts}'<>'1'
     or first_review#>>'{summary,storageMetadata,workspaceRetiredPathsPresent}'<>'0'
     or first_review#>>'{summary,storageMetadata,roomRetiredPathsPresent}'<>'0'
+    or first_review#>>'{summary,storageMetadata,residencyRecoveryPaths}'<>'0'
     or first_review::text like '%'||room_path||'%'
     or first_review::text like '%'||workspace_copy::text||'%'
     or first_review::text like '%'||provider_version||'%' then
@@ -109,6 +112,40 @@ begin
     (first_review->>'plan')::uuid,first_review->>'sha256');
   if current_review->>'reviewedAt' is null or current_review->>'current'<>'true' then
     raise exception 'Independent reviewed snapshot was not current'; end if;
+  reset role;
+  recovery_path:=workspace_id::text||'/'||residency_handoff::text||'/'||workspace_file::text||'/'||file_sha;
+  insert into storage.objects(bucket_id,name,version,metadata) values
+    ('sectalk-residency-recovery',other_workspace::text||'/unrelated',gen_random_uuid()::text,'{"size":10}');
+  set local role authenticated;
+  current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
+  if current_review->>'current'<>'true' or current_review#>>'{summary,storageMetadata,residencyRecoveryPaths}'<>'0' then
+    raise exception 'An unrelated recovery path contaminated this workspace review'; end if;
+  reset role;
+  insert into storage.objects(id,bucket_id,name,version,metadata) values
+    (recovery_object,'sectalk-residency-recovery',recovery_path,provider_version,'{"size":10}');
+  set local role authenticated;
+  current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
+  if current_review->>'current'<>'false' or current_review#>>'{summary,storageMetadata,residencyRecoveryPaths}'<>'1'
+    or current_review::text like '%'||recovery_path||'%' or current_review::text like '%'||recovery_object::text||'%' then
+    raise exception 'An orphaned regional recovery object must stale the review without exposing its path or id'; end if;
+  reset role;
+  insert into sectalk_private.st_v8_residency_write_handoffs(workspace,approval,handoff,source_project,destination_project,phase)
+    values(workspace_id,export_id,residency_handoff,'fixture-source','fixture-destination','restored');
+  insert into sectalk_private.st_v8_residency_source_file_copies(handoff,file,review,sha256,bytes,object_id,object_version)
+    values(residency_handoff,workspace_file,residency_review,file_sha,10,recovery_object,provider_version);
+  insert into sectalk_private.st_v8_residency_retired_destinations(workspace,handoff,approval,source_project,destination_project,
+    review,review_sha256,plan_sha256,owner,reviewer) values(workspace_id,residency_handoff,export_id,'fixture-source',
+      'fixture-destination',residency_review,file_sha,file_sha,owner_id,reviewer_id);
+  insert into sectalk_private.st_v8_residency_source_reactivations(handoff,workspace,destination_receipt,source_evidence,
+    source_digest,proof_digest,actor) values(residency_handoff,workspace_id,residency_receipt,gen_random_uuid(),file_sha,file_sha,owner_id);
+  set local role authenticated;
+  current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
+  if current_review#>>'{summary,nativeRows,residencyRecoveryFileReceipts}'<>'1'
+    or current_review#>>'{summary,nativeRows,residencyDestinationRetirements}'<>'1'
+    or current_review#>>'{summary,nativeRows,residencySourceReactivations}'<>'1'
+    or current_review#>>'{summary,workspaceRootDependencies,unclassifiedConstraints}'<>'0'
+    or current_review::text like '%'||residency_receipt::text||'%' then
+    raise exception 'The residency receipt census is missing, unclassified or exposed'; end if;
   reset role;
   insert into storage.objects(bucket_id,name,version,metadata) values
     ('sectalk-workspace-files',workspace_path,gen_random_uuid()::text,'{"size":10}'),
