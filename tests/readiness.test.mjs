@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { checkReadiness, readinessResponse } from '../apps/web/lib/readiness.ts'
+import { createClient } from '@supabase/supabase-js'
+import { checkReadiness, checkSignupServiceReadiness, readinessResponse } from '../apps/web/lib/readiness.ts'
 import { hostedSignup, signupConfiguration } from '../apps/web/lib/signup-configuration.mjs'
+import { signupFetch } from '../apps/web/lib/signup-transport.mjs'
 
 const config={url:'https://database.example.invalid',key:'publishable-key'}
 
@@ -18,6 +20,8 @@ test('hosted signup requires its server credential and a valid HTTPS confirmatio
   assert.equal(response.status,503)
   assert.deepEqual(await response.json(),{status:'not_ready'})
   assert.equal(signupConfiguration(request,{...env,SECTALK_SIGNUP_ADMISSION_SERVICE_KEY:' ' }),null)
+  assert.equal(signupConfiguration(request,{...env,SECTALK_SIGNUP_ADMISSION_SERVICE_KEY:config.key}),null)
+  assert.equal(signupConfiguration(request,{...env,SECTALK_SIGNUP_ADMISSION_SERVICE_KEY:'sb_publishable_different'}),null)
   assert.equal(signupConfiguration(request,{...env,SECTALK_AUTH_RISK_SERVICE_KEY:'synthetic-workflow-key'})?.redirect,
     origin+'/auth/confirm')
   const keyed={...env,SECTALK_SIGNUP_ADMISSION_SERVICE_KEY:'synthetic-signup-key'}
@@ -48,6 +52,41 @@ test('uses the correct schema check for separately deployed services',async()=>{
       assert.deepEqual(JSON.parse(options.body),{p_surface:service})
       return Response.json(true)
     },service),true)
+  }
+})
+
+test('signup readiness verifies the credential without issuing a signup admission permit',async()=>{
+  const service={...config,key:'sb_secret_fixture'}
+  const ready=await checkSignupServiceReadiness(service,async(url,options)=>{
+    assert.equal(url.pathname,'/rest/v1/rpc/st_v8_signup_service_ready')
+    assert.deepEqual(options.headers,{apikey:service.key,'Content-Type':'application/json'})
+    assert.deepEqual(JSON.parse(options.body),{})
+    return Response.json(true)
+  })
+  assert.equal(ready,true)
+  assert.equal(await checkSignupServiceReadiness(service,async()=>Response.json(true,{status:401})),false)
+})
+
+test('signup transport uses the modern key via apikey for both Auth and PostgREST',async()=>{
+  const modernKey='sb_secret_fixture'
+  const requests=[]
+  const client=createClient(config.url,modernKey,{
+    auth:{persistSession:false,autoRefreshToken:false},
+    global:{fetch:signupFetch(modernKey,async(input,options)=>{
+      assert.equal(options.headers.get('apikey'),modernKey)
+      assert.equal(options.headers.get('authorization'),null)
+      assert.equal(options.redirect,'error')
+      requests.push(new URL(input).pathname)
+      return Response.json(true)
+    })},
+  })
+  await client.rpc('st_v8_signup_service_ready')
+  await client.auth.admin.createUser({email:'fixture@example.invalid'})
+  assert.deepEqual(requests,['/rest/v1/rpc/st_v8_signup_service_ready','/auth/v1/admin/users'])
+  for (const [key,bearer] of [['legacy-token','legacy-token'],[modernKey,'different-token']]) {
+    await signupFetch(key,async(_,options)=>{
+      assert.equal(options.headers.get('authorization'),`Bearer ${bearer}`)
+    })(config.url,{headers:{Authorization:`Bearer ${bearer}`}})
   }
 })
 

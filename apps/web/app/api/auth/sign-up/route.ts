@@ -4,6 +4,7 @@ import {readBoundedText} from '../../../../lib/request-body'
 import {isBreachedPassword} from '../../../../lib/breached-password'
 import {signupConfiguration} from '../../../../lib/signup-configuration.mjs'
 import {signupPasswordHash} from '../../../../lib/signup-password.mjs'
+import {signupFetch} from '../../../../lib/signup-transport.mjs'
 
 export const runtime='nodejs'
 const headers={'Cache-Control':'no-store'}
@@ -36,7 +37,7 @@ export async function POST(request:Request) {
     const ip=process.env.VERCEL==='1'?request.headers.get('x-vercel-forwarded-for'):null
     const nativeHeaders:Record<string,string>={}
     if (ip&&isIP(ip)) nativeHeaders['X-Forwarded-For']=ip
-    const admission=createClient(project,serviceKey,{auth})
+    const admission=createClient(project,serviceKey,{auth,global:{fetch:signupFetch(serviceKey)}})
     const result=await admission.rpc('st_v7_signup_admission',{
       p_email:email,p_ip:ip&&isIP(ip)?ip:null,p_invite:input.invite??null,
       p_challenge:input.challenge??null,p_solution:input.solution??null,p_resend:resend,
@@ -71,7 +72,7 @@ export async function POST(request:Request) {
         return failure(created.error.status===429?429:503)
       }
     }
-    const client=createClient(upstream,key,{auth,global:{headers:nativeHeaders}})
+    const client=createClient(upstream,key,{auth,global:{headers:nativeHeaders,fetch:signupFetch(key)}})
     const delivery=await client.auth.resend({type:'signup',email,options:{emailRedirectTo:redirect}})
     if (delivery.error) {
       const status=delivery.error.status===429?429:503

@@ -947,6 +947,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v8_scoped_file_command(text, uuid, uuid, uuid, text, uuid, text, integer, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v8_scoped_file_context(text, uuid)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role`, `sectalk_private.st_v6_room_role` |
 | `public.st_v8_set_channel_mode_policy(uuid, boolean)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
+| `public.st_v8_signup_service_ready()` | `service_role` | invoker | Service credential | `Effective service_role execute grant` |
 | `public.st_v8_stage_residency_content(uuid, uuid, text, uuid, uuid, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v8_standard_room_requires_sso(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v8_room_membership_role`, `sectalk_private.st_v8_standard_room_session_allowed` |
 | `public.st_v8_start_workspace_trial_for_session(uuid, uuid, uuid, text, boolean)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
