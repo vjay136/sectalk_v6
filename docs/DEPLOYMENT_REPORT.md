@@ -74,6 +74,8 @@ The v6 Supabase dashboard confirmed that the pilot origin is saved as Site URL a
 
 After SMTP setup, a fresh hosted Web signup still returned “We couldn’t send a verification email.” The corresponding period in the v6 Auth log showed configuration reloads without a signup mail request. The Vercel pilot's Production settings lacked both `SECTALK_SIGNUP_ADMISSION_SERVICE_KEY` and its fallback, `SECTALK_AUTH_RISK_SERVICE_KEY`. The Web signup API checks for one of these server-only credentials before calling Supabase Auth. The pilot needs a fresh v6 signup secret and a redeploy before retesting. The selected Vercel workspace listed the v6 Web pilot as its only v6 project.
 
+After the owner saved the Production variable, Vercel rebuilt the private pilot from the same `55aa6b1` commit, and [the redeployment](https://vercel.com/silent-soldier-vjay/sectalk-v6-pilot/BJxvJfe7cLbcDSAdZMJSUcsDRcLy) reached Ready. Both browser signup attempts reached the v6 Supabase Gateway as server requests to the signup admission RPC. The Gateway returned HTTP 401 with `UNAUTHORIZED_INVALID_API_KEY` before Auth or SMTP ran. Replace the value with the raw secret key from the v6 project's API Keys page and redeploy before rerunning the real-inbox checks.
+
 ## Friends pilot acceptance
 
 The Free-tier registry covers 234 features. The five optional capabilities listed above stay unavailable for this pilot. Test the deployed applications with separate browser sessions and real inboxes before sharing invitations.
