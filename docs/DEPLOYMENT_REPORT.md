@@ -6,6 +6,8 @@ Publish future v6 updates to `main` in the separate [SecTalk v6 GitHub repositor
 
 Run `npm run verify:registry -- --release-free` to check the 234 required rows for the Free-tier source. The full-scope gate is `npm run verify:registry -- --release` and requires all 239 rows. Both release gates scan the Web, Admin and Workers browser assets. The structural registry check runs separately as `npm run verify:registry`.
 
+Local production builds passed for Web, Admin and Workers with loopback fixture settings. The isolated Web build passed its browser asset scan. The Free-tier gate passed the three project asset scans. A synthetic full-gate check verified that a server-only value in a Workers browser asset blocks release and the error redacts the value.
+
 | Optional in the Free-tier scope | Current boundary |
 | --- | --- |
 | AUTH-05 Enterprise SSO | Native OIDC and signed SAML have local evidence. Configure enterprise providers only after hosted gateway verification. |

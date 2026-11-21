@@ -17,10 +17,11 @@ const destination={
   users:[],
 }
 const workspace=randomUUID(),room=randomUUID(),anchor=randomUUID(),post=randomUUID(),handoff=randomUUID(),approval=randomUUID()
-const reply=randomUUID()
+const reply=randomUUID(),anchorReply=randomUUID()
 const cell=randomUUID(),plan=randomBytes(32).toString('hex'),secret=randomBytes(32).toString('hex')
 const roomName='Reviewed project room',body='Recovered owner room message '+post.slice(0,8)
 const replyBody='Recovered owner thread reply '+reply.slice(0,8)
+const anchorReplyBody='Recovered reply to imported history '+anchorReply.slice(0,8)
 let browser
 
 function sql(site,input){
@@ -57,7 +58,8 @@ function common(site,owner,reviewer,phase){
       values('${room}','${workspace}','${roomName}','${phase==='held'?'public':'private'}','blank','${owner.id}',
         '${phase==='held'?'internal':'confidential'}');
     insert into public.st_v6_room_members(room_id,user_id,role) values('${room}','${owner.id}','owner'),('${room}','${reviewer.id}','member');
-    insert into public.st_v6_room_posts(room_id,id,sender,body,kind) values('${room}','${anchor}','${owner.id}','Previously approved history','message');
+    insert into public.st_v6_room_posts(room_id,id,sender,body,kind,created_at)
+      values('${room}','${anchor}','${reviewer.id}','Previously approved history','message','2025-01-01T00:00:00Z');
     insert into sectalk_private.st_v8_residency_write_handoffs(workspace,approval,handoff,source_project,destination_project,phase,changed_at)
       values('${workspace}','${approval}','${handoff}','${source.project}','${destination.project}','${phase}',now()-interval '1 minute');
     insert into sectalk_private.st_v8_residency_rollback_manifest_admissions
@@ -95,10 +97,13 @@ try{
   const {chromium}=await import(process.env.SECTALK_PLAYWRIGHT_MODULE||'playwright')
   browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER})
   const email='rr_owner_'+randomUUID().slice(0,8)+'@example.invalid'
+  const rootAuthorEmail='rr_root_'+randomUUID().slice(0,8)+'@example.invalid'
   const [sourceOwner,sourceReviewer,destinationOwner,destinationReviewer]=await Promise.all([
-    actor(source,'rr_so',email),actor(source,'rr_sr'),actor(destination,'rr_do',email),actor(destination,'rr_dr'),
+    actor(source,'rr_so',email),actor(source,'rr_sr',rootAuthorEmail),actor(destination,'rr_do',email),
+    actor(destination,'rr_dr',rootAuthorEmail),
   ])
   assert.notEqual(sourceOwner.id,destinationOwner.id)
+  assert.notEqual(sourceReviewer.id,destinationReviewer.id)
   common(source,sourceOwner,sourceReviewer,'held')
   common(destination,destinationOwner,destinationReviewer,'activated')
   sql(source,`begin;
@@ -109,6 +114,12 @@ try{
       from sectalk_private.st_v8_content_export_records('${workspace}','${sourceOwner.id}','${sourceReviewer.id}',
         'room_message','${room}','${anchor}') e;
     ${hold('source')} commit;`)
+  const approvedRoot=await recoveredRow(sourceOwner,anchor)
+  assert.equal(approvedRoot.sender,sourceReviewer.id)
+  const approvedRootDigest=sql(source,`select sha256 from sectalk_private.st_v8_content_export_entries
+    where (export_id,kind,scope_id,record_id)=('${approval}','room_message','${room}','${anchor}');`)
+  assert.match(approvedRootDigest,/^[a-f0-9]{64}$/)
+  assert.deepEqual(await recoveredRow(destinationOwner,anchor),{...approvedRoot,sender:destinationReviewer.id})
   sql(destination,`begin;
     insert into sectalk_private.st_v8_residency_cells values('${cell}','eu','rr-${cell}','Disposable room recovery','fixture',null);
     insert into sectalk_private.st_v8_residency_content_admissions values('${cell}','${workspace}','${source.project}',
@@ -117,13 +128,17 @@ try{
       values('${cell}','${workspace}','${source.project}','${approval}','[]');
     insert into sectalk_private.st_v8_residency_room_imports(cell,workspace,source_project,approval,room,room_name,actor,evidence_count,imported_at)
       values('${cell}','${workspace}','${source.project}','${approval}','${room}','${roomName}','${destinationOwner.id}',1,now()-interval '2 minutes');
+    insert into sectalk_private.st_v8_residency_room_history(workspace,approval,room,post,actor,record_digest,imported_at)
+      values('${workspace}','${approval}','${room}','${anchor}','${destinationReviewer.id}','${approvedRootDigest}',now()-interval '2 minutes');
     insert into sectalk_private.st_v8_residency_rollback_baselines(handoff,snapshot)
       values('${handoff}',sectalk_private.st_v8_residency_rollback_snapshot('${workspace}'));
     commit;`)
   data(await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:post,p_body:body}))
   data(await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:reply,p_body:replyBody,p_parent:post}))
+  data(await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:anchorReply,p_body:anchorReplyBody,p_parent:anchor}))
   const original=await recoveredRow(destinationOwner)
   const originalReply=await recoveredRow(destinationOwner,reply)
+  const originalAnchorReply=await recoveredRow(destinationOwner,anchorReply)
   sql(destination,hold('destination'))
 
   const destinationOwnerPage=await pageFor(destination,destinationOwner)
@@ -145,9 +160,16 @@ try{
   assert.equal(download.suggestedFilename(),'sectalk-room-message-recovery-'+workspace+'.json')
   const packetBytes=await readFile(await download.path())
   const wire=JSON.parse(JSON.parse(packetBytes.toString()).payload)
+  const replies=[{id:reply,room,body:replyBody,parent:post},{id:anchorReply,room,body:anchorReplyBody,parent:anchor}]
+    .sort((left,right)=>left.id.localeCompare(right.id))
   assert.deepEqual(wire.records.map(({id,room,body,parent})=>({id,room,body,parent})),[
-    {id:post,room,body,parent:undefined},{id:reply,room,body:replyBody,parent:post},
+    {id:post,room,body,parent:undefined},...replies,
   ])
+  const proof=wire.records.find(record=>record.id===anchorReply).existingParent
+  assert.equal(proof.approvedDigest,approvedRootDigest)
+  assert.equal(proof.destinationAuthor,destinationReviewer.id)
+  assert.match(proof.baselineDigest,/^[a-f0-9]{64}$/)
+  assert.match(proof.authorTag,/^[a-f0-9]{64}$/)
 
   const sourceOwnerPage=await pageFor(source,sourceOwner)
   await recovery(sourceOwnerPage).getByLabel('Signed room message recovery file',{exact:true}).setInputFiles({
@@ -156,7 +178,7 @@ try{
   await submit(recovery(sourceOwnerPage),'Confirm room message recovery workspace ID','Stage room message recovery file')
   await recovery(sourceOwnerPage).getByText('The original independent source reviewer can apply the staged room messages.',{exact:true}).waitFor()
   assert.equal(await recovery(sourceOwnerPage).getByRole('button',{name:'Apply reviewed room messages',exact:true}).count(),0)
-  assert.equal(data(await sourceOwner.api.from('st_v6_room_posts').select('id').eq('room_id',room).in('id',[post,reply])).length,0)
+  assert.equal(data(await sourceOwner.api.from('st_v6_room_posts').select('id').eq('room_id',room).in('id',[post,reply,anchorReply])).length,0)
 
   const sourceReviewerPage=await pageFor(source,sourceReviewer)
   const reviewerPanel=recovery(sourceReviewerPage)
@@ -166,16 +188,20 @@ try{
   await stagedReply.getByText(roomName,{exact:true}).waitFor()
   assert.match(await stagedReply.textContent(),/Thread reply/)
   await stagedReply.getByText(post,{exact:true}).waitFor()
+  const stagedAnchorReply=reviewerPanel.getByRole('listitem').filter({hasText:anchorReplyBody})
+  await stagedAnchorReply.getByText(anchor,{exact:true}).waitFor()
   await submit(reviewerPanel,'Confirm room message recovery workspace ID','Apply reviewed room messages')
   await reviewerPanel.getByText('Reviewed room messages were replayed. Workspace writes remain held.',{exact:true}).waitFor()
   assert.deepEqual(await recoveredRow(sourceOwner),{...original,sender:sourceOwner.id})
   assert.deepEqual(await recoveredRow(sourceOwner,reply),{...originalReply,sender:sourceOwner.id,parent_id:post})
+  assert.deepEqual(await recoveredRow(sourceOwner,anchorReply),{...originalAnchorReply,sender:sourceOwner.id,parent_id:anchor})
+  assert.deepEqual(await recoveredRow(sourceOwner,anchor),approvedRoot)
   assert.equal((await sourceOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:randomUUID(),p_body:'Ordinary held write'})).error?.code,'PT423')
   assert.equal((await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:randomUUID(),p_body:'Ordinary held write'})).error?.code,'PT423')
   await sourceReviewerPage.reload()
   await sourceReviewerPage.getByRole('region',{name:'Source rollback verification',exact:true})
-    .getByText('2 of 2 reviewed changes verified at the source. Workspace writes are held.',{exact:true}).waitFor()
-  console.log('Edge verified signed room thread recovery, the paired reply marker, exact native parent linkage and both write holds.')
+    .getByText('3 of 3 reviewed changes verified at the source. Workspace writes are held.',{exact:true}).waitFor()
+  console.log('Edge verified signed replies to new and imported roots, exact native parent linkage, unchanged original history and both write holds.')
 } finally {
   await browser?.close()
   for(const site of [source,destination]){
