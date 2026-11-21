@@ -67,12 +67,16 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     setConnection('connecting')
   }, [])
 
-  const applyCall = useCallback((next: Call | null) => {
+  const applyCall = useCallback((next: Call | null, fromRefresh = false) => {
     const previous = current.current
     if (next && next.status === 'active' && answering.current === next.id && owned.current !== next.id) return
     const visible = next && next.status !== 'ended' && Date.parse(next.expires_at) > Date.now() &&
       !stopped.current.has(next.id) &&
       (owned.current === next.id || (next.callee === user && next.status === 'ringing')) ? next : null
+    if (fromRefresh && (previous?.id !== visible?.id || previous?.status !== visible?.status ||
+      (next?.status === 'ended' && owned.current === next.id))) {
+      setHistoryVersion(value => value + 1)
+    }
     if (!visible && previous?.status === 'ringing' && next?.id === previous.id && !stopped.current.has(next.id)) {
       if (previous.callee === user) {
         const message = next.status === 'active' ? 'Call answered on another device.'
@@ -95,16 +99,16 @@ export function useCalling(user: string, notice: (message: string) => void, hint
 
   const refresh = useCallback(async () => {
     const version = lastRead.current
-    const waiting = current.current
+    const trackedId = current.current?.id ?? owned.current
     const { data, error } = await db!.from('st_calls').select('*')
       .or('caller.eq.' + user + ',callee.eq.' + user)
       .in('status', ['ringing', 'active']).gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false }).limit(1)
     if (error || lastRead.current !== version || !mounted.current) return
-    if (!data?.length && waiting?.status === 'ringing') {
-      const last = await db!.from('st_calls').select('*').eq('id', waiting.id).maybeSingle()
-      if (!last.error && lastRead.current === version && mounted.current) applyCall(last.data as Call | null)
-    } else applyCall((data?.[0] ?? null) as Call | null)
+    if (!data?.length && trackedId) {
+      const last = await db!.from('st_calls').select('*').eq('id', trackedId).maybeSingle()
+      if (!last.error && lastRead.current === version && mounted.current) applyCall(last.data as Call | null, true)
+    } else applyCall((data?.[0] ?? null) as Call | null, true)
   }, [user, applyCall])
 
   const finish = useCallback(async (reason: 'end'|'busy') => {
@@ -121,7 +125,10 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     cleanupMedia()
     const { data, error } = await db!.rpc('st_v6_call_action', { p_call: active.id, p_action: action, p_device: device })
     if (error) notice('The call closed here. The other participant may need to hang up.')
-    else if (data === 'answered_elsewhere') notice('Call answered on another device.')
+    else if (mounted.current) {
+      setHistoryVersion(value => value + 1)
+      if (data === 'answered_elsewhere') notice('Call answered on another device.')
+    }
   }, [cleanupMedia, device, notice, user])
   const end = useCallback(() => finish('end'), [finish])
   const markBusy = useCallback(() => finish('busy'), [finish])
