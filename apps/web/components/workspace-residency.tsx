@@ -10,7 +10,7 @@ import {WorkspaceResidencySourcePause} from './workspace-residency-source-pause'
 type Cell={id:string;region:'us'|'eu'|'apac';label:string;environment:'deployment'|'fixture'}
 type Placement={id:string;region:Cell['region'];label:string;requestedAt:string;state:keyof typeof placementStates}
 type Status={eligible:boolean;request:Placement|null;cells:Cell[]}
-type TaskImport={approval:string;manifestSha256:string;taskCount:number;importedAt:string|null}
+type TaskImport={approval:string;manifestSha256:string;taskCount:number;eventCount?:number;importedAt:string|null}
 const regions={us:'United States',eu:'Europe',apac:'Asia Pacific'}
 const placementStates={
   pending_verification:'Target verification pending',
@@ -33,6 +33,9 @@ export function WorkspaceResidency({workspace,disabled,authorize}:{
   const [roomsRevision,setRoomsRevision]=useState(0)
   const [confirmation,setConfirmation]=useState('')
   const [importError,setImportError]=useState('')
+  const eventCount=taskImport?.eventCount??0
+  const importTitle=eventCount?'Approved workspace Board import':'Approved workspace task import'
+  const importSummary=eventCount?`${taskImport?.taskCount??0} tasks and ${eventCount} calendar event${eventCount===1?'':'s'}`:`${taskImport?.taskCount??0} workspace tasks`
   const load=useCallback(async(signal?:AbortSignal)=>{
     const request=db!.rpc('st_v8_workspace_residency',{p_workspace:workspace})
     const result=await (signal?request.abortSignal(signal):request)
@@ -62,7 +65,7 @@ export function WorkspaceResidency({workspace,disabled,authorize}:{
         if(error)throw error
         setTaskImport(data)
         setConfirmation('')
-      } catch(cause) {setImportError(formatError(cause,'Could not import the approved workspace tasks.'))}
+      } catch(cause) {setImportError(formatError(cause,'Could not import the approved Board records.'))}
       finally {setBusy(false)}
     })
   }
@@ -110,15 +113,15 @@ export function WorkspaceResidency({workspace,disabled,authorize}:{
         <button className="secondary" disabled={!target||busy||disabled}>Request dedicated placement</button>
       </form>
       :<p>No dedicated target is authorized for this workspace.</p>)}
-    {!!taskImport?.taskCount&&<section aria-label="Approved workspace task import">
-      <h4>Approved workspace task import</h4>
+    {taskImport&&!!(taskImport.taskCount+eventCount)&&<section aria-label={importTitle}>
+      <h4>{importTitle}</h4>
       <p>Approved manifest <code>{taskImport.manifestSha256}</code></p>
-      {taskImport.importedAt?<p role="status">{taskImport.taskCount} workspace tasks imported. Open Board to view them.</p>:
+      {taskImport.importedAt?<p role="status">{importSummary} imported. Open Board to view them.</p>:
         <form className="release-form" onSubmit={importTasks}>
-          <p>{taskImport.taskCount} approved tasks are ready. They will record your account as the importer.</p>
+          <p>{importSummary} are ready. They will record your account as the importer.</p>
           <label>Confirm destination workspace ID<input autoComplete="off" value={confirmation}
             onChange={event=>setConfirmation(event.target.value)} disabled={disabled||busy} required/></label>
-          <button className="secondary" disabled={disabled||busy||confirmation!==workspace}>Import approved tasks</button>
+          <button className="secondary" disabled={disabled||busy||confirmation!==workspace}>{eventCount?'Import approved Board records':'Import approved tasks'}</button>
         </form>}
       {importError&&<p role="alert">{importError}</p>}
     </section>}

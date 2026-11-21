@@ -134,8 +134,9 @@ begin
   perform public.st_v8_offboarding_content(wid,'approve',content_id,wid::text);
   coverage:=public.st_v8_residency_source_coverage(wid,content_id);
   if coverage->'unsupportedBoardItems' is distinct from
-    '[{"kind":"announcement","observed":1,"capped":false},{"kind":"event","observed":1,"capped":false},{"kind":"note","observed":501,"capped":true}]'::jsonb
-    or coverage->>'approvedRecords' is distinct from '30'
+    '[{"kind":"announcement","observed":1,"capped":false},{"kind":"note","observed":501,"capped":true}]'::jsonb
+    or not (coverage->'families' @> '[{"kind":"workspace_event","observed":1,"approved":1,"current":1}]'::jsonb)
+    or coverage->>'approvedRecords' is distinct from '31'
     or coverage::text like '%Private source%' or coverage::text like '%Foreign calendar%' then
     raise exception 'Unexpected Board coverage or manifest count'; end if;
   perform set_config('request.jwt.claims',claims->>outsider_id::text,true);
@@ -155,7 +156,7 @@ begin
   page:=public.st_v8_offboarding_content(wid,'page',content_id,wid::text);
   again:=public.st_v8_offboarding_content(wid,'page',content_id,wid::text,25);
   if jsonb_array_length(page->'records')<>25 or page->>'next'<>'25'
-    or jsonb_array_length(again->'records')<>5 or again->>'next' is not null
+    or jsonb_array_length(again->'records')<>6 or again->>'next' is not null
     or page->>'manifestSha256' is distinct from again->>'manifestSha256'
     or page::text like '%Private channel stays private%' or page::text like '%Foreign channel must stay private%'
     or page::text not like '%Shared room root message%' or page::text not like '%Shared room reply%'

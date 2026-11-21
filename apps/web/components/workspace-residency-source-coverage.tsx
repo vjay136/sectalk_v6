@@ -3,7 +3,7 @@
 import {useState} from 'react'
 import {db,formatError} from '../lib/data'
 
-const labels={workspace_task:'Workspace tasks',room_task:'Room tasks',channel_message:'Channel messages',room_message:'Room messages',
+const labels={workspace_task:'Workspace tasks',workspace_event:'Workspace calendar events',room_task:'Room tasks',channel_message:'Channel messages',room_message:'Room messages',
   workspace_file:'Workspace files',room_file:'Room files'}
 type Family={kind:keyof typeof labels;observed:number;approved:number;current:number;unapproved:number;drifted:number;capped:boolean}
 const boardLabels={event:'Workspace events',note:'Workspace notes',announcement:'Workspace announcements'}
@@ -29,7 +29,7 @@ export function WorkspaceResidencySourceCoverage({workspace,approval}:{workspace
 
   return <details className="release-section">
     <summary>Source migration coverage</summary>
-    <p>Compare the six supported record types with the approved source manifest.</p>
+    <p>Compare supported records with the approved source manifest.</p>
     <button className="secondary" type="button" disabled={busy} onClick={()=>void check()}>Check source coverage</button>
     {error&&<p role="alert">{error}</p>}
     {coverage&&<>

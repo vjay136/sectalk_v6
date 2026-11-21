@@ -26,6 +26,7 @@ const checkRoomTaskImport = process.env.SECTALK_RESIDENCY_ROOM_TASK_QA === '1'
 const checkDestinationComparison = process.env.SECTALK_RESIDENCY_COMPARISON_QA === '1'
 const checkComparisonReceipt = process.env.SECTALK_RESIDENCY_COMPARISON_RECEIPT_QA === '1'
 const checkBothFileScopes = process.env.SECTALK_RESIDENCY_BOTH_FILE_SCOPES_QA === '1'
+const checkBoardEvents = process.env.SECTALK_RESIDENCY_BOARD_EVENT_QA === '1'
 const checkWriteHandoff = process.env.SECTALK_RESIDENCY_WRITE_HANDOFF_QA === '1'
 const checkCutover = process.env.SECTALK_RESIDENCY_ACTIVATION_QA === '1'
 const checkActiveRoute = process.env.SECTALK_RESIDENCY_ACTIVE_ROUTE_QA === '1'
@@ -82,6 +83,7 @@ const cell = randomUUID()
 const installationNonce = randomUUID()
 let approval = randomUUID()
 const claim = randomUUID()
+const boardEvent=randomUUID()
 const fileId = randomUUID()
 const fileName = 'residency-approved.txt'
 const fileBytes = Buffer.from('Approved source file '+randomUUID())
@@ -89,7 +91,7 @@ const workspaceFile={id:randomUUID(),bytes:Buffer.from('Approved workspace file 
 const rollbackFile={id:randomUUID(),bytes:Buffer.from('New reviewed recovery file '+randomUUID()),name:'reviewed-rollback.txt'}
 let rollbackStagingPath
 const expectedRecords = (sourceApp ? 27 : 26)+(checkChannelImport ? 4 : 0)+(checkRoomImport ? 3 : 0)+(checkChannelHistory?1:0)+
-  (checkRoomTaskImport?3:0)+(checkRoomHistory?2:0)+(checkBothFileScopes?1:0)+(checkExistingChannelReplay?1:0)
+  (checkRoomTaskImport?3:0)+(checkRoomHistory?2:0)+(checkBothFileScopes?1:0)+(checkExistingChannelReplay?1:0)+(checkBoardEvents?1:0)
 assert.ok(!checkRoomHistory||(checkRoomMemberImport&&checkChannelHistory))
 const roomRoot=randomUUID(),roomReply=randomUUID()
 const rootBody='Approved room thread restored from source',replyBody='Approved reply restored from source'
@@ -177,6 +179,11 @@ try {
       from generate_series(1,26) i;
     insert into public.st_v2_items(workspace_id,kind,title,created_by)
       values('${unrelated}','task','Unrelated tenant task','${outsider.id}');`)
+  if(checkBoardEvents) {
+    sourceSql(`insert into public.st_v2_items(id,workspace_id,kind,title,details,due_at,created_by)
+      values('${boardEvent}','${workspace}','event','Approved calendar event','Event details',
+        '2026-12-01T08:00:00Z','${owner.id}');`)
+  }
   if(checkChannelImport) {
     sourceGeneral=sourceSql(`select id from public.st_v2_channels where workspace_id='${workspace}' and name='general';`)
     channel=data(await owner.client.rpc('st_v2_create_channel',{p_workspace:workspace,p_name:'approved-channel'}))
@@ -618,21 +625,27 @@ try {
   targetSql(`delete from public.st_v2_items where workspace_id='${targetForeignWorkspace}' and id='${conflictId}';`)
   if (page) {
     await page.getByRole('button', { name: 'Organization settings', exact: true }).click()
-    const panel = page.getByRole('region', { name: 'Approved workspace task import', exact: true })
+    const panel = page.getByRole('region', { name: checkBoardEvents?'Approved workspace Board import':'Approved workspace task import', exact: true })
     await panel.getByLabel('Confirm destination workspace ID').fill(workspace)
-    await panel.getByRole('button', { name: 'Import approved tasks' }).click()
-    await panel.getByRole('status').getByText('26 workspace tasks imported.', { exact: false }).waitFor()
+    await panel.getByRole('button', { name: checkBoardEvents?'Import approved Board records':'Import approved tasks' }).click()
+    await panel.getByRole('status').getByText(checkBoardEvents?'26 tasks and 1 calendar event imported.':'26 workspace tasks imported.', { exact: false }).waitFor()
     await page.getByRole('button', { name: 'Board', exact: true }).click()
     await page.getByText('Selected synthetic task 1', { exact: true }).waitFor()
+    if(checkBoardEvents) {
+      await page.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Calendar',exact:true}).click()
+      await page.locator('select[name="workspace"]').selectOption(workspace)
+      await page.getByText('Approved calendar event',{exact:true}).waitFor()
+    }
     console.log('Edge claimed the approved destination, imported the tasks through Organization settings, and showed them on Board.')
   }
   const [imported, retried] = await Promise.all([importTasks(verifiedDestination), importTasks(verifiedDestination)]).then(results => results.map(data))
   assert.deepEqual(imported, retried)
   assert.equal(imported.taskCount, 26)
+  if(checkBoardEvents)assert.equal(imported.eventCount,1)
   assert.equal(imported.manifestSha256, manifest.manifestSha256)
   assert.ok(imported.importedAt)
   const liveTasks = data(await verifiedDestination.from('st_v2_items')
-    .select('id,title,details,due_at,completed,created_by,created_at').eq('workspace_id', workspace))
+    .select('id,title,details,due_at,completed,created_by,created_at').eq('workspace_id', workspace).eq('kind','task'))
   const expected = new Map(records.map(item => [item.id, JSON.parse(item.json)]))
   assert.equal(liveTasks.length, 26)
   for (const item of liveTasks) {
@@ -645,6 +658,20 @@ try {
     assert.equal(item.created_by, destinationOwner.id)
   }
   assert.deepEqual(data(await verifiedForeign.from('st_v2_items').select('id').eq('workspace_id', workspace)), [])
+  if(checkBoardEvents) {
+    const event=data(await verifiedDestination.from('st_v2_items').select('kind,title,details,due_at,completed,created_by,created_at')
+      .eq('id',boardEvent).single())
+    const approved=expected.get(boardEvent)
+    assert.deepEqual(event,{kind:'event',title:approved.title,details:approved.details,due_at:approved.dueAt,
+      completed:false,created_by:destinationOwner.id,created_at:approved.createdAt})
+    const compare=()=>verifiedDestination.rpc('st_v8_residency_compare_destination',{p_workspace:workspace,p_approval:approval})
+    const eventResult=result=>data(result).records.find(row=>row.kind==='workspace_event'&&row.id===boardEvent)
+    assert.equal(eventResult(await compare())?.status,'matched')
+    targetSql(`update public.st_v2_items set due_at=due_at+interval '1 hour' where id='${boardEvent}';`)
+    assert.equal(eventResult(await compare())?.status,'changed')
+    targetSql(`update public.st_v2_items set due_at=due_at-interval '1 hour' where id='${boardEvent}';`)
+    console.log('The claimed destination restored the approved calendar event and detected a later time change.')
+  }
   if(sourceApp){
     assert.ok(targetApp)
     const publish={sourceApp,sourceDatabase,sourceKey,authorization:ownerProof.session.access_token,
@@ -754,7 +781,9 @@ try {
   }else{
     assert.equal(data(await verifiedTargetMember.rpc('st_v2_reply_invite',{p_invite:memberInvite.invitation,p_accept:true})),workspace)
   }
-  assert.equal(data(await verifiedTargetMember.from('st_v2_items').select('id').eq('workspace_id',workspace)).length,26)
+  const memberBoard=data(await verifiedTargetMember.from('st_v2_items').select('id').eq('workspace_id',workspace))
+  assert.equal(memberBoard.length,26+(checkBoardEvents?1:0))
+  if(checkBoardEvents)assert.ok(memberBoard.some(item=>item.id===boardEvent))
   assert.equal(targetSql(`select role from public.st_v2_members where workspace_id='${workspace}' and user_id='${targetMember.id}'`),'member')
   if(checkRoomImport)assert.deepEqual(data(await verifiedTargetMember.from('st_v6_rooms').select('id').eq('id',room)),[])
   if(checkRoomTaskImport)assert.deepEqual(data(await verifiedTargetMember.from('st_v6_tasks').select('id').eq('room_id',room)),[])

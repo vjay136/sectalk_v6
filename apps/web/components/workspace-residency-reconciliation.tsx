@@ -3,12 +3,12 @@
 import {useState} from 'react'
 import {db,formatError} from '../lib/data'
 
-type RecordKind='workspace_task'|'room_task'|'channel_message'|'room_message'|'workspace_file'|'room_file'
+type RecordKind='workspace_task'|'workspace_event'|'room_task'|'channel_message'|'room_message'|'workspace_file'|'room_file'
 type RecordStatus='matched'|'missing'|'changed'|'check_bytes'|'unsupported'
 type DestinationRecord={id:string;scope:string;kind:RecordKind;status:RecordStatus}
 type Reconciliation={checkedAt:string;approvalCurrent:boolean;manifestSha256:string;records:DestinationRecord[]}
 
-const kinds:Record<RecordKind,string>={workspace_task:'Workspace task',room_task:'Room task',channel_message:'Channel message',
+const kinds:Record<RecordKind,string>={workspace_task:'Workspace task',workspace_event:'Workspace calendar event',room_task:'Room task',channel_message:'Channel message',
   room_message:'Room message',workspace_file:'Workspace file',room_file:'Room file'}
 const statuses:Record<RecordStatus,string>={matched:'Match the approved record',missing:'Await restoration',changed:'Changed since approval',
   check_bytes:'Need a protected download check',unsupported:'Need a supported restore path'}
