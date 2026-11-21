@@ -32,6 +32,7 @@ const publicExceptions={
   'graphql_public.graphql(text, text, jsonb, jsonb)':'GraphQL gateway. Table grants and row-level security apply to the caller.',
   'public.st_v6_plan_catalog()':'Published plan metadata.',
   'public.st_v6_ready()':'Service readiness boolean.',
+  'public.st_v8_release_ready(text)':'Schema readiness boolean for Web, Admin or Workers. Calls no job or provider.',
   'public.st_v7_public_plan_entitlements()':'Entitlement metadata for published, publicly visible plans.',
   'public.st_v7_guard_account_lockdown()':'PostgREST pre-request guard. Applies account and native assurance restrictions.',
   'public.st_v8_residency_target_ready(uuid, text, uuid)':'Boolean installation proof for an exact cell, project and private installation nonce. It requires the deployment marker and a private Storage bucket.',

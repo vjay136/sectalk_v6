@@ -190,7 +190,7 @@ Database RPC and RLS policies continue to enforce record scope. Pending roles an
 | `DELETE /api/push/subscription` | Account | `account.notification.manage` | `authenticatePush` `rpc:st_v6_push_subscription` |
 | `GET /api/push/subscription` | Account | `account.notification.manage` | `authenticatePush` `rpc:st_v6_push_subscription` |
 | `POST /api/push/subscription` | Account | `account.notification.manage` | `authenticatePush` `rpc:st_v6_push_subscription` |
-| `GET /api/ready` | Public | — | Read-only readiness. |
+| `GET /api/ready` | Public | — | Read-only deployment schema readiness. |
 | `DELETE /api/room-files` | Account | `file.delete` | `authenticateFileRequest` `scopedFileSession` `rpc:st_v8_app_file_command` |
 | `GET /api/room-files` | Account | `file.download` | `authenticateFileRequest` `scopedFileSession` `rpc:st_v8_app_file_command` `rpc:st_v8_scoped_file_command` `rpc:st_v8_residency_file_verification_snapshot` `rpc:st_v8_record_residency_file_verification` `rpc:st_v8_begin_offboarding_room_storage_copy` `rpc:st_v8_finish_offboarding_room_storage_copy` |
 | `POST /api/room-files` | Account | `file.upload` | `authenticateFileRequest` `scopedFileSession` `rpc:st_v8_app_file_command` `rpc:st_v8_scoped_file_command` `rpc:st_v8_residency_room_file_import_access` `rpc:st_v8_residency_room_file_import_command` |
@@ -889,6 +889,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v8_razorpay_sync(text, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v8_read_managed_channel(uuid, uuid, timestamp with time zone, uuid, integer)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v8_record_residency_file_verification(text, uuid, uuid, uuid, uuid, uuid, jsonb, text, integer)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v8_release_ready(text)` | `anon`, `authenticated` | invoker | Public exception | `Schema readiness boolean for Web, Admin or Workers. Calls no job or provider.` |
 | `public.st_v8_residency_active_route(uuid, text, uuid, text, jsonb)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v7_billing_admin_session`, `sectalk_private.st_v8_offboarding_role`, `sectalk_private.st_v8_residency_active_route` |
 | `public.st_v8_residency_board_author_consent(uuid, text, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_role`, `sectalk_private.st_v7_billing_admin_session` |
 | `public.st_v8_residency_channel_author_consent(uuid, text, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_role`, `sectalk_private.st_v7_billing_admin_session`, `sectalk_private.st_v8_workspace_session_receipt` |

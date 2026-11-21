@@ -1,5 +1,5 @@
-import { GET as readiness } from '../../../../web/app/api/ready/route'
+import { readinessResponse } from '../../../../web/lib/readiness'
 
 export function GET() {
-  return readiness()
+  return readinessResponse('admin')
 }

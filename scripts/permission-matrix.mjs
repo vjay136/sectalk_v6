@@ -180,7 +180,7 @@ account('operational-reports/export','GET','soc.report.export','operationalRepor
 publicly('preferences/language','POST','Browser-local language cookie. The app request origin policy applies.')
 signed('push/dispatch','POST','Private Web Push worker bearer.','dispatchAuthorized','rpc:st_v6_claim_web_push')
 account('push/subscription','GET,POST,DELETE','account.notification.manage','authenticatePush','rpc:st_v6_push_subscription')
-publicly('ready','GET','Read-only readiness.')
+publicly('ready','GET','Read-only deployment schema readiness.')
 account('room-files','GET','file.download','authenticateFileRequest','scopedFileSession','rpc:st_v8_app_file_command','rpc:st_v8_scoped_file_command',
   'rpc:st_v8_residency_file_verification_snapshot','rpc:st_v8_record_residency_file_verification',
   'rpc:st_v8_begin_offboarding_room_storage_copy','rpc:st_v8_finish_offboarding_room_storage_copy')

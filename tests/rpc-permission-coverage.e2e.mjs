@@ -64,6 +64,10 @@ function totp(secret) {
 }
 try {
   assert.equal(typeof data(await anon.rpc('st_v6_ready')),'boolean')
+  for(const surface of ['web','admin','workers']){
+    assert.equal(data(await anon.rpc('st_v8_release_ready',{p_surface:surface})),true,surface+' schema readiness')
+  }
+  assert.equal(data(await anon.rpc('st_v8_release_ready',{p_surface:'unknown'})),false)
   assert.ok((await anon.rpc('st_v7_permission_catalog')).error)
   assert.ok((await anon.rpc('st_v7_before_signup',{event:{}})).error)
   const admission={p_identifier:identifier,p_ip:'192.0.2.244'}
