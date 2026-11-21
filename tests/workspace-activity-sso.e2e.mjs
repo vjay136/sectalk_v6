@@ -44,7 +44,7 @@ async function signIn(person) {
 }
 function subscribe(client,topic,events) {
   const stream=client.channel(topic,{config:{private:true}})
-  for(const event of ['room_activity','channel_activity','category_alert']) {
+  for(const event of ['room_activity','channel_activity','category_alert','draft_change']) {
     stream.on('broadcast',{event},({payload})=>events.push({event,payload}))
   }
   return new Promise((resolve,reject)=>{
@@ -146,6 +146,29 @@ try {
     assert.ok(events.every(({payload})=>payload.room_id!==room&&payload.channel_id!==channel&&payload.kind!=='thread.reply'))
   }
 
+  const draft=(conversation,parent=null)=>({p_actor:owner.id,p_scope:'room',p_conversation:conversation,p_parent:parent})
+  const saveDraft=(client,args,body,revision=0)=>client.rpc('st_v6_save_draft',{
+    ...args,p_expected:revision,p_body:body,
+  })
+  const protectedDraft=draft(room,root)
+  const ordinaryDraft=draft(ordinaryRoom)
+  const draftHint=(events,conversation)=>events.find(({event,payload})=>event==='draft_change'&&payload.conversation===conversation)
+  assert.equal((await plain.client.rpc('st_v6_read_draft',protectedDraft)).error?.code,'42501')
+  assert.equal((await saveDraft(plain.client,protectedDraft,'Denied draft')).error?.code,'42501')
+  assert.equal(data(await saveDraft(signed.client,protectedDraft,'Private protected draft')).revision,1)
+  assert.deepEqual(data(await signed.client.rpc('st_v6_read_draft',protectedDraft)),{
+    revision:1,body:'Private protected draft',
+  })
+  assert.equal(data(await saveDraft(plain.client,ordinaryDraft,'Private ordinary draft')).revision,1)
+  await waitFor(()=>draftHint(signedSessionEvents,room)&&[signedAccountEvents,plainAccountEvents]
+    .every(events=>draftHint(events,ordinaryRoom)),'protected and ordinary draft changes')
+  const {id:hintId,...draftMetadata}=draftHint(signedSessionEvents,room).payload
+  assert.match(hintId,/^[a-f0-9-]{36}$/)
+  assert.deepEqual(draftMetadata,{scope:'room',conversation:room,parent:root})
+  for(const events of [signedAccountEvents,plainAccountEvents,plainSessionEvents]) {
+    assert.equal(draftHint(events,room),undefined)
+  }
+
   let verifiedInbox,passwordInbox
   const mention='You were mentioned directly in a room.'
   const channelNotice='New activity in one of your workspace channels.'
@@ -173,10 +196,24 @@ try {
     if(await notice(verifiedInbox,channelNotice).count()) {
       await verifiedInbox.page.getByRole('button',{name:'Dismiss notice'}).click()
     }
+    data(await saveDraft(signed.client,draft(room),'Initial protected room draft'))
+    const verifiedPage=verifiedInbox.page
+    await verifiedPage.reload()
+    await verifiedPage.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Rooms',exact:true}).click()
+    await verifiedPage.locator('select[name="workspace"]').selectOption(workspace)
+    await verifiedPage.getByRole('button',{name:/^Activity room/}).click()
+    const composer=verifiedPage.getByLabel('Write a room message',{exact:true})
+    await composer.waitFor()
+    await verifiedPage.getByText('Draft saved to your devices.',{exact:true}).waitFor()
+    data(await saveDraft(signed.client,draft(room),'Protected draft from the other session',1))
+    await verifiedPage.waitForFunction(()=>document.querySelector('textarea[name="body"]')?.value===
+      'Protected draft from the other session',undefined,{timeout:5000})
   }
 
   sql(`update auth.custom_oauth_providers set enabled=false where identifier='${provider}';`)
   const previous=signedSessionEvents.length
+  assert.equal((await signed.client.rpc('st_v6_read_draft',protectedDraft)).error?.code,'42501')
+  assert.equal((await saveDraft(signed.client,protectedDraft,'Denied after revocation',1)).error?.code,'42501')
   // The recipient-side check also covers a committed alert from an independent background writer.
   sql(`select sectalk_private.st_v8_send_conversation_activity('${room}',null,'${owner.id}','room_activity',
     '{"room_id":"${room}","mention_kind":"mention.user","priority":"high"}');`)
@@ -191,7 +228,7 @@ try {
     }
     console.log('Passed live browser alerts in two isolated Inbox sessions, including provider revocation.')
   }
-  console.log('Passed native session routing, account isolation, room and channel alerts, and provider revocation.')
+  console.log('Passed native session routing, account isolation, room and channel alerts, protected draft sync, and provider revocation.')
 } finally {
   await browser?.close()
   await Promise.allSettled(clients.map(client=>client.removeAllChannels()))

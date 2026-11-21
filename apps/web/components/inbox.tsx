@@ -171,6 +171,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
     syncStatus()
     hints.addEventListener('read_local', syncStatus)
     const activityHandlers = (topic: RealtimeChannel) => topic
+      .on('broadcast', { event: 'draft_change' }, ({payload}) => notifyDraftChange(payload||{}))
       .on('broadcast', { event: 'room_activity' }, ({ payload }) => {
         if (typeof payload?.room_id === 'string') {
           announceAlert(payload.mention_kind==='mention.user'?'You were mentioned directly in a room.':
@@ -205,7 +206,6 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       .on('broadcast', { event: 'call' }, () => hints.dispatchEvent(new Event('call')))
       .on('broadcast', { event: 'presence' }, () => { hints.dispatchEvent(new Event('presence')); void refresh() })
       .on('broadcast', { event: 'availability' }, () => hints.dispatchEvent(new Event('availability')))
-      .on('broadcast', { event: 'draft_change' }, ({payload}) => notifyDraftChange(payload||{}))
       .on('broadcast', { event: 'case_collaboration' }, () => {
         void db!.rpc('st_v6_case_collaboration_alerts', { p_unread_only: true }).then(({ data, error }) => {
           if (!error && Array.isArray(data) && data.length) setNotice('You have a new staff case mention.')

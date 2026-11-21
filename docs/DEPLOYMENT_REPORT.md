@@ -80,6 +80,8 @@ The replacement value was saved and [a second redeployment](https://vercel.com/s
 
 Using the same installed SDK as the pilot, both the original and updated request transports returned HTTP 200 for the local secret key and HTTP 401 with PostgreSQL code `42501` for the local publishable key on the service-only readiness probe. This verifies the distinction on the disposable gateway. The hosted 401 has no recorded database error code.
 
+After the owner created a dedicated Supabase secret and saved it, [the next pilot redeployment](https://vercel.com/silent-soldier-vjay/sectalk-v6-pilot/E6LgQSYrYLNRcUNk6uSTWejdzaGZ) reached Ready. A fresh browser signup returned HTTP 200 from signup admission, password permit consumption, and Auth account creation. The confirmation resend failed with HTTP 500. Supabase Auth recorded Brevo's SMTP `535 5.7.8 Authentication failed`. The saved SMTP Username did not match Brevo's assigned SMTP Login. Correct the username and verify the SMTP key before resending to the unconfirmed test account. Live inbox and recovery checks remain open.
+
 ## Friends pilot acceptance
 
 The Free-tier registry covers 234 features. The five optional capabilities listed above stay unavailable for this pilot. Test the deployed applications with separate browser sessions and real inboxes before sharing invitations.
