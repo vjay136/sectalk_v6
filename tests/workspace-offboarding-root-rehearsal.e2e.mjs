@@ -99,12 +99,15 @@ try{
   await confirmation.fill(workspace)
   await roleButton(ownerPanel,rehearsalButton).click()
   await ownerPanel.getByText('Workspace record rehearsal passed. All rehearsal changes were rolled back.',{exact:true}).waitFor()
+  const reopened=await openReview(reviewer,'Compliance exports')
+  await reopened.getByText('Workspace record rehearsal passed. All rehearsal changes were rolled back.',{exact:true}).waitFor()
+  assert.equal(await roleButton(reopened,rehearsalButton).count(),0)
   const current=await rpc(owner,reconciliation,{p_workspace:workspace})
   assert.equal(current.current,true)
   assert.equal(current.summary.nativeRows.workspace,1)
   assert.equal(current.summary.nativeRows.members,2)
   assert.equal(current.summary.nativeRows.channels,1)
-  console.log('Browser verified independent review, exact owner confirmation, and unchanged workspace records after the removal rehearsal.')
+  console.log('Browser verified independent review, exact owner confirmation, a saved reviewer-visible receipt, and unchanged workspace records after rehearsal.')
 }catch(cause){
   primaryFailure=true
   throw cause
@@ -119,6 +122,8 @@ try{
       delete from sectalk_private.st_v8_offboarding_audit_custody_decisions d using
         sectalk_private.st_v8_offboarding_audit_custody_plans p where p.id=d.plan and p.workspace='${workspace}';
       delete from sectalk_private.st_v8_offboarding_audit_custody_plans where workspace='${workspace}';
+      delete from sectalk_private.st_v8_offboarding_root_rehearsal_receipts r using
+        sectalk_private.st_v8_offboarding_reconciliations p where r.reconciliation=p.id and p.workspace='${workspace}';
       delete from sectalk_private.st_v8_offboarding_reconciliation_receipts r using
         sectalk_private.st_v8_offboarding_reconciliations p where r.reconciliation=p.id and p.workspace='${workspace}';
       delete from sectalk_private.st_v8_offboarding_reconciliations where workspace='${workspace}';

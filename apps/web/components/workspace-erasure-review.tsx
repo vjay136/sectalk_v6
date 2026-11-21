@@ -41,16 +41,19 @@ type Status={
     archiveFindings?:Record<string,number>;workspaceRootDependencies?:RootDependencies;recoveryEvidence?:Record<string,number>;
     storageMetadata:Record<string,number>;overflow:string[]}
 }
+type Rehearsal={reconciliation:string;recordedAt:string}
 
 export function WorkspaceErasureReview({workspace,role}:{workspace:string;role:'owner'|'reviewer'}) {
   const [open,setOpen]=useState(false)
   const [status,setStatus]=useState<Status>()
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
-  const [rehearsedPlan,setRehearsedPlan]=useState<string>()
+  const [rehearsal,setRehearsal]=useState<Rehearsal>()
   const revision=useRef(0)
+  const submitting=useRef(false)
 
   const load=useCallback(async()=>{
+    if(submitting.current) return
     const request=++revision.current
     const response=await db!.rpc('st_v8_offboarding_reconciliation',{p_workspace:workspace})
     if(request!==revision.current) return
@@ -59,8 +62,18 @@ export function WorkspaceErasureReview({workspace,role}:{workspace:string;role:'
       setError(formatError(response.error,'The reconciliation could not be loaded.'))
       return
     }
-    setStatus(response.data)
+    const next:Status|null=response.data
+    setStatus(next??undefined)
     setError('')
+    if(!next?.current||!next.reviewedAt||!next.plan||!next.sha256) {
+      setRehearsal(undefined)
+      return
+    }
+    const receipt=await db!.rpc('st_v8_offboarding_root_rehearsal',{
+      p_workspace:workspace,p_confirmation:null,p_reconciliation:next.plan,p_sha256:next.sha256,
+    })
+    if(request!==revision.current) return
+    setRehearsal(receipt.data?.reconciliation===next.plan&&typeof receipt.data?.recordedAt==='string'?receipt.data:undefined)
   },[workspace])
 
   useEffect(()=>{
@@ -72,11 +85,12 @@ export function WorkspaceErasureReview({workspace,role}:{workspace:string;role:'
 
   async function review(event:FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if(busy||!status) return
+    if(submitting.current||!status) return
     const form=event.currentTarget
     const reviewing=role==='reviewer'
     const confirmation=String(new FormData(form).get('workspace')).trim()
     const request=++revision.current
+    submitting.current=true
     setBusy(true)
     setError('')
     try {
@@ -91,18 +105,19 @@ export function WorkspaceErasureReview({workspace,role}:{workspace:string;role:'
       }
     } catch(cause) {
       if(request===revision.current) setError(formatError(cause,'The reconciliation action could not be completed.'))
-    } finally {setBusy(false)}
+    } finally {submitting.current=false;setBusy(false)}
   }
 
   async function rehearse(event:FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if(busy||!status?.current||!status.reviewedAt||!status.plan||!status.sha256||role!=='owner') return
+    if(submitting.current||!status?.current||!status.reviewedAt||!status.plan||!status.sha256||role!=='owner') return
     const form=event.currentTarget
     const fields=new FormData(form)
     const confirmation=String(fields.get('workspace')).trim()
+    ++revision.current
+    submitting.current=true
     setBusy(true)
     setError('')
-    setRehearsedPlan(undefined)
     try {
       if(confirmation!==workspace) throw new Error('Enter the exact workspace ID.')
       const assurance=await db!.rpc('st_v7_sensitive_action_status',{p_kind:'export'})
@@ -118,14 +133,14 @@ export function WorkspaceErasureReview({workspace,role}:{workspace:string;role:'
         p_workspace:workspace,p_confirmation:confirmation,p_reconciliation:status.plan,p_sha256:status.sha256,
       })
       if(failure) throw failure
-      if(data?.reconciliation!==status.plan||data?.workspace!==workspace||data?.rolledBack!==true) {
+      if(data?.reconciliation!==status.plan||data?.workspace!==workspace||data?.rolledBack!==true||typeof data?.recordedAt!=='string') {
         throw new Error('The rehearsal did not return a verified rollback result.')
       }
-      setRehearsedPlan(status.plan)
+      setRehearsal(data)
       form.reset()
     } catch(cause) {
       setError(formatError(cause,'The workspace record rehearsal could not be completed.'))
-    } finally {setBusy(false)}
+    } finally {submitting.current=false;setBusy(false)}
   }
 
   function counts(title:string,values:Record<string,number>) {
@@ -176,8 +191,10 @@ export function WorkspaceErasureReview({workspace,role}:{workspace:string;role:'
             <label>Authenticator code if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}"/></label>
             <button className="secondary" disabled={busy}>Run rollback-only removal rehearsal</button>
           </form>}
-          {rehearsedPlan&&status.current&&rehearsedPlan===status.plan&&
-            <p role="status">Workspace record rehearsal passed. All rehearsal changes were rolled back.</p>}
+          {rehearsal&&status.current&&rehearsal.reconciliation===status.plan&&<>
+            <p role="status">Workspace record rehearsal passed. All rehearsal changes were rolled back.</p>
+            <p>Recorded <time dateTime={rehearsal.recordedAt}>{new Date(rehearsal.recordedAt).toLocaleString()}</time></p>
+          </>}
         </details>}
         {counts('Verified scoped deletion receipts',status.summary.verifiedDeletionReceipts)}
         {archiveFindings&&counts('Archive receipt findings',archiveFindings)}
