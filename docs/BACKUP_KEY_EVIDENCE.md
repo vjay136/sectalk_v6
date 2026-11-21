@@ -99,6 +99,8 @@ Capture two independently approved observations for the same test project, regio
 
 Keep the raw approvals and observations in a restricted bundle as `baseline-approval.json`, `baseline-inventory.json`, `later-approval.json` and `later-inventory.json`. Save the raw provider receipt as `provider-key-evidence.json`. Prepare `timeline-approval.json` with `format` set to `sectalk-supabase-backup-timeline-approval-v1` and the independently retrieved `baselineApprovalSha256`, `baselineInventorySha256`, `laterApprovalSha256`, `laterInventorySha256` and `providerReceiptSha256`. Record the raw timeline-approval file SHA-256 separately.
 
+When approving each capture, record `providerPinCommitment` for the key configured on the reviewed installation. Compute it as SHA-256 of the UTF-8 string `sectalk-provider-pin-commitment-v1:<workspace>:<keyVersion>:<providerPin>` in the protected environment. The timeline accepts a key binding only when both independently recorded approvals and the reviewed receipt agree. Older approvals can still be compared and report the provider key binding as unverified.
+
 ```sh
 node scripts/supabase-backup-timeline.mjs --bundle /protected/recovery/supabase-timeline \
   --approval-sha256 DIGEST_FROM_OPERATIONS_LOG

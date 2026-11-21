@@ -13,6 +13,7 @@ const json=value=>Buffer.from(JSON.stringify(value))
 const sha=value=>createHash('sha256').update(value).digest('hex')
 const base={format:'sectalk-supabase-backup-approval-v1',sourceProject:'a'.repeat(20),testProject:'b'.repeat(20),
   region:'eu-central-1',workspace:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',keyVersion:9,
+  providerPinCommitment:'d'.repeat(64),
   reviewFrom:'2026-10-01T00:00:00Z',reviewThrough:'2026-10-05T00:00:00Z'}
 const baselineAt='2026-10-06T12:00:00Z',laterAt='2026-10-10T12:00:00Z'
 const event={format:'sectalk-provider-key-evidence-v1',workspace:base.workspace,version:base.keyVersion,
@@ -34,8 +35,8 @@ function approve(items){
   return {...items,comparisonRaw,comparisonSha256:sha(comparisonRaw)}
 }
 
-async function fixture({laterScope={},laterBody=after,provider=event}={}){
-  const baselineApproval=json({...base,observeFrom:'2026-10-06T00:00:00Z',observeThrough:'2026-10-07T00:00:00Z'})
+async function fixture({baselineScope={},laterScope={},laterBody=after,provider=event}={}){
+  const baselineApproval=json({...base,observeFrom:'2026-10-06T00:00:00Z',observeThrough:'2026-10-07T00:00:00Z',...baselineScope})
   const laterApproval=json({...base,observeFrom:'2026-10-10T00:00:00Z',observeThrough:'2026-10-11T00:00:00Z',...laterScope})
   const capture=(approvalRaw,providerBody,at)=>captureSupabaseBackups({
     approvalRaw,approvalSha256:sha(approvalRaw),captureConfirmed:true,token:'synthetic-scoped-read-token',now:()=>new Date(at),
@@ -58,11 +59,24 @@ test('distinguishes stable backup IDs, explicit Removed transitions, omissions a
   assert.equal(report.physicalBounds.baselineReviewRelation,'bounds_span_interval')
   assert.equal(report.physicalBounds.laterReviewRelation,'bounds_intersect_interval')
   assert.equal(report.physicalBounds.laterPitr,'reported_disabled')
+  assert.equal(report.providerKeyBinding,'matches_both_approvals')
   assert.equal(report.providerDeletion,'unverified')
   assert.equal(report.backupErasure,'unverified')
   for(const privateValue of [base.workspace,base.testProject,base.sourceProject,'100001',event.pinCommitment]){
     assert.ok(!JSON.stringify(report).includes(privateValue))
   }
+})
+
+test('rejects receipts for a different provider pin even with a matching workspace and key version',async()=>{
+  const borrowed=await fixture({provider:{...event,pinCommitment:'f'.repeat(64)}})
+  assert.throws(()=>verifySupabaseBackupTimeline(borrowed),/Both backup approvals must pin/)
+  const partial=await fixture({baselineScope:{providerPinCommitment:undefined}})
+  assert.throws(()=>verifySupabaseBackupTimeline(partial),/Both backup approvals must pin/)
+  await assert.rejects(fixture({laterScope:{providerPinCommitment:'wrong'}}),/approved provider key commitment is invalid/)
+  const oldScope={providerPinCommitment:undefined}
+  const oldReport=verifySupabaseBackupTimeline(await fixture({baselineScope:oldScope,laterScope:oldScope}))
+  assert.equal(oldReport.providerKeyBinding,'unverified')
+  assert.equal(oldReport.backupErasure,'unverified')
 })
 
 test('keeps omitted or potentially incomplete observations unknown and never treats empty lists as erasure',async()=>{

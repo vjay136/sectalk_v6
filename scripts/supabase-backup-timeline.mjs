@@ -95,6 +95,11 @@ export function verifySupabaseBackupTimeline({comparisonRaw,comparisonSha256,bas
   requireValue(provider.format==='sectalk-provider-key-evidence-v1'&&provider.workspace===baseline.approval.workspace&&
     provider.version===baseline.approval.keyVersion&&digest.test(provider.eventSha256??'')&&digest.test(provider.pinCommitment??''),
   'The independent provider receipt has a different workspace or key version.')
+  const beforePin=baseline.approval.providerPinCommitment
+  const afterPin=later.approval.providerPinCommitment
+  const pinReviewed=beforePin!==undefined||afterPin!==undefined
+  requireValue(!pinReviewed||(beforePin===provider.pinCommitment&&afterPin===provider.pinCommitment),
+    'Both backup approvals must pin the same provider key commitment as the reviewed receipt.')
   const event=moment(provider.eventTime),recorded=moment(provider.recordedAt)
   requireValue(event<=recorded+30000&&moment(baseline.report.observedAt)<event&&
     moment(later.report.observedAt)>=Math.max(event,recorded),
@@ -102,7 +107,8 @@ export function verifySupabaseBackupTimeline({comparisonRaw,comparisonSha256,bas
   return {format:'sectalk-supabase-backup-timeline-v1',comparisonSha256,providerReceiptSha256:comparison.providerReceiptSha256,
     reviewedProviderEventSha256:provider.eventSha256,baselineInventorySha256:comparison.baselineInventorySha256,
     laterInventorySha256:comparison.laterInventorySha256,baselineObservedAt:baseline.report.observedAt,
-    laterObservedAt:later.report.observedAt,scope:'approved_test_project',catalog:compareCatalog(baseline,later),
+    laterObservedAt:later.report.observedAt,scope:'approved_test_project',
+    providerKeyBinding:pinReviewed?'matches_both_approvals':'unverified',catalog:compareCatalog(baseline,later),
     physicalBounds:compareBounds(baseline,later),restoreAvailability:'unverified',providerDeletion:'unverified',backupErasure:'unverified'}
 }
 

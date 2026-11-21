@@ -45,6 +45,9 @@ function approvedScope(raw,digest){
     [reviewFrom,reviewThrough,observeFrom,observeThrough].every(value=>value!==null)&&
     reviewFrom<=reviewThrough&&reviewThrough<=observeFrom&&observeFrom<=observeThrough,
   'Approve a distinct test project, expected region, exact workspace key and valid review and observation intervals.')
+  requireValue(approval.providerPinCommitment===undefined||
+    (typeof approval.providerPinCommitment==='string'&&shaPattern.test(approval.providerPinCommitment)),
+  'The approved provider key commitment is invalid.')
   return {testProject,region,reviewFrom,reviewThrough,observeFrom,observeThrough}
 }
 
