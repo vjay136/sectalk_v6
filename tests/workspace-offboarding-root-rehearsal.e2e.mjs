@@ -49,6 +49,12 @@ async function openReview(who,tab){
   await offboarding.getByText('Source erasure reconciliation',{exact:true}).click()
   const panel=offboarding.getByRole('region',{name:'Source erasure reconciliation',exact:true})
   await panel.getByText('Workspace record removal preflight',{exact:true}).click()
+  const databaseRecords=panel.getByRole('region',{name:'Covered database records',exact:true})
+  for(const label of ['Regional rollback authorizations','Regional rollback manifests',
+    'Regional Board recovery batches','Regional channel recovery batches']){
+    const row=databaseRecords.getByText(label,{exact:true}).locator('..')
+    assert.equal(await row.locator('dd').textContent(),'0')
+  }
   return panel
 }
 
@@ -107,7 +113,7 @@ try{
   assert.equal(current.summary.nativeRows.workspace,1)
   assert.equal(current.summary.nativeRows.members,2)
   assert.equal(current.summary.nativeRows.channels,1)
-  console.log('Browser verified independent review, exact owner confirmation, a saved reviewer-visible receipt, and unchanged workspace records after rehearsal.')
+  console.log('Browser verified regional recovery counts, independent review, exact owner confirmation, a saved reviewer-visible receipt, and unchanged workspace records after rehearsal.')
 }catch(cause){
   primaryFailure=true
   throw cause

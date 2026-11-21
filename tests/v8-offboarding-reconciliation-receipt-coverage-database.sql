@@ -15,6 +15,7 @@ declare
   file_sha text:=repeat('a',64); thread_plan uuid:=gen_random_uuid(); retained_hash text:=repeat('d',64);
   workspace_path text; room_path text;
   residency_handoff uuid:=gen_random_uuid(); residency_review uuid:=gen_random_uuid();
+  other_handoff uuid:=gen_random_uuid(); recovery_vault_id uuid:=gen_random_uuid();
   residency_receipt uuid:=gen_random_uuid(); recovery_object uuid:=gen_random_uuid(); recovery_path text;
   group_id uuid:=gen_random_uuid(); custom_role uuid:=gen_random_uuid(); classroom uuid:=gen_random_uuid();
 
@@ -200,14 +201,60 @@ begin
       'fixture-destination',residency_review,file_sha,file_sha,owner_id,reviewer_id);
   insert into sectalk_private.st_v8_residency_source_reactivations(handoff,workspace,destination_receipt,source_evidence,
     source_digest,proof_digest,actor) values(residency_handoff,workspace_id,residency_receipt,gen_random_uuid(),file_sha,file_sha,owner_id);
+  insert into sectalk_private.st_v8_residency_write_handoffs(workspace,approval,handoff,source_project,destination_project,phase)
+    values(other_workspace,gen_random_uuid(),other_handoff,'fixture-source','fixture-destination','restored');
+  insert into sectalk_private.st_v8_residency_rollback_manifest_admissions(handoff,vault_id,plan_sha256,expires_at)
+    values(residency_handoff,recovery_vault_id,file_sha,now()+interval '1 hour');
+  insert into sectalk_private.st_v8_residency_rollback_manifests
+    (handoff,workspace,review,review_sha256,packet_sha256,plan_sha256,changes) values
+    (residency_handoff,workspace_id,residency_review,file_sha,file_sha,file_sha,'[]'),
+    (other_handoff,other_workspace,gen_random_uuid(),file_sha,file_sha,file_sha,'[]');
+  insert into sectalk_private.st_v8_residency_rollback_board_batches(handoff,packet_sha256,tasks,staged_by) values
+    (residency_handoff,file_sha,'[{"title":"synthetic private recovery content"}]',owner_id),
+    (other_handoff,file_sha,'[]',owner_id);
+  insert into sectalk_private.st_v8_residency_rollback_channel_batches(handoff,packet_sha256,records,staged_by) values
+    (residency_handoff,file_sha,'[{"body":"synthetic private recovery content"}]',owner_id),
+    (other_handoff,file_sha,'[]',owner_id);
+  set local role authenticated;
+  perform set_config('request.jwt.claims',claims->>owner_id::text,true);
+  first_review:=public.st_v8_offboarding_reconciliation(workspace_id,'capture',workspace_id::text);
+  if first_review#>>'{summary,nativeRows,residencyRecoveryFileReceipts}'<>'1'
+    or first_review#>>'{summary,nativeRows,residencyDestinationRetirements}'<>'1'
+    or first_review#>>'{summary,nativeRows,residencySourceReactivations}'<>'1'
+    or first_review#>>'{summary,nativeRows,residencyRollbackAdmissions}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyRollbackManifests}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyRecoveryBoardBatches}' is distinct from '1'
+    or first_review#>>'{summary,nativeRows,residencyRecoveryChannelBatches}' is distinct from '1'
+    or first_review#>>'{summary,workspaceRootDependencies,unclassifiedConstraints}'<>'0'
+    or first_review::text like '%'||residency_receipt::text||'%'
+    or first_review::text like '%'||recovery_vault_id::text||'%'
+    or first_review::text like '%synthetic private recovery content%' then
+    raise exception 'The residency receipt census is missing, unclassified or exposed'; end if;
+  perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
+  current_review:=public.st_v8_offboarding_reconciliation(workspace_id,'confirm',workspace_id::text,
+    (first_review->>'plan')::uuid,first_review->>'sha256');
+  if current_review->>'current' is distinct from 'true' or current_review->>'reviewedAt' is null then
+    raise exception 'Regional recovery census was not independently confirmed'; end if;
+  reset role;
+  update sectalk_private.st_v8_residency_rollback_channel_batches
+    set applied_by=reviewer_id,applied_at=now() where handoff=other_handoff;
   set local role authenticated;
   current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
-  if current_review#>>'{summary,nativeRows,residencyRecoveryFileReceipts}'<>'1'
-    or current_review#>>'{summary,nativeRows,residencyDestinationRetirements}'<>'1'
-    or current_review#>>'{summary,nativeRows,residencySourceReactivations}'<>'1'
-    or current_review#>>'{summary,workspaceRootDependencies,unclassifiedConstraints}'<>'0'
-    or current_review::text like '%'||residency_receipt::text||'%' then
-    raise exception 'The residency receipt census is missing, unclassified or exposed'; end if;
+  if current_review->>'current' is distinct from 'true' then
+    raise exception 'Another workspace changed this regional recovery review'; end if;
+  reset role;
+  update sectalk_private.st_v8_residency_rollback_channel_batches
+    set applied_by=reviewer_id,applied_at=now() where handoff=residency_handoff;
+  set local role authenticated;
+  current_review:=public.st_v8_offboarding_reconciliation(workspace_id);
+  if current_review->>'current' is distinct from 'false'
+    or current_review#>>'{summary,nativeRows,residencyRecoveryChannelBatches}' is distinct from '1' then
+    raise exception 'Applying a regional recovery batch must stale the review even when the count is unchanged'; end if;
+  begin
+    perform public.st_v8_offboarding_reconciliation(workspace_id,'confirm',workspace_id::text,
+      (first_review->>'plan')::uuid,first_review->>'sha256');
+    raise exception 'Reviewer confirmed stale regional recovery evidence';
+  exception when sqlstate 'PT409' then null; end;
   reset role;
   insert into storage.objects(bucket_id,name,version,metadata) values
     ('sectalk-workspace-files',workspace_path,gen_random_uuid()::text,'{"size":10}'),
@@ -250,5 +297,5 @@ begin
   exception when sqlstate 'PT409' then null; end;
 end $$;
 
-select 'passed: exact recovery receipts and member dependencies, same-count drift and tenant isolation';
+select 'passed: recovery receipts, member dependencies and regional rollback records, same-count drift and tenant isolation';
 rollback;

@@ -142,6 +142,8 @@ The owner captures that digest and the independent reviewer confirms the same ev
 
 The covered database counts include member-dependent impersonation watch entries, delegated billing accounts, group memberships, school rosters and custom role assignments. The digest binds the exact rows for the selected workspace. A role, tier or membership change makes a reviewed plan stale even when the count stays the same. Earlier reconciliation plans require a fresh capture and independent confirmation after this migration.
 
+The census also covers regional rollback authorizations, admitted manifests, and Board, channel, room message and room task recovery batches left under the workspace’s handoff. Applying a staged batch invalidates the review even when the count stays the same. The review shows counts and a digest while keeping Vault references and recovery contents private.
+
 The reconciliation separates complete thread and file registration removal receipts from verified file copies and independent recovery reviews. If a retired file path appears in Storage metadata again, the original cleanup receipt remains on record and the reconciliation becomes stale. The current metadata section counts reappearing workspace and room paths separately.
 
 Archived channel, archived message, and archived room removals appear in **Verified scoped deletion receipts** after SecTalk checks the exact copy, independent approval, retained archive records, and matching native audit entries. Archive findings appear separately. A missing link or a removed message still present in live data or search blocks capture and confirmation. Once an archive finding has been observed, resolving it requires a fresh capture and independent review.
