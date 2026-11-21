@@ -22,6 +22,9 @@ declare
   chat constant uuid:=gen_random_uuid();
   accepted_message constant uuid:=gen_random_uuid();
   failed_message constant uuid:=gen_random_uuid();
+  room uuid:=gen_random_uuid();
+  room_post uuid:=gen_random_uuid();
+  workspace uuid;
   delivery_id uuid;
   item record;
   delivery record;
@@ -113,6 +116,51 @@ begin
   perform public.st_v6_finish_web_push(item.job,item.lease,item.terminal);
   if not exists(select 1 from sectalk_private.st_v6_notification_dead_letters where job_id=item.job and reason='expired') then
     raise exception 'Expired delivery did not enter the dead-letter ledger';
+  end if;
+
+  workspace:=public.st_v2_create_workspace('Disposable push authorization workspace');
+  perform public.st_v6_room_create(room,workspace,'Disposable push authorization room','public','blank');
+  insert into public.st_v2_members(workspace_id,user_id,role) values(workspace,recipient,'member');
+  insert into public.st_v6_room_members(room_id,user_id,role) values(room,recipient,'member');
+  perform public.st_v6_room_post(room,room_post,'Ordinary mention @delivery_recipient');
+  select e.id into delivery_id from sectalk_private.st_v6_notification_delivery_events e
+    where e.event_key='room:'||room||':'||room_post and e.recipient=fixture.recipient;
+  if delivery_id is null or not sectalk_private.st_v6_web_push_allowed(recipient,'mention.user',room,null,null)
+    or (select mentions from sectalk_private.st_v6_notification_email_counts(
+      recipient,array['mention'],now()-interval '1 hour',clock_timestamp()))<>1 then
+    raise exception 'The ordinary mention did not enter push and email delivery';
+  end if;
+  insert into sectalk_private.st_v8_workspace_entry_sso values(workspace,'oidc','custom:notification-fixture');
+  if (select mentions from sectalk_private.st_v6_notification_email_counts(
+    recipient,array['mention'],now()-interval '1 hour',clock_timestamp()))<>0 then
+    raise exception 'An earlier room mention survived entry SSO in the next email digest';
+  end if;
+  select c.* into item from public.st_v6_claim_web_push() c
+  join sectalk_private.st_v6_push_jobs q on q.id=c.job where q.event_id=delivery_id;
+  if item.terminal is distinct from 'discard' or item.endpoint is not null
+    or item.p256dh is not null or item.auth_secret is not null then
+    raise exception 'A pending room alert exposed its endpoint after workspace entry SSO changed';
+  end if;
+  perform public.st_v6_finish_web_push(item.job,item.lease,item.terminal);
+  if (select state from sectalk_private.st_v6_notification_delivery_events where id=delivery_id)<>'discarded' then
+    raise exception 'A protected room alert was republished as an account fallback';
+  end if;
+  delete from sectalk_private.st_v8_workspace_entry_sso e where e.workspace=fixture.workspace;
+  insert into sectalk_private.st_v8_workspace_room_structure_sso values(workspace,'oidc','custom:notification-fixture');
+  if sectalk_private.st_v6_web_push_allowed(recipient,'mention.user',room,null,null) then
+    raise exception 'Room directory SSO did not prevent external delivery';
+  end if;
+  delete from sectalk_private.st_v8_workspace_room_structure_sso e where e.workspace=fixture.workspace;
+  insert into sectalk_private.st_v8_workspace_standard_room_sso values(workspace,'oidc','custom:notification-fixture');
+  if sectalk_private.st_v6_web_push_allowed(recipient,'mention.user',room,null,null) then
+    raise exception 'Room content SSO did not prevent external delivery';
+  end if;
+  delete from sectalk_private.st_v8_workspace_standard_room_sso e where e.workspace=fixture.workspace;
+  insert into sectalk_private.st_v8_workspace_managed_content_sso values(workspace,'oidc','custom:notification-fixture');
+  if sectalk_private.st_v8_conversation_alert_providers(workspace,true,'managed',false)='[]'::jsonb
+    or not sectalk_private.st_v6_web_push_allowed(recipient,'mention.user',room,null,null)
+    or has_function_privilege('authenticated','sectalk_private.st_v8_conversation_alert_providers(uuid,boolean,text,boolean)','execute') then
+    raise exception 'Managed-only policy changed ordinary room delivery or exposed the private provider resolver';
   end if;
 end $$;
 
