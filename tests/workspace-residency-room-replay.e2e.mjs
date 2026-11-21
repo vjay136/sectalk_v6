@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import {execFileSync} from 'node:child_process'
+import {execFileSync,spawn} from 'node:child_process'
 import {createHash,createHmac,randomBytes,randomUUID} from 'node:crypto'
 import {readFile} from 'node:fs/promises'
 import {createServer} from 'node:http'
+import {setTimeout as delay} from 'node:timers/promises'
 import {createClient} from '@supabase/supabase-js'
 import {fixtureAuthenticator} from './workspace-admin-fixture.mjs'
 
@@ -99,6 +100,35 @@ async function recoveredTask(who){
 async function fileRequest(site,who,path,init={}){
   const session=data(await who.api.auth.getSession()).session
   return fetch(site.app+path,{...init,headers:{...init.headers,Authorization:'Bearer '+session.access_token}})
+}
+
+async function verifyEvidenceWaitsForRoomRow(startCapture){
+  const locker=spawn('docker',['exec','-i','supabase_db_'+source.project,'psql','-XqtA','-v','ON_ERROR_STOP=1',
+    '-U','postgres','-d','postgres'],{windowsHide:true,stdio:['pipe','pipe','inherit']})
+  const exited=new Promise(resolve=>locker.once('close',resolve))
+  let pending
+  try{
+    locker.stdin.write(`begin;
+      select pg_backend_pid() from public.st_v6_room_posts where (room_id,id)=('${room}','${anchor}') for no key update;
+    \n`)
+    const [chunk]=await Promise.race([
+      new Promise(resolve=>locker.stdout.once('data',data=>resolve([data]))),
+      delay(5000,[Buffer.from('')],{ref:false}),
+    ])
+    const pid=chunk.toString().trim()
+    assert.match(pid,/^\d+$/,'The verified preexisting thread root must be locked')
+    pending=Promise.resolve(startCapture())
+    let blocked=false
+    for(let attempt=0;attempt<20&&!blocked;attempt++){
+      blocked=sql(source,`select exists(select 1 from pg_stat_activity where ${pid}=any(pg_blocking_pids(pid)));\n`)==='t'
+      if(!blocked)await delay(100)
+    }
+    assert.equal(blocked,true,'Recording evidence must wait for the exact preexisting root')
+  }finally{
+    locker.stdin.end('rollback;\n')
+    assert.equal(await exited,0)
+    if(pending)assert.equal((await pending).error?.code,'PT409','The lock probe uses a deliberately stale digest')
+  }
 }
 
 try{
@@ -310,7 +340,43 @@ try{
   await sourceReviewerPage.reload()
   await sourceReviewerPage.getByRole('region',{name:'Source rollback verification',exact:true})
     .getByText('6 of 6 reviewed changes verified at the source. Workspace writes are held.',{exact:true}).waitFor()
-  console.log('Edge verified room messages, tasks and signed private attachments, exact native recovery and both write holds.')
+  await verifyEvidenceWaitsForRoomRow(()=>sourceOwner.api.rpc('st_v8_residency_source_evidence',{
+    p_workspace:workspace,p_action:'capture',p_confirmation:workspace,p_digest:'0'.repeat(64),
+  }))
+  const retired=data(await destinationOwner.api.rpc('st_v8_residency_retire_destination',{
+    p_workspace:workspace,p_action:'issue',p_confirmation:workspace,
+  }))
+  assert.equal(retired.state,'retired')
+  const reopen=(who,action='reopen')=>who.api.rpc('st_v8_residency_reactivate_source',{
+    p_workspace:workspace,p_confirmation:workspace,p_action:action,p_packet:retired.packet,
+  })
+  assert.equal((await reopen(sourceOwner)).error?.code,'PT409')
+  await sourceEvidence(sourceOwnerPage).getByRole('button',{name:'Refresh source verification',exact:true}).click()
+  await submit(sourceEvidence(sourceOwnerPage),'Confirm source evidence workspace ID','Record source evidence')
+  await sourceEvidence(sourceOwnerPage).getByText('Awaiting independent sign-off on the recorded source evidence.',{exact:true}).waitFor()
+  await sourceEvidence(sourceReviewerPage).getByRole('button',{name:'Refresh source verification',exact:true}).click()
+  await submit(sourceEvidence(sourceReviewerPage),'Confirm source evidence workspace ID','Sign off on source evidence')
+  await sourceEvidence(sourceReviewerPage)
+    .getByText('The independent reviewer signed off on all changes in this manifest.',{exact:true}).waitFor()
+  assert.equal((await reopen(sourceReviewer)).error?.code,'42501')
+  assert.equal(data(await reopen(sourceOwner,'status')).state,'ready')
+  const reactivation=sourceOwnerPage.getByRole('region',{name:'Source reactivation',exact:true})
+  await reactivation.getByRole('button',{name:'Refresh source reactivation status',exact:true}).click()
+  await reactivation.getByLabel('Signed destination retirement proof').setInputFiles({
+    name:'retired-destination.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(retired.packet)),
+  })
+  await submit(reactivation,'Confirm source reactivation workspace ID','Reopen source writes')
+  await reactivation.getByText(/Source write authority was restored\./).first().waitFor()
+  const reopened=data(await reopen(sourceOwner))
+  assert.equal(reopened.receipt,retired.receipt)
+  assert.equal(reopened.state,'reopened')
+  const afterReopen=randomUUID()
+  data(await sourceOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:afterReopen,p_body:'Authorized source write after reactivation'}))
+  assert.equal((await recoveredRow(sourceOwner,afterReopen)).sender,sourceOwner.id)
+  assert.equal((await destinationOwner.api.rpc('st_v6_room_post',{
+    p_room:room,p_id:randomUUID(),p_body:'Destination remains held after source reactivation',
+  })).error?.code,'PT423')
+  console.log('Edge verified all six restored room records, locked evidence, independent sign-off and source-only write reactivation.')
 } finally {
   await browser?.close()
   if(scanner?.listening)await new Promise(resolve=>scanner.close(resolve))
