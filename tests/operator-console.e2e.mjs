@@ -1,7 +1,7 @@
 // Use only the disposable local Auth QA database and a separate operator origin.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { createClient } from '@supabase/supabase-js'
 import { fixtureAuthenticator, totpCode } from './workspace-admin-fixture.mjs'
@@ -20,6 +20,7 @@ const publicKey = process.env.SECTALK_STORAGE_TEST_PUBLIC_KEY
 const {chromium} = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
 const password = randomUUID() + '1!Q'
 const accounts = []
+const workspaces = []
 let chat
 let secondChat
 let report
@@ -68,6 +69,11 @@ try {
   assert.equal((await access()).status, 401)
   assert.equal((await access('invalid.token.value')).status, 401)
   assert.equal((await access(ordinary.factor.session.access_token)).status, 403)
+  for (const token of ['', ordinary.factor.session.access_token]) {
+    const denied = await fetch(new URL('/api/audit/export', app), {method: 'POST',
+      headers: token ? {Authorization: 'Bearer ' + token} : {}})
+    assert.equal(denied.status, token ? 403 : 401)
+  }
   const evidence = await fetch(new URL('/api/files/download', app), {method: 'POST',
     headers: {Authorization: 'Bearer ' + ordinary.factor.session.access_token, 'Content-Type': 'application/json'},
     body: JSON.stringify({file: randomUUID()})})
@@ -98,6 +104,14 @@ try {
     p_caption: excerpt, p_hash: createHash('sha256').update(bytes).digest('hex')}))
   assert.deepEqual(data(await ordinary.client.from('st_v8_moderation_queue_signal').select('revision')),[])
 
+  const ownedWorkspace = data(await operator.client.rpc('st_v2_create_workspace', {p_name: 'Admin audit ' + randomUUID().slice(0,8)}))
+  workspaces.push(ownedWorkspace)
+  const otherWorkspace = data(await contact.client.rpc('st_v2_create_workspace', {p_name: 'Other audit ' + randomUUID().slice(0,8)}))
+  workspaces.push(otherWorkspace)
+  const auditArgs = {p_workspace: otherWorkspace, p_query: '', p_source: null, p_from: null, p_before: null}
+  assert.equal((await operator.client.rpc('st_v6_audit_search', auditArgs)).error?.code, '42501')
+  assert.equal((await ordinary.client.rpc('st_v6_audit_search', {...auditArgs, p_workspace: ownedWorkspace})).error?.code, '42501')
+
   browser = await chromium.launch({executablePath: process.env.SECTALK_TEST_BROWSER})
   const ordinaryPage = await browser.newPage()
   // Sign-in assurance is required before the database allows role checks.
@@ -107,6 +121,7 @@ try {
   await ordinaryPage.getByRole('heading', {name: 'Access unavailable'}).waitFor()
   assert.equal(await ordinaryPage.getByRole('heading', {name: 'Moderation queue', exact: true}).count(), 0)
   assert.equal(await ordinaryPage.getByRole('region', {name: 'Queue operations', exact: true}).count(), 0)
+  assert.equal(await ordinaryPage.getByRole('button', {name: 'Audit logs', exact: true}).count(), 0)
   await ordinaryPage.close()
 
   const page = await browser.newPage({acceptDownloads: true})
@@ -128,6 +143,35 @@ try {
   await page.getByRole('button', {name: 'Verify code', exact: true}).click()
   await page.getByRole('heading', {name: 'Moderation queue', exact: true}).waitFor()
   assert.equal(await queueTab.count(), 0)
+  await tabs.getByRole('button', {name: 'Audit logs', exact: true}).click()
+  const audit = page.getByRole('region', {name: 'Audit log search'})
+  const auditOptions = audit.getByLabel('Audit workspace').locator('option')
+  assert.deepEqual(await auditOptions.evaluateAll(options => options.map(option => option.value)), [ownedWorkspace])
+  await audit.getByLabel('Audit event, room, or ID').fill('workspace created')
+  await audit.getByLabel('Log source').selectOption('workspace')
+  await audit.getByRole('button', {name: 'Search audit logs', exact: true}).click()
+  await audit.getByText('Displayed entries match the local audit journal.', {exact: true}).waitFor()
+  await audit.getByRole('heading', {name: 'workspace created', exact: true}).waitFor()
+  if (process.env.SECTALK_AUDIT_TEST_SIGNING === '1') {
+    const download = page.waitForEvent('download')
+    await audit.getByRole('button', {name: 'Download signed audit', exact: true}).click()
+    const signed = JSON.parse(await readFile(await (await download).path(), 'utf8'))
+    const session = data(await operator.client.auth.getSession()).session
+    const keyResponse = await fetch(new URL('/api/audit/export', app), {headers: {Authorization: 'Bearer ' + session.access_token}})
+    assert.equal(keyResponse.status, 200)
+    const key = await keyResponse.json()
+    const publicKey = createPublicKey({key: Buffer.from(key.public_key_spki, 'base64url'), format: 'der', type: 'spki'})
+    assert.equal(signed.key_id, key.key_id)
+    assert.equal(verify(null, Buffer.from(signed.payload), publicKey, Buffer.from(signed.signature, 'base64url')), true)
+    const payload = JSON.parse(signed.payload)
+    assert.equal(payload.filters.workspace, ownedWorkspace)
+    assert.ok(payload.entries.some(row => row.event === 'workspace.created'))
+    const forbidden = await fetch(new URL('/api/audit/export', app), {method: 'POST',
+      headers: {Authorization: 'Bearer ' + session.access_token, 'Content-Type': 'application/json'},
+      body: JSON.stringify({workspace: otherWorkspace, query: '', source: null, from: null, before: null})})
+    assert.equal(forbidden.status, 403)
+  }
+  await tabs.getByRole('button', {name: 'Moderation', exact: true}).click()
   const deadline=Date.now()+10000
   while(!queueConnected&&Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,100))
   assert.ok(queueConnected,'Moderation queue must be connected before the report is filed')
@@ -221,12 +265,15 @@ try {
   await queueTab.waitFor({state: 'hidden', timeout: 20000})
   await page.getByRole('heading', {name: 'Moderation queue', exact: true}).waitFor()
   sql(`delete from sectalk_private.staff where user_id='${operator.user.id}';`)
+  await tabs.getByRole('button', {name: 'Moderation', exact: true}).waitFor({state: 'hidden', timeout: 20000})
+  await tabs.getByRole('button', {name: 'Audit logs', exact: true}).waitFor()
+  sql(`delete from public.st_v2_workspaces where id='${ownedWorkspace}' and owner='${operator.user.id}';`)
   await page.getByRole('heading', {name: 'Access unavailable'}).waitFor({timeout: 20000})
   assert.equal(await page.getByRole('heading', {name: 'Moderation queue', exact: true}).count(), 0)
   assert.equal(await queue.count(), 0)
   await page.getByRole('button', {name: 'Sign out', exact: true}).click()
   await page.getByRole('heading', {name: 'Operator sign-in'}).waitFor()
-  console.log('PASS named operator provisioning, TOTP, ordinary account denial, consented evidence, reporter-only resolution, moderation actions, queue health and role revocation')
+  console.log('PASS named operator provisioning, TOTP, scoped audit, ordinary account denial, consented evidence, reporter-only resolution, moderation actions, queue health and role revocation')
 } finally {
   await browser?.close()
   if (report) sql(`delete from sectalk_private.audit where report_id='${report}';
@@ -238,6 +285,7 @@ try {
   }
   for(const id of [chat,secondChat].filter(Boolean)) sql(`delete from public.st_messages where chat_id='${id}';
     delete from public.st_calls where chat_id='${id}'; delete from public.st_chats where id='${id}';`)
+  for (const id of workspaces) sql(`delete from public.st_v2_workspaces where id='${id}';`)
   for (const id of accounts) {
     sql(`delete from sectalk_private.st_v6_queue_operators where account_id='${id}';
       delete from sectalk_private.st_v8_operator_provisioning_audit

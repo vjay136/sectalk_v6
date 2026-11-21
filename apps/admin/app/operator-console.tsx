@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { AuditSearch, type AuditWorkspace } from '../../web/components/audit-search'
 import { AccountAdministration, type AccountOperatorAccess } from '../../web/components/account-administration'
 import { DisclosureQueue } from '../../web/components/disclosure-queue'
 import { ModerationQueue } from '../../web/components/moderation-queue'
@@ -12,7 +13,7 @@ import { db } from '../../web/lib/data'
 import { WorkspaceReports } from './workspace-reports'
 
 type Access = 'loading' | 'signed_out' | 'denied' | 'mfa' | 'verified' | 'unavailable'
-type Area = 'moderation' | 'workspaceReports' | 'queue' | 'disclosures' | 'accounts' | 'triage' | 'responses'
+type Area = 'moderation' | 'workspaceReports' | 'queue' | 'disclosures' | 'accounts' | 'triage' | 'responses' | 'audit'
 type Assignment = 'none' | 'mfa' | 'verified'
 const idleLimit = 15 * 60 * 1000
 
@@ -25,6 +26,7 @@ export function OperatorConsole() {
   const [accountAccess, setAccountAccess] = useState<AccountOperatorAccess>('none')
   const [triageAccess, setTriageAccess] = useState<ThreatTriageAccess>({status:'none'})
   const [responseAccess, setResponseAccess] = useState(false)
+  const [auditWorkspaces, setAuditWorkspaces] = useState<AuditWorkspace[]>([])
   const [area, setArea] = useState<Area>('moderation')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
@@ -34,6 +36,7 @@ export function OperatorConsole() {
   const signOut = useCallback(async () => {
     ++request.current
     setAccess('signed_out')
+    setAuditWorkspaces([])
     lastActivity.current = 0
     const result = await db?.auth.signOut({scope: 'local'})
     if (result?.error) setNotice('Could not end your session. Close this browser window.')
@@ -44,7 +47,7 @@ export function OperatorConsole() {
     if (!db) {setAccess('unavailable'); return}
     const {data, error} = await db.auth.getSession()
     if (version !== request.current) return
-    if (error || !data.session) {setAccess('signed_out'); return}
+    if (error || !data.session) {setAuditWorkspaces([]); setAccess('signed_out'); return}
     if (!lastActivity.current) lastActivity.current = Date.now()
     if (Date.now() - lastActivity.current >= idleLimit) {
       setNotice('Your console session ended after 15 minutes of inactivity.')
@@ -70,11 +73,16 @@ export function OperatorConsole() {
         setAccountAccess(accounts)
         setTriageAccess(triage)
         setResponseAccess(responses)
+        if (value.access === 'verified') {
+          const spaces = await db.rpc('st_v6_audit_workspaces')
+          if (version !== request.current) return
+          setAuditWorkspaces(!spaces.error && Array.isArray(spaces.data) ? spaces.data : [])
+        } else setAuditWorkspaces([])
         setAccess(value.access)
       }
-      else setAccess([401,403,423].includes(result.status) ? 'denied' : 'unavailable')
+      else {setAuditWorkspaces([]); setAccess([401,403,423].includes(result.status) ? 'denied' : 'unavailable')}
     } catch {
-      if (version === request.current) setAccess('unavailable')
+      if (version === request.current) {setAuditWorkspaces([]); setAccess('unavailable')}
     }
   }, [signOut])
 
@@ -87,9 +95,11 @@ export function OperatorConsole() {
     const check = () => {if (document.visibilityState === 'visible') void refresh()}
     let scheduled: ReturnType<typeof setTimeout>
     const {data} = db.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN') setAuditWorkspaces([])
       if (event === 'SIGNED_OUT') {
         ++request.current
         setAccess('signed_out')
+        setAuditWorkspaces([])
       }
       clearTimeout(scheduled)
       scheduled = setTimeout(() => void refresh(), 0)
@@ -157,6 +167,7 @@ export function OperatorConsole() {
   if (accountAccess !== 'none') sections.push(['accounts', 'Account administration'])
   if (triageAccess.status !== 'none') sections.push(['triage', 'Threat triage'])
   if (responseAccess) sections.push(['responses', 'Response actions'])
+  if (auditWorkspaces.length) sections.push(['audit', 'Audit logs'])
   const selected = sections.some(([id]) => id === area) ? area : sections[0]?.[0]
   const needsAuthenticator = access === 'mfa' || (access === 'verified' && (
     (selected === 'queue' && queueAccess === 'mfa') || (selected === 'disclosures' && disclosureAccess === 'mfa') ||
@@ -180,6 +191,8 @@ export function OperatorConsole() {
       {selected === 'triage' && triageAccess.status === 'verified' &&
         <ThreatTriage access={triageAccess} refresh={refresh} showResponseActions={false}/>}
       {selected === 'responses' && responseAccess && <SocResponseActions/>}
+      {selected === 'audit' && auditWorkspaces.length > 0 &&
+        <AuditSearch key={auditWorkspaces.map(space => space.id).join(',')} workspaces={auditWorkspaces}/>}
     </>}
     {(access !== 'verified' || needsAuthenticator) && <section className="panel operator-card" aria-label="Console access">
       {access === 'loading' && <p role="status">Checking console access…</p>}
