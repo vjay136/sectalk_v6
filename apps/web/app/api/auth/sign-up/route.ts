@@ -1,8 +1,8 @@
 import {isIP} from 'node:net'
 import {createClient} from '@supabase/supabase-js'
-import {confirmationRedirect} from '../../../../lib/auth-confirmation-origin.mjs'
 import {readBoundedText} from '../../../../lib/request-body'
 import {isBreachedPassword} from '../../../../lib/breached-password'
+import {signupConfiguration} from '../../../../lib/signup-configuration.mjs'
 import {signupPasswordHash} from '../../../../lib/signup-password.mjs'
 
 export const runtime='nodejs'
@@ -15,13 +15,9 @@ const failure=(status=400)=>Response.json({error:'signup_unavailable'},{status,h
 const sent=()=>Response.json({status:'sent'},{headers})
 
 export async function POST(request:Request) {
-  const project=process.env.NEXT_PUBLIC_SUPABASE_URL
-  const upstream=process.env.SECTALK_AUTH_SIGNUP_UPSTREAM||project
-  const key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-  const serviceKey=process.env.SECTALK_SIGNUP_ADMISSION_SERVICE_KEY||process.env.SECTALK_AUTH_RISK_SERVICE_KEY
-  const redirect=confirmationRedirect(process.env.SECTALK_APP_URL,request.url,
-    process.env.VERCEL==='1'&&process.env.VERCEL_ENV!=='development')
-  if (!project||!upstream||!key||!serviceKey||!redirect) return failure(503)
+  const configuration=signupConfiguration(request.url)
+  if (!configuration) return failure(503)
+  const {project,upstream,key,serviceKey,redirect}=configuration
   try {
     const raw=await readBoundedText(request,4096)
     if (!raw) return failure()

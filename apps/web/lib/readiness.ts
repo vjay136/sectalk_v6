@@ -27,8 +27,8 @@ export function checkConfiguredDatabase(surface: Surface = 'web') {
   }, fetch, surface)
 }
 
-export async function readinessResponse(surface: Surface) {
-  const ready = await checkConfiguredDatabase(surface)
+export async function readinessResponse(surface: Surface, appConfigured = true) {
+  const ready = appConfigured && await checkConfiguredDatabase(surface)
   return Response.json({ status: ready ? 'ready' : 'not_ready' }, {
     status: ready ? 200 : 503,
     headers: { 'Cache-Control': 'no-store' },
