@@ -7,6 +7,7 @@ declare
   workspace uuid; second_workspace uuid;
   meeting uuid:=gen_random_uuid(); room uuid:=gen_random_uuid(); room_call uuid:=gen_random_uuid();
   unprotected uuid:=gen_random_uuid();
+  presenter_digest text:=repeat('b',64);
   provider text:='custom:entry-meeting-rollback'; domain text:='entry-meeting.example.invalid';
   owner_claim text:=jsonb_build_object('sub',owner_id,'session_id',owner_session,'role','authenticated','aal','aal2')::text;
   plain_claim text:=jsonb_build_object('sub',actor,'session_id',password_session,'role','authenticated')::text;
@@ -43,7 +44,11 @@ begin
     raise exception 'Schedule SSO enabled without observed provider session'; end if;
   perform public.st_v3_schedule(workspace,'Scheduled SSO sentinel','Protected agenda',now(),now()+interval '1 hour',meeting);
   perform public.st_v3_meeting_state(meeting,'live');
+  perform public.st_v6_send_meeting_chat(meeting,gen_random_uuid(),'Protected collaboration sentinel');
+  perform public.st_v6_set_meeting_hand(meeting,true);
   perform public.st_v3_schedule(second_workspace,'Other meeting','',now(),now()+interval '1 hour',unprotected);
+  perform public.st_v3_meeting_state(unprotected,'live');
+  perform public.st_v6_send_meeting_chat(unprotected,gen_random_uuid(),'Independent collaboration sentinel');
   perform public.st_v6_room_create(room,workspace,'Independent room calls','private','project');
   perform public.st_v6_start_room_call(room,room_call,'Independent room call');
   if not exists(select 1 from public.st_v3_attendance where meeting_id=meeting and user_id=owner_id) then
@@ -60,8 +65,13 @@ begin
     or (select count(*) from public.st_v3_meetings where id in (room_call,unprotected))<>1
     or public.st_v6_room_calls(room) is not null
     or public.st_v8_workspace_member_media_allowed(meeting)
-    or not public.st_v3_media_access(meeting) then
-    raise exception 'Schedule leaked rows, hid independent room calls, or affected existing media identity'; end if;
+    or public.st_v3_media_access(meeting)
+    or exists(select 1 from public.st_v6_meeting_chat where meeting_id=meeting)
+    or exists(select 1 from public.st_v6_meeting_hands where meeting_id=meeting)
+    or exists(select 1 from public.st_v6_meeting_controls where meeting_id=meeting)
+    or not public.st_v3_media_access(unprotected)
+    or not exists(select 1 from public.st_v6_meeting_chat where meeting_id=unprotected) then
+    raise exception 'Password owner received protected meeting data or lost unprotected collaboration'; end if;
   begin
     perform public.st_v3_schedule(workspace,'Blocked meeting','',now(),now()+interval '1 hour',gen_random_uuid());
     raise exception 'Password owner scheduled a protected meeting';
@@ -106,12 +116,52 @@ begin
   perform public.st_v3_admit(meeting,actor,true);
   if not exists(select 1 from public.st_v3_attendance where meeting_id=meeting and user_id=actor and status='admitted') then
     raise exception 'Live owner provider session could not admit attendee'; end if;
+  perform set_config('request.jwt.claims',provider_claim,true);
+  if not public.st_v3_media_access(meeting)
+    or (select count(*) from public.st_v6_meeting_roster(meeting))<>2
+    or not exists(select 1 from public.st_v6_meeting_chat where meeting_id=meeting and user_id=owner_id)
+    or not exists(select 1 from public.st_v6_meeting_hands where meeting_id=meeting and user_id=owner_id)
+    or not exists(select 1 from public.st_v6_meeting_controls where meeting_id=meeting) then
+    raise exception 'Admitted provider session lost meeting collaboration'; end if;
+  perform public.st_v6_send_meeting_chat(meeting,gen_random_uuid(),'Verified member can collaborate');
+  perform public.st_v6_set_meeting_hand(meeting,true);
+  perform public.st_v6_send_meeting_reaction(meeting,'heart');
+  if not public.st_v6_screen_presenter(meeting,presenter_digest,'claim')
+    or not public.st_v6_screen_presenter(meeting,presenter_digest,'renew') then
+    raise exception 'Admitted provider session could not present'; end if;
+  perform set_config('request.jwt.claims',plain_claim,true);
+  if public.st_v3_media_access(meeting)
+    or exists(select 1 from public.st_v6_meeting_chat where meeting_id=meeting)
+    or exists(select 1 from public.st_v6_meeting_hands where meeting_id=meeting)
+    or exists(select 1 from public.st_v6_meeting_reactions where meeting_id=meeting)
+    or public.st_v6_screen_presenter(meeting,presenter_digest,'renew') then
+    raise exception 'Password session inherited meeting access from another session of the same attendee'; end if;
+  if not public.st_v6_screen_presenter(meeting,presenter_digest,'release') then
+    raise exception 'Existing presenter could not release their lease'; end if;
+  begin
+    perform public.st_v6_meeting_roster(meeting);
+    raise exception 'Password session read the active meeting roster';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.st_v6_send_meeting_chat(meeting,gen_random_uuid(),'Password session write');
+    raise exception 'Password session sent meeting chat';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.st_v6_set_meeting_hand(meeting,false);
+    raise exception 'Password session changed hand status';
+  exception when insufficient_privilege then null;
+  end;
+  perform set_config('request.jwt.claims',owner_claim,true);
   reset role;
   update auth.custom_oauth_providers set enabled=false where identifier=provider;
   set local role authenticated;
   if not public.st_v8_workspace_schedule_requires_sso(workspace)
-    or exists(select 1 from public.st_v3_meetings where id=meeting) then
-    raise exception 'Disabled provider retained schedule access'; end if;
+    or exists(select 1 from public.st_v3_meetings where id=meeting)
+    or public.st_v3_media_access(meeting)
+    or exists(select 1 from public.st_v6_meeting_chat where meeting_id=meeting) then
+    raise exception 'Disabled provider retained schedule or meeting collaboration access'; end if;
   perform public.st_v3_meeting_state(meeting,'ended');
   perform public.st_v3_meeting_state(room_call,'ended');
   if public.st_v8_workspace_entry_policy(workspace,false)->>'required' is distinct from 'false' then
@@ -196,4 +246,4 @@ begin
 end $$;
 rollback;
 
-select 'passed: entry meeting schedules, lobby, member media, room-call shutdown and independent guest admission';
+select 'passed: entry meeting schedules, lobby, in-app collaboration, member media, room-call shutdown and independent guest admission';

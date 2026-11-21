@@ -2,6 +2,7 @@
 
 import {useCallback,useEffect,useRef,useState,type FormEvent} from 'react'
 import {db,formatError} from '../lib/data'
+import {isFreeRelease} from '../lib/release-scope'
 import {StaffMfa} from './staff-mfa'
 import {WorkspaceContentExport} from './workspace-content-export'
 import {WorkspaceErasureReview} from './workspace-erasure-review'
@@ -140,6 +141,7 @@ export function WorkspaceOffboarding({workspace,reviewOnly=false}:{workspace:str
   const request=state.request
   return <section className="release-section" aria-label="Workspace offboarding">
     <h3>Workspace offboarding</h3>
+    {isFreeRelease&&<p role="status">Permanent workspace erasure is planned for a future release. Use the available export, preservation, and offboarding review controls.</p>}
     <p>The inventory includes workspace settings and record counts. Message content, files, personal accounts and other workspaces stay out of this export.</p>
     <p>Read-only staging preserves the workspace. Permanent deletion and key destruction are separate from this workflow.</p>
     {state.access==='mfa'&&<StaffMfa refresh={load} explanation="Verify your authenticator to manage workspace offboarding."/>}
@@ -226,7 +228,7 @@ export function WorkspaceOffboarding({workspace,reviewOnly=false}:{workspace:str
         <WorkspaceSourceBatch key={workspace} workspace={workspace} role={state.role}/>
         <WorkspaceOffboardingCustody key={workspace+'-audit-custody'} workspace={workspace} role={state.role} kind="audit"/>
         <WorkspaceErasureReview key={workspace+'-erasure-review'} workspace={workspace} role={state.role}/>
-        <WorkspaceOffboardingCustody key={workspace+'-external-key-retirement'} workspace={workspace} role={state.role} kind="provider"/>
+        {!isFreeRelease&&<WorkspaceOffboardingCustody key={workspace+'-external-key-retirement'} workspace={workspace} role={state.role} kind="provider"/>}
         <WorkspaceOffboardingCustody key={workspace+'-workflow-custody'} workspace={workspace} role={state.role} kind="workflow"/>
         <WorkspaceFileRegistrationCleanup key={workspace+'-room-file-cleanup'} workspace={workspace} role={state.role} scope="room"/>
         <WorkspaceFileRegistrationCleanup key={workspace+'-workspace-file-cleanup'} workspace={workspace} role={state.role} scope="workspace"/>

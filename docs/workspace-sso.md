@@ -43,6 +43,7 @@ Direct-chat tasks, meeting schedules and workspace membership keep their existin
 | Surface | Current enforcement |
 | --- | --- |
 | Member meeting media credentials | Optional receipt gate at the managed and protected token endpoints. Existing admission and cryptographic checks still apply. |
+| In-app meeting collaboration | **Workspace entry** requires a current pinned session for admitted users to access the roster, chat, spotlight, hands, reactions, and presenter claim or renewal in standard and room meetings. Safety actions such as meeting shutdown keep their existing authorization. |
 | Active provider connections and previously issued media credentials | Existing media provider semantics apply until disconnect or credential expiry. In-flight issuance may complete under the policy it checked. |
 | Guest meetings, guest rooms and media workers | Independent guest or worker capabilities. Protected standard rooms revoke guest message links. Recording and caption egress retain their own policies. |
 | Standard channel posts | Optional receipt gate for ordinary reads, sends, search results, new post reports, and Realtime insert and update contents. |

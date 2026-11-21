@@ -14,7 +14,7 @@ export default async function LegalIndex() {
     <article className={styles.reading}>
       <header className={styles.heading}>
         <h1>Legal</h1>
-        <p>{release ? 'Read the effective service terms and privacy notice.' : 'The service terms and privacy notice are available as drafts pending operator approval.'}</p>
+        <p>{release ? 'Read the effective service terms and privacy notice.' : 'The service terms and privacy notice are available as drafts. The effective documents will be published after operator approval.'}</p>
       </header>
       {release && <section aria-labelledby="legal-operator">
         <h2 id="legal-operator">Service operator</h2>

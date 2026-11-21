@@ -1,6 +1,6 @@
 # V6 deployment status
 
-The existing SecTalk v5 Vercel project and GitHub release are the live baseline. The [v6 Free-tier candidate](https://github.com/vjay136/sectalk_v6/commit/e2f56f9a3e07731b8975728e0327bc9839f2386a) is published to GitHub. The separate hosted database is migrated. Vercel provisioning and hosted application checks are pending.
+The existing SecTalk v5 Vercel project and GitHub release are the live baseline. The [v6 candidate](https://github.com/vjay136/sectalk_v6) targets the Free-tier release scope. The hosted database has the migration baseline recorded below. Vercel provisioning and hosted application checks are pending.
 
 Publish future v6 updates to `main` in the separate [SecTalk v6 GitHub repository](https://github.com/vjay136/sectalk_v6) using the local `v6` remote. The existing `origin` points to the v5 repository. Import the v6 repository into a separate Vercel project under `silent-soldier-vjay` and configure it with the v6 backend.
 
@@ -16,7 +16,7 @@ Local production builds passed for Web, Admin and Workers with loopback fixture 
 | SEC-04 Tenant key lifecycle | Managed key features and synthetic provider checks have local evidence. Enable hosted BYOK only after scoped provider and recovery verification. |
 | PLAT-13 Effective legal documents | Public pages and versioned acceptance are implemented. Terms and Privacy render as drafts until the actual operator approves and configures the effective documents. |
 
-The Free-tier source may be imported into Vercel once a separate backend has been chosen. Run the hosted readiness, integration, security, accessibility, load and recovery checks for enabled services before opening it to users.
+Set `SECTALK_RELEASE_SCOPE=free` on the Vercel Web project. The UI presents availability notices for Enterprise SSO, dedicated regions, permanent tenant erasure and external tenant keys. Terms and Privacy remain available as labeled drafts until operator approval. Existing workspace access rules still apply. Run the hosted readiness, integration, security, accessibility, load and recovery checks for enabled services before opening it to users.
 
 Keep the Free-tier defaults when upgrading the v6 backend. Enable each optional capability after its own hosted check passes:
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import dynamic from 'next/dynamic'
 import { CalendarDays, Hash, ListChecks, MessageCircle, Plus, Send, Users } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, type Profile } from '../lib/data'
+import { isFreeRelease } from '../lib/release-scope'
 import { SectionTabs } from './section-tabs'
 import { RoomDirectory } from './room-directory'
 import { QuietHoursSettings } from './quiet-hours'
@@ -162,7 +163,7 @@ export function Workspaces({ user, view = 'workspaces', requestedRoom }: {
     {error && <p role="alert" className="error">{error}</p>}
     {view==='workspaces'&&<PendingWorkspaceInvite onJoined={reloadWorkspaces}/>}
     {view==='workspaces'&&<PendingDirectoryMembership key={'directory-membership:'+user}/>}
-    {view==='workspaces'&&<WorkspaceResidencyClaim key={'residency-claim:'+user} onClaimed={reloadWorkspaces}/>}
+    {!isFreeRelease&&view==='workspaces'&&<WorkspaceResidencyClaim key={'residency-claim:'+user} onClaimed={reloadWorkspaces}/>}
     {view==='workspaces' && invites.length > 0 && <section className="panel release-panel"><h2>Invitations</h2>{invites.map(invite => <div className="release-row" key={invite.id}>
       <strong>{invite.workspace_name}</strong>
       <button className="primary" disabled={busy} onClick={() => void reply(invite.id, true)}>Join</button>
@@ -264,23 +265,23 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
 
   return <div className="panel release-panel">
     {view==='workspaces'&&<OrganizationBrand workspace={space.id} name={space.name} accent={liveBrand}/>}
-    {view==='workspaces'&&<WorkspaceResidencyRouting workspace={space.id}/>}
-    {view==='workspaces'&&space.role==='owner'&&<WorkspaceResidencyWriteHandoff workspace={space.id}
+    {!isFreeRelease&&view==='workspaces'&&<WorkspaceResidencyRouting workspace={space.id}/>}
+    {!isFreeRelease&&view==='workspaces'&&space.role==='owner'&&<WorkspaceResidencyWriteHandoff workspace={space.id}
       onRollbackHeld={()=>setRollbackReviewVersion(version=>version+1)}/>}
-    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyRollbackReview
+    {!isFreeRelease&&view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyRollbackReview
       key={'destination-review:'+space.id+':'+rollbackReviewVersion} workspace={space.id}/>}
-    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
+    {!isFreeRelease&&view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
       key={'board:'+space.id+':'+rollbackReviewVersion} workspace={space.id}/>}
-    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
+    {!isFreeRelease&&view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
       key={'channels:'+space.id+':'+rollbackReviewVersion} workspace={space.id} scope="channels"/>}
-    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
+    {!isFreeRelease&&view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
       key={'rooms:'+space.id+':'+rollbackReviewVersion} workspace={space.id} scope="rooms"/>}
-    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
+    {!isFreeRelease&&view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
       key={'room-tasks:'+space.id+':'+rollbackReviewVersion} workspace={space.id} scope="roomTasks"/>}
-    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencySourceReplayReview
+    {!isFreeRelease&&view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencySourceReplayReview
       key={'source-review:'+space.id+':'+rollbackReviewVersion} workspace={space.id}/>}
-    {view==='workspaces'&&space.role==='member'&&<WorkspaceResidencyBoardAuthor key={space.id} workspace={space.id}/>}
-    {view==='workspaces'&&space.role==='member'&&<WorkspaceResidencyBoardAuthor key={'chat:'+space.id} workspace={space.id} scope="channels"/>}
+    {!isFreeRelease&&view==='workspaces'&&space.role==='member'&&<WorkspaceResidencyBoardAuthor key={space.id} workspace={space.id}/>}
+    {!isFreeRelease&&view==='workspaces'&&space.role==='member'&&<WorkspaceResidencyBoardAuthor key={'chat:'+space.id} workspace={space.id} scope="channels"/>}
     {view==='workspaces'&&space.policy&&<p className="muted">{space.policy.details?.label||space.policy.workspace_type} · {
       space.policy.compliance?.label||(space.policy.template==='restricted'?'Restricted policy':'Standard policy')}</p>}
     {view==='workspaces' && <SectionTabs label="Workspace sections" value={visibleTab} onChange={next=>{

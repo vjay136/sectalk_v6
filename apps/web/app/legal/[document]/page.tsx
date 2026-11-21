@@ -66,6 +66,7 @@ export default async function LegalPage({ params }: { params: Promise<{ document
         {approved ? <p>Effective <time dateTime={approved.effectiveOn}>{approved.effectiveOn}</time> · Version {approved.version}</p> : <>
           <p><strong>{key === 'dpa' ? 'Unsigned template' : 'Draft'}</strong></p>
           <p>{document.summary}</p>
+          {key !== 'dpa' && <p>The effective document will be published after operator approval.</p>}
         </>}
       </header>
       {approved && release ? <>

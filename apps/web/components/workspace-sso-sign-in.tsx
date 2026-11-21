@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from 'react'
 import { rememberWorkspaceSsoLink } from '../lib/workspace-link'
+import { isFreeRelease } from '../lib/release-scope'
 
 export function WorkspaceSsoSignIn({workspace}:{workspace?:string}={}) {
   const [busy,setBusy]=useState(false)
@@ -22,10 +23,11 @@ export function WorkspaceSsoSignIn({workspace}:{workspace?:string}={}) {
   }
   return <details className="release-create">
     <summary>Sign in with workspace SSO</summary>
+    {isFreeRelease&&!workspace ? <p role="status">Enterprise SSO is planned for a future release. Use email and password for standard workspaces.</p> :
     <form className="release-form" onSubmit={event=>void start(event)}>
       <label>Workspace email domain<input name="domain" dir="ltr" placeholder="example.org" required maxLength={225} autoComplete="off"/></label>
       <button type="submit" className="secondary" disabled={busy}>{busy?'Opening workspace sign-in…':'Continue with workspace SSO'}</button>
       {error&&<p role="alert">{error}</p>}
-    </form>
+    </form>}
   </details>
 }

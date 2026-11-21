@@ -4,7 +4,8 @@ import { join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseEnv } from 'node:util'
 
-const browserVariables = new Set(['NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY','NEXT_PUBLIC_SECTALK_PASSKEYS_ENABLED'])
+const browserVariables = new Set(['NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY','NEXT_PUBLIC_SECTALK_PASSKEYS_ENABLED',
+  'NEXT_PUBLIC_SECTALK_RELEASE_SCOPE'])
 const credentialPatterns = [
   ['Supabase secret key', /\bsb_(?:secret_[a-z0-9_-]{16,}|access_[a-z0-9_-]{20,})\b/i],
   ['Supabase access token', /\bsbp_[a-f0-9]{30,}\b/i],

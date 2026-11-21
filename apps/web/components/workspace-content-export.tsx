@@ -4,6 +4,7 @@ import {useCallback,useEffect,useRef,useState,type FormEvent} from 'react'
 import {db,formatError} from '../lib/data'
 import {WorkspaceResidencySourceReceipt} from './workspace-residency-source-receipt'
 import {WorkspaceResidencySourceCoverage} from './workspace-residency-source-coverage'
+import {isFreeRelease} from '../lib/release-scope'
 
 type Status={role:'owner'|'reviewer';id:string|null;records:number|null;manifestSha256:string|null;expiresAt:string|null;
   includesFiles:boolean;includesRoomFiles:boolean}
@@ -100,8 +101,8 @@ export function WorkspaceContentExport({workspace,storagePlan,onStorageCopy}:{wo
     {status.id&&status.includesRoomFiles&&<p>This request includes eligible standard room files.</p>}
     {status.id&&status.records===null&&status.role==='reviewer'&&form('approve','Approve exact content revisions')}
     {status.records!==null&&<p>{status.records} approved records · Manifest SHA-256 <code>{status.manifestSha256}</code></p>}
-    {status.id&&status.records!==null&&!expired&&<WorkspaceResidencySourceReceipt key={status.id} workspace={workspace} approval={status.id}/>}
-    {status.id&&status.records!==null&&!expired&&<WorkspaceResidencySourceCoverage key={'coverage:'+status.id} workspace={workspace} approval={status.id}/>}
+    {!isFreeRelease&&status.id&&status.records!==null&&!expired&&<WorkspaceResidencySourceReceipt key={status.id} workspace={workspace} approval={status.id}/>}
+    {!isFreeRelease&&status.id&&status.records!==null&&!expired&&<WorkspaceResidencySourceCoverage key={'coverage:'+status.id} workspace={workspace} approval={status.id}/>}
     {expired&&<p>Content approval has expired.</p>}
     {status.id&&status.records!==null&&!expired&&status.role==='owner'&&cursor!==null&&
       <button type="button" disabled={busy} onClick={()=>void run('page',workspace)}>Download next content page</button>}

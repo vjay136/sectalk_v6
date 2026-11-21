@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
+import { isFreeRelease } from '../lib/release-scope'
 
 type KeyState = {
   access: 'none' | 'mfa' | 'owner' | 'admin'; enterprise: boolean;
@@ -114,6 +115,7 @@ export function TenantArtifactKeys({ workspace }: { workspace: string }) {
   return <section className="release-section" aria-label="Managed artifact keys">
     <h3>Managed artifact keys</h3>
     <p>These workspace keys protect new compliance bundles and evidence vault captures.</p>
+    {isFreeRelease&&<p role="status">External key custody and provider erasure verification are planned for a future release. Managed custody is available.</p>}
     {error && <p role="alert" className="error">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {!state && !error && <p role="status">Loading workspace keys…</p>}
@@ -122,7 +124,7 @@ export function TenantArtifactKeys({ workspace }: { workspace: string }) {
       ? 'Managed key copies destroyed.' : 'Version '+active.version+' · '+(active.custody==='byok' ? 'Enterprise external custody' : 'Managed custody')}</p>}
     {canRotate && <form className="release-form" onSubmit={event=>void run(event,'rotate')}>
       <label>Key custody<select name="custody" aria-label="Key custody"><option value="managed">Managed custody</option>
-        {state.enterprise && <option value="byok">Configured Enterprise external custody</option>}
+        {!isFreeRelease&&state.enterprise && <option value="byok">Configured Enterprise external custody</option>}
       </select></label>
       <label>Key rotation reason<textarea name="key-reason" minLength={15} maxLength={240} required/></label>
       <button type="submit" disabled={busy}>{active ? 'Rotate workspace key' : 'Create workspace key'}</button>
@@ -142,7 +144,7 @@ export function TenantArtifactKeys({ workspace }: { workspace: string }) {
       </form>}
     </details>}
     <button className="secondary" type="button" disabled={busy} onClick={()=>void refresh()}>Refresh key status</button>
-    {provider && provider.versions.length>0 && <details>
+    {!isFreeRelease&&provider && provider.versions.length>0 && <details>
       <summary>Provider key erasure evidence</summary>
       <p>Workspace source deletion is unverified. Backup erasure is unverified.</p>
       {provider.held && <p>Active preservation holds pause provider verification.</p>}

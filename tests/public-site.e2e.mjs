@@ -38,7 +38,7 @@ try {
     assert.equal(await page.getByRole('link', { name: 'Service contact', exact: true }).getAttribute('href'), supportContact)
     assert.equal(await page.getByRole('link', { name: 'Privacy contact', exact: true }).getAttribute('href'), privacyContact)
   } else {
-    await page.getByText('The service terms and privacy notice are available as drafts pending operator approval.').waitFor()
+    await page.getByText('The service terms and privacy notice are available as drafts. The effective documents will be published after operator approval.').waitFor()
     assert.equal(await page.getByRole('heading', { name: 'Service operator', exact: true }).count(), 0)
   }
   const legal = page.getByRole('navigation', { name: 'Legal and support', exact: true })

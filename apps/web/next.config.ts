@@ -2,6 +2,10 @@ import type { NextConfig } from 'next'
 
 const config: NextConfig = {
   poweredByHeader: false,
+  env: {
+    NEXT_PUBLIC_SECTALK_RELEASE_SCOPE: process.env.SECTALK_RELEASE_SCOPE === 'full' ? 'full' :
+      process.env.SECTALK_RELEASE_SCOPE === 'free' || process.env.VERCEL === '1' ? 'free' : 'full',
+  },
   async headers() {
     return [{
       source: '/:path*',

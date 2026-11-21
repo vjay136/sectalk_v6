@@ -5,6 +5,7 @@ import { db, formatError } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { StaffMfa } from './staff-mfa'
 import { useFeature } from '../lib/use-feature'
+import { isFreeRelease } from '../lib/release-scope'
 import { WorkspaceScim } from './workspace-scim'
 import { WorkspaceSsoSettings } from './workspace-sso-settings'
 
@@ -21,7 +22,11 @@ export function WorkspaceIntegrations({workspace, onManageDomains}: {workspace: 
     <h2>Integrations</h2>
     <SectionTabs label="Integration sections" value={tab} onChange={setTab}
       options={ [['keys','API keys'], ['webhooks','Outbound webhooks'], ['sso','Single sign-on'], ['scim','SCIM']] }/>
-    {tab === 'sso' ? <WorkspaceSsoSettings workspace={workspace} onManageDomains={onManageDomains}/> :
+    {tab === 'sso' ? isFreeRelease
+      ? <section aria-label="Enterprise workspace sign-in"><h3>Enterprise workspace SSO</h3>
+        <p role="status">Enterprise single sign-on is planned for a future release. Use your email and password for standard workspaces.</p>
+      </section>
+      : <WorkspaceSsoSettings workspace={workspace} onManageDomains={onManageDomains}/> :
       tab === 'scim' ? <WorkspaceScim workspace={workspace} onManageDomains={onManageDomains}/> :
         <WorkspaceIntegrationCredentials key={tab} workspace={workspace} tab={tab}/>}
   </section>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { db, formatError } from '../lib/data'
 import { verifyAccountCredential } from '../lib/account-credential'
+import { isFreeRelease } from '../lib/release-scope'
 import { WorkspaceInvitationTemplates } from './workspace-invitation-templates'
 import { WorkspaceResidency } from './workspace-residency'
 import { WorkspaceOffboarding } from './workspace-offboarding'
@@ -183,7 +184,11 @@ export function OrganizationSettings({ workspace, onBrand }: {
       </li>)}</ul>
     </section>}
     {organizationAccess==='allowed'&&settings && <WorkspaceInvitationTemplates workspace={workspace} organization={settings.name} disabled={busy || !!step} authorize={handle}/> }
-    {organizationAccess==='allowed'&&settings && <WorkspaceResidency key={workspace} workspace={workspace} disabled={busy || !!step} authorize={handle}/>}
+    {organizationAccess==='allowed'&&settings && (isFreeRelease
+      ? <section aria-label="Enterprise data residency" className="release-section"><h3>Enterprise data residency</h3>
+        <p role="status">Dedicated regions and cross-region migration are planned for a future release. Your workspace continues to use the configured service region.</p>
+      </section>
+      : <WorkspaceResidency key={workspace} workspace={workspace} disabled={busy || !!step} authorize={handle}/>)}
     <WorkspaceOffboarding key={'offboarding-'+workspace} workspace={workspace}/>
     {organizationAccess==='allowed'&&step && <form className="release-form" aria-label="Verify current sign-in" onSubmit={event => void confirm(event)}>
       <label>{step.assurance === 'totp' ? 'Current authenticator code' : 'Current password'}
