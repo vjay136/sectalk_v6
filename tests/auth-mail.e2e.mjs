@@ -22,6 +22,30 @@ do breached = randomBytes(24).toString('base64url') + '!w7'
 while (passwordDigest(breached).slice(0,5) === passwordDigest(original).slice(0,5))
 const requests = []
 let providerUnavailable = false
+const resendPort = process.env.SECTALK_AUTH_TEST_RESEND_PORT
+let resendAttempts = 0
+const resendUpstream = resendPort && new URL(process.env.SECTALK_AUTH_TEST_NATIVE_ORIGIN || 'http://127.0.0.1:55321')
+if (resendUpstream) assert.ok(['http://127.0.0.1:55321','http://127.0.0.1:56801'].includes(resendUpstream.origin))
+const resend = resendPort && createServer(async (request, response) => {
+  try {
+    const url = new URL(request.url, resendUpstream)
+    if (request.method !== 'POST' || url.origin !== resendUpstream.origin || url.pathname !== '/auth/v1/resend') {
+      return response.writeHead(404).end()
+    }
+    const body = await new Response(request).text()
+    const payload = JSON.parse(body)
+    if (payload.email !== email || payload.type !== 'signup') return response.writeHead(400).end()
+    response.setHeader('Content-Type', 'application/json')
+    if (++resendAttempts === 1) return response.writeHead(503).end('{"message":"Synthetic delivery outage"}')
+    const forwarded = await fetch(url, {
+      method: 'POST', body, redirect: 'error',
+      headers: Object.fromEntries(['authorization','apikey','content-type'].map(name => [name, request.headers[name]])),
+    })
+    response.writeHead(forwarded.status).end(await forwarded.text())
+  } catch {
+    response.writeHead(500).end()
+  }
+})
 const range = fixturePort && createServer((request, response) => {
   requests.push({path:request.url, method:request.method, padding:request.headers['add-padding']})
   if (providerUnavailable) return response.writeHead(503).end()
@@ -56,6 +80,13 @@ async function signIn(page, password, expected) {
 }
 
 try {
+  if (resend) {
+    assert.ok(range, 'Use the local password check fixture for the retry test')
+    await new Promise((resolve,reject)=>{
+      resend.once('error',reject)
+      resend.listen(Number(resendPort),'127.0.0.1',resolve)
+    })
+  }
   if (range) await new Promise((resolve,reject)=>{
     range.once('error',reject)
     range.listen(Number(fixturePort),'127.0.0.1',resolve)
@@ -90,7 +121,21 @@ try {
   await page.getByLabel('Email address', { exact: true }).fill(email)
   await page.getByLabel('Password', { exact: true }).fill(original)
   await page.getByLabel('Confirm password', { exact: true }).fill(original)
+  const submitted=page.waitForResponse(result=>result.url().endsWith('/api/auth/sign-up'))
   await page.locator('button.submit-auth').click()
+  if (resend) {
+    assert.equal((await submitted).status(),503)
+    assert.equal(resendAttempts,1)
+    await page.getByText('Your account was created, but we could not send the verification link. Use Resend verification link to try again.',{exact:true}).waitFor()
+    const inbox=await fetch(mail + '/api/v1/search?query=' + encodeURIComponent('to:' + email))
+    assert.equal((await inbox.json()).messages?.length??0,0)
+    const retried=page.waitForResponse(result=>result.url().endsWith('/api/auth/sign-up'))
+    await page.getByRole('button',{name:'Resend verification link',exact:true}).click()
+    assert.equal((await retried).status(),200)
+    assert.equal(resendAttempts,2)
+  } else {
+    assert.equal((await submitted).status(),200)
+  }
   await page.getByRole('heading', { name: 'Check your email' }).waitFor()
   if (range) {
     assert.deepEqual(requests,[breached,original,original].map(password=>({
@@ -115,9 +160,10 @@ try {
   await page.getByRole('heading', { name: 'Your email is verified' }).waitFor()
   await page.getByRole('link', { name: 'Go to SecTalk sign in' }).click()
   await signIn(page, original, 200)
+  if (resend) console.log('Passed signup retry after the first email send failed, preserving the original password.')
   const native=process.env.SECTALK_AUTH_TEST_ARGON_DB
   if(native){
-    assert.match(native,/^supabase_db_(?:v4-auth-qa|v6-c\d+-qa)$/)
+    assert.match(native,/^supabase_db_(?:v4-auth-qa|v6-c\d+-qa|v6-bundle243-qa)$/)
     const format=execFileSync('docker',['exec','-i',native,'psql','-qAXt','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],{
       input:`select encrypted_password like '$argon2id$%' from auth.users where email='${email}';`,encoding:'utf8',windowsHide:true,
     }).trim()
@@ -162,4 +208,5 @@ try {
 } finally {
   await browser.close()
   if (range?.listening) await new Promise(resolve=>range.close(resolve))
+  if (resend?.listening) await new Promise(resolve=>resend.close(resolve))
 }

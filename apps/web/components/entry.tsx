@@ -152,6 +152,10 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
           if (!response.ok) {
             setSignupChallenge('')
             const payload=await response.json().catch(()=>null)
+            if (payload?.error==='confirmation_delivery_failed') {
+              go('confirm','confirmationDeliveryFailed')
+              break
+            }
             throw {status:response.status,code:payload?.error}
           }
           go('confirm')

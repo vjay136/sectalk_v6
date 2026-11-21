@@ -16,6 +16,7 @@ async function authReleaseSettings(siteUrl) {
       site_url: new URL(callback).origin,
       hook_before_user_created_enabled: true,
       hook_before_user_created_uri: signupHook,
+      external_email_enabled: true,
       mailer_allow_unverified_email_sign_ins: false,
       mailer_autoconfirm: false,
       mailer_otp_length: 6,
@@ -60,12 +61,13 @@ export async function configureAuthRelease({ ref, token, siteUrl, apply, request
   const changes = authReleaseChanges(initial, release)
   const fields = Object.keys(changes)
   const smtpConfigured = Boolean(initial.smtp_host && initial.smtp_admin_email)
-  if (!apply || fields.length === 0) return { project: ref, smtpConfigured, changed: [], pending: fields }
+  if (!apply) return { project: ref, smtpConfigured, changed: [], pending: fields }
   if (!smtpConfigured) throw new Error('Configure a custom SMTP sender on the v6 project before applying the templates.')
   if (initial.hook_send_email_enabled) throw new Error('The v6 project has an active Send Email hook. Review delivery ownership before applying SMTP templates.')
   if (initial.hook_before_user_created_enabled && initial.hook_before_user_created_uri !== signupHook) {
     throw new Error('The v6 project already has a different active signup hook. Review it before replacing it.')
   }
+  if (fields.length === 0) return { project: ref, smtpConfigured, changed: [], pending: [] }
   await api('PATCH', changes)
   const pending = Object.keys(authReleaseChanges(await api('GET'), release))
   return { project: ref, smtpConfigured, changed: fields.filter(field => !pending.includes(field)), pending }

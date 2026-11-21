@@ -77,7 +77,10 @@ export async function POST(request:Request) {
     }
     const client=createClient(upstream,key,{auth,global:{headers:nativeHeaders}})
     const delivery=await client.auth.resend({type:'signup',email,options:{emailRedirectTo:redirect}})
-    if (delivery.error) return failure(delivery.error.status===429?429:503)
+    if (delivery.error) {
+      const status=delivery.error.status===429?429:503
+      return resend ? failure(status) : Response.json({error:'confirmation_delivery_failed'},{status,headers})
+    }
     return sent()
   } catch {return failure()}
 }

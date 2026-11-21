@@ -39,6 +39,7 @@ test('applying Auth release preserves other callbacks, uses link and OTP templat
   assert.equal(fixture.config.uri_allow_list, `https://admin.sectalk.example/auth/sso,${siteUrl}/auth/confirm`)
   assert.equal(fixture.config.hook_before_user_created_uri, 'pg-functions://postgres/public/st_v7_before_signup')
   assert.equal(fixture.config.hook_before_user_created_enabled, true)
+  assert.equal(fixture.config.external_email_enabled, true)
   assert.equal(fixture.config.mailer_autoconfirm, false)
   assert.equal(fixture.config.mailer_allow_unverified_email_sign_ins, false)
   assert.equal(fixture.config.mailer_otp_length, 6)
@@ -47,6 +48,12 @@ test('applying Auth release preserves other callbacks, uses link and OTP templat
   assert.doesNotMatch(fixture.config.mailer_templates_recovery_content, /ConfirmationURL/)
   assert.deepEqual((await fixture.run({ apply: true })).changed, [])
   assert.deepEqual(fixture.requests, ['GET', 'PATCH', 'GET', 'GET'])
+  fixture.config.hook_send_email_enabled = true
+  await assert.rejects(fixture.run({ apply: true }), /active Send Email hook/)
+  fixture.config.hook_send_email_enabled = false
+  fixture.config.smtp_host = null
+  await assert.rejects(fixture.run({ apply: true }), /custom SMTP/)
+  assert.deepEqual(fixture.requests.slice(-2), ['GET', 'GET'])
 })
 
 test('release rejects the v5 target, local redirects, missing SMTP and a different active hook', async () => {
