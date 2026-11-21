@@ -158,6 +158,8 @@ declare
   approval uuid:=gen_random_uuid(); handoff uuid:=gen_random_uuid(); cell uuid:=gen_random_uuid(); secret_id uuid;
   task_id uuid:=gen_random_uuid(); other_task uuid:=gen_random_uuid(); member_task uuid:=gen_random_uuid();
   dependent_task uuid:=gen_random_uuid();
+  room_file uuid:=gen_random_uuid(); unpaired_file uuid:=gen_random_uuid(); foreign_file uuid:=gen_random_uuid();
+  object_id uuid:=gen_random_uuid(); file_hash text:=repeat('5',64); file_result jsonb; file_probe jsonb;
   destination text:='synthetic-destination'; signing_key bytea:=decode(repeat('c',64),'hex');
   review jsonb; packet jsonb; wire jsonb;
 begin
@@ -202,6 +204,14 @@ begin
   perform public.st_v6_task_create(member_task,paired_room,null,'Other author task');
   reset role;
   insert into public.st_v6_task_people(task_id,user_id,kind) values(dependent_task,reviewer_id,'assignee');
+  insert into sectalk_private.st_v6_room_files(room,workspace,id,uploader,filename,size_bytes,sha256,published_at)
+    values(paired_room,ws,room_file,owner_id,'Reviewed attachment.txt',23,file_hash,now()),
+      (unpaired_room,ws,unpaired_file,owner_id,'Unpaired attachment.txt',23,file_hash,now()),
+      (paired_room,ws,foreign_file,reviewer_id,'Other uploader attachment.txt',23,file_hash,now());
+  insert into storage.objects(id,bucket_id,name,metadata,version)
+    values(object_id,'sectalk-workspace-files',ws||'/rooms/'||paired_room||'/'||room_file,'{"size":23}',gen_random_uuid()::text),
+      (gen_random_uuid(),'sectalk-workspace-files',ws||'/rooms/'||unpaired_room||'/'||unpaired_file,'{"size":23}',gen_random_uuid()::text),
+      (gen_random_uuid(),'sectalk-workspace-files',ws||'/rooms/'||paired_room||'/'||foreign_file,'{"size":23}',gen_random_uuid()::text);
   insert into sectalk_private.st_v8_residency_rollback_holds(workspace,approval,handoff,side)
     values(ws,approval,handoff,'destination');
   secret_id:=vault.create_secret(encode(signing_key,'hex'));
@@ -214,11 +224,19 @@ begin
     raise exception 'The task packet issued without independent review';
   exception when sqlstate 'PT409' then null; end;
   review:=public.st_v8_residency_rollback_reconcile(ws,'capture',null,ws::text);
+  begin
+    perform public.st_v8_residency_rollback_room_file_copy(ws,(review->>'id')::uuid,room_file,file_hash);
+    raise exception 'A room file proof issued before independent review';
+  exception when insufficient_privilege then null; end;
   perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
   perform public.st_v8_residency_rollback_reconcile(ws,'confirm',(review->>'id')::uuid,ws::text,review->>'digest');
   begin
     perform public.st_v8_residency_rollback_room_tasks(ws,'issue',ws::text);
     raise exception 'The destination reviewer issued the task packet';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v8_residency_rollback_room_file_copy(ws,(review->>'id')::uuid,room_file,file_hash);
+    raise exception 'The destination reviewer issued the room file proof';
   exception when insufficient_privilege then null; end;
   perform set_config('request.jwt.claims',claims->>owner_id::text,true);
   packet:=public.st_v8_residency_rollback_room_tasks(ws,'issue',ws::text)->'packet';
@@ -228,6 +246,38 @@ begin
     or wire#>>'{records,0,priority}' is distinct from 'high'
     or wire#>>'{records,0,labels,0}' is distinct from 'release'
     then raise exception 'The signed room task batch omitted the eligible exact record or included ineligible tasks'; end if;
+  foreach actor_id in array array[unpaired_file,foreign_file] loop
+    begin
+      perform public.st_v8_residency_rollback_room_file_copy(ws,(review->>'id')::uuid,actor_id,file_hash);
+      raise exception 'An unpaired room or other author file issued a proof';
+    exception when insufficient_privilege then null; end;
+  end loop;
+  begin
+    perform public.st_v8_residency_rollback_room_file_copy(ws,(review->>'id')::uuid,room_file,repeat('6',64));
+    raise exception 'Unreviewed room file bytes issued a proof';
+  exception when insufficient_privilege then null; end;
+  file_probe:=public.st_v8_residency_rollback_room_file_copy(ws,(review->>'id')::uuid,room_file);
+  file_result:=public.st_v8_residency_rollback_room_file_copy(ws,(review->>'id')::uuid,room_file,file_hash);
+  wire:=(file_result#>>'{proof,payload}')::jsonb;
+  if file_probe?'proof' or file_probe->>'stamp' is distinct from file_result->>'stamp'
+    or (wire->>'format',wire->>'room',wire->>'roomName',wire->>'file',wire->>'object',wire->>'sha256',wire->>'bytes')
+      is distinct from ('sectalk-residency-room-file-copy-v1',paired_room::text,'Imported project room',
+        room_file::text,object_id::text,file_hash,'23')
+    or file_result#>>'{proof,signature}' is distinct from encode(extensions.hmac(
+      convert_to(file_result#>>'{proof,payload}','UTF8'),signing_key,'sha256'),'hex')
+    or wire->>'ownerTag' is distinct from encode(extensions.hmac(convert_to(
+      'sectalk-file-replay-owner-v1:'||handoff||':'||owner_id||'@example.invalid','UTF8'),signing_key,'sha256'),'hex')
+    or not review->'changes' @> jsonb_build_array(
+      jsonb_build_object('kind','room_file','id',room_file,'state','added','after',wire->>'fileRevision'),
+      jsonb_build_object('kind','storage_object','id',object_id,'state','added','after',wire->>'objectRevision'))
+    then raise exception 'The room copy proof did not bind the exact pair, bytes and reviewed revisions'; end if;
+  reset role;
+  update storage.objects o set version=gen_random_uuid()::text where o.id=object_id;
+  set local role authenticated;
+  begin
+    perform public.st_v8_residency_rollback_room_file_copy(ws,(review->>'id')::uuid,room_file,file_hash);
+    raise exception 'A replacement Storage version retained authorization to issue the proof';
+  exception when insufficient_privilege then null; end;
   begin
     perform public.st_v6_task_create(gen_random_uuid(),paired_room,null,'Ordinary held destination task');
     raise exception 'Ordinary task writes resumed on the destination';

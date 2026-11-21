@@ -63,14 +63,14 @@ export function WorkspaceResidencyRollbackReview({workspace}:{workspace:string})
     finally{setBusy(false)}
   }
 
-  async function downloadCopy(event:FormEvent<HTMLFormElement>,file:string) {
+  async function downloadCopy(event:FormEvent<HTMLFormElement>,file:string,roomFile:boolean) {
     event.preventDefault()
     if(busy||!review?.id)return
     const form=event.currentTarget
     setBusy(true);setError('')
     try{
       await verifyReviewCredential(new FormData(form))
-      const response=await workspaceFileRequest(workspace,'GET',{id:file,rollbackReview:review.id})
+      const response=await workspaceFileRequest(workspace,'GET',{id:file,rollbackReview:review.id,rollbackRoom:roomFile})
       const proofHeader=response.headers.get('X-SecTalk-Rollback-File-Proof')
       if(!proofHeader)throw new Error('The signed file copy was unavailable.')
       const proof=JSON.parse(new TextDecoder().decode(
@@ -108,10 +108,12 @@ export function WorkspaceResidencyRollbackReview({workspace}:{workspace:string})
           {record.kind.replaceAll('_',' ')} · {record.state} · <code>{record.id}</code>
           {record.before&&<div>Previous revision <code>{record.before}</code></div>}
           {record.after&&<div>Current revision <code>{record.after}</code></div>}
-          {review.role==='owner'&&review.state==='reviewed'&&record.kind==='workspace_file'&&record.state==='added'&&
-            <form className="release-form" onSubmit={event=>void downloadCopy(event,record.id)}>
+          {review.role==='owner'&&review.state==='reviewed'&&['workspace_file','room_file'].includes(record.kind)&&record.state==='added'&&
+            <form className="release-form" onSubmit={event=>void downloadCopy(event,record.id,record.kind==='room_file')}>
               <label>Authenticator code if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" disabled={busy}/></label>
-              <button className="secondary" type="submit" disabled={busy}>Download reviewed file copy</button>
+              <button className="secondary" type="submit" disabled={busy}>
+                {record.kind==='room_file'?'Download reviewed room file copy':'Download reviewed file copy'}
+              </button>
             </form>}
         </li>)}</ul>
         {visible<changes.length&&<button className="secondary" onClick={()=>setVisible(previous=>previous+50)}>Show more records</button>}

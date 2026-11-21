@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import {execFileSync} from 'node:child_process'
-import {randomBytes,randomUUID} from 'node:crypto'
+import {createHash,createHmac,randomBytes,randomUUID} from 'node:crypto'
 import {readFile} from 'node:fs/promises'
+import {createServer} from 'node:http'
 import {createClient} from '@supabase/supabase-js'
 import {fixtureAuthenticator} from './workspace-admin-fixture.mjs'
 
@@ -18,12 +19,16 @@ const destination={
 }
 const workspace=randomUUID(),room=randomUUID(),anchor=randomUUID(),post=randomUUID(),handoff=randomUUID(),approval=randomUUID()
 const reply=randomUUID(),anchorReply=randomUUID(),task=randomUUID()
+const attachment=randomUUID(),attachmentName='Reviewed room attachment.txt'
+const attachmentBytes=Buffer.from('Synthetic attachment '+attachment+'\n')
+const attachmentHash=createHash('sha256').update(attachmentBytes).digest('hex')
+const attachmentPath=`${workspace}/rooms/${room}/${attachment}`
 const cell=randomUUID(),plan=randomBytes(32).toString('hex'),secret=randomBytes(32).toString('hex')
 const roomName='Reviewed project room',body='Recovered owner room message '+post.slice(0,8)
 const replyBody='Recovered owner thread reply '+reply.slice(0,8)
 const anchorReplyBody='Recovered reply to imported history '+anchorReply.slice(0,8)
 const taskTitle='Recovered owner task '+task.slice(0,8)
-let browser
+let browser,scanner,scanCount=0
 
 function sql(site,input){
   return execFileSync('docker',['exec','-i','supabase_db_'+site.project,'psql','-XqtA','-v','ON_ERROR_STOP=1',
@@ -79,6 +84,7 @@ async function pageFor(site,who){
 const recovery=page=>page.getByRole('region',{name:'Standard room rollback replay',exact:true})
 const taskRecovery=page=>page.getByRole('region',{name:'Room task rollback replay',exact:true})
 const review=page=>page.getByRole('region',{name:'Destination rollback change review',exact:true})
+const sourceEvidence=page=>page.getByRole('region',{name:'Source rollback verification',exact:true})
 async function submit(panel,confirmation,button){
   await panel.getByLabel(confirmation,{exact:true}).fill(workspace)
   await panel.getByRole('button',{name:button,exact:true}).click()
@@ -90,8 +96,24 @@ async function recoveredRow(who,id=post){
 async function recoveredTask(who){
   return data(await who.api.from('st_v6_tasks').select('*').eq('room_id',room).eq('id',task).single())
 }
+async function fileRequest(site,who,path,init={}){
+  const session=data(await who.api.auth.getSession()).session
+  return fetch(site.app+path,{...init,headers:{...init.headers,Authorization:'Bearer '+session.access_token}})
+}
 
 try{
+  const scannerSecret=process.env.SECTALK_RESIDENCY_SCANNER_TEST_SECRET
+  assert.ok(scannerSecret&&scannerSecret.length>=32,'Configure both loopback app fixtures with the test scanner secret')
+  scanner=createServer(async(request,response)=>{
+    const chunks=[]
+    for await(const chunk of request)chunks.push(chunk)
+    if(request.method!=='POST'||request.url!=='/scan'||request.headers.authorization!=='Bearer '+scannerSecret
+      ||!Buffer.concat(chunks).equals(attachmentBytes))return response.writeHead(403).end()
+    scanCount++
+    response.writeHead(200,{'Content-Type':'application/json'})
+      .end(JSON.stringify({verdict:'clean',sha256:attachmentHash}))
+  })
+  await new Promise((ready,fail)=>scanner.once('error',fail).listen(3605,'127.0.0.1',ready))
   for(const site of [source,destination]){
     assert.ok(site.publicKey&&site.serviceKey,'Use only credentials for the two disposable loopback fixtures')
     const health=await fetch(site.app+'/api/health')
@@ -143,6 +165,10 @@ try{
   data(await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:anchorReply,p_body:anchorReplyBody,p_parent:anchor}))
   data(await destinationOwner.api.rpc('st_v6_task_create',{p_id:task,p_room:room,p_chat:null,p_title:taskTitle,
     p_due_at:'2030-01-01T00:00:00Z',p_priority:'high',p_labels:['release']}))
+  const roomFileUrl='/api/room-files?'+new URLSearchParams({room,file:attachment})
+  const uploaded=await fileRequest(destination,destinationOwner,roomFileUrl,{method:'POST',body:attachmentBytes,
+    headers:{'Content-Type':'text/plain','X-SecTalk-File-Name':encodeURIComponent(attachmentName)}})
+  assert.equal(uploaded.status,200,await uploaded.text())
   const original=await recoveredRow(destinationOwner)
   const originalReply=await recoveredRow(destinationOwner,reply)
   const originalAnchorReply=await recoveredRow(destinationOwner,anchorReply)
@@ -155,12 +181,33 @@ try{
   const destinationReviewerPage=await pageFor(destination,destinationReviewer)
   await submit(review(destinationReviewerPage),'Confirm change review workspace ID','Confirm independent change review')
   await review(destinationReviewerPage).getByText('The independent review is current. Workspace writes remain held.',{exact:true}).waitFor()
+  await review(destinationOwnerPage).getByRole('button',{name:'Refresh change review',exact:true}).click()
+  await review(destinationOwnerPage).getByText('The independent review is current. Workspace writes remain held.',{exact:true}).waitFor()
 
   const manifest=(who,action,packet)=>who.api.rpc('st_v8_residency_rollback_manifest',{
     p_workspace:workspace,p_confirmation:workspace,p_action:action,p_packet:packet,
   })
   const issuedManifest=data(await manifest(destinationOwner,'issue')).packet
   assert.equal(data(await manifest(sourceOwner,'receive',issuedManifest)).state,'received')
+  const currentReview=data(await destinationOwner.api.rpc('st_v8_residency_rollback_reconcile',{p_workspace:workspace}))
+  const destinationFileUrl='/api/workspaces/residency/room-file-copy?'+new URLSearchParams({
+    workspace,file:attachment,'residency-rollback':currentReview.id,
+  })
+  assert.equal((await fileRequest(destination,destinationReviewer,destinationFileUrl)).status,404)
+  await review(destinationOwnerPage).getByText('View record revisions',{exact:true}).click()
+  const attachmentEvent=destinationOwnerPage.waitForEvent('download')
+  await review(destinationOwnerPage).getByRole('listitem').filter({hasText:attachment})
+    .getByRole('button',{name:'Download reviewed room file copy',exact:true}).click()
+  const attachmentDownload=await attachmentEvent
+  const attachmentPackage=await readFile(await attachmentDownload.path())
+  const transferFile=JSON.parse(attachmentPackage.toString())
+  const fileProof=JSON.parse(transferFile.proof.payload)
+  assert.equal(fileProof.format,'sectalk-residency-room-file-copy-v1')
+  assert.equal(fileProof.room,room)
+  assert.equal(fileProof.sha256,attachmentHash)
+  assert.equal(transferFile.proof.signature,createHmac('sha256',Buffer.from(secret,'hex'))
+    .update(transferFile.proof.payload).digest('hex'))
+  assert.deepEqual(Buffer.from(transferFile.contentBase64,'base64'),attachmentBytes)
 
   const downloadEvent=destinationOwnerPage.waitForEvent('download')
   await submit(recovery(destinationOwnerPage),'Confirm room message recovery workspace ID','Download room message recovery file')
@@ -189,6 +236,13 @@ try{
     {id:task,room,name:taskTitle,priority:'high',labels:['release']})
 
   const sourceOwnerPage=await pageFor(source,sourceOwner)
+  const manifestPanel=sourceOwnerPage.getByRole('region',{name:'Rollback recovery manifest',exact:true})
+  await manifestPanel.getByLabel('Signed recovery file',{exact:true}).setInputFiles({
+    name:attachmentDownload.suggestedFilename(),mimeType:'application/json',buffer:attachmentPackage,
+  })
+  await manifestPanel.getByRole('button',{name:'Stage reviewed file copy',exact:true}).click()
+  await manifestPanel.getByText(/was staged in private storage/).waitFor()
+  assert.equal((await fileRequest(source,sourceOwner,roomFileUrl)).status,404)
   await recovery(sourceOwnerPage).getByLabel('Signed room message recovery file',{exact:true}).setInputFiles({
     name:download.suggestedFilename(),mimeType:'application/json',buffer:packetBytes,
   })
@@ -205,6 +259,25 @@ try{
   assert.deepEqual(data(await sourceOwner.api.from('st_v6_tasks').select('id').eq('id',task)),[])
 
   const sourceReviewerPage=await pageFor(source,sourceReviewer)
+  const stagedAttachment=sourceEvidence(sourceReviewerPage).getByRole('listitem').filter({hasText:attachmentName})
+  await stagedAttachment.getByText('Awaiting independent approval',{exact:true}).waitFor()
+  await submit(stagedAttachment,'Confirm staged file workspace ID','Approve staged file')
+  await stagedAttachment.getByText('Approved for restoration',{exact:true}).waitFor()
+  await sourceEvidence(sourceOwnerPage).getByRole('button',{name:'Refresh source verification',exact:true}).click()
+  const approvedAttachment=sourceEvidence(sourceOwnerPage).getByRole('listitem').filter({hasText:attachmentName})
+  await approvedAttachment.getByText('Approved for restoration',{exact:true}).waitFor()
+  await submit(approvedAttachment,'Confirm staged file workspace ID','Restore approved file')
+  await approvedAttachment.getByText('Restored to room Files',{exact:true}).waitFor()
+  const restored=await fileRequest(source,sourceOwner,roomFileUrl)
+  assert.equal(restored.status,200)
+  assert.deepEqual(Buffer.from(await restored.arrayBuffer()),attachmentBytes)
+  assert.equal(sql(source,`select count(*) from sectalk_private.st_v8_residency_source_file_copies
+    where handoff='${handoff}' and file='${attachment}' and room='${room}' and reviewer='${sourceReviewer.id}'
+      and restored_at is not null and restored_version is not null;`),'1')
+  assert.ok(scanCount>=3,'Ordinary upload, private stage and live restoration use the scanner')
+  const heldFile=await fileRequest(source,sourceOwner,'/api/room-files?'+new URLSearchParams({room,file:randomUUID()}),
+    {method:'POST',body:attachmentBytes,headers:{'Content-Type':'text/plain','X-SecTalk-File-Name':attachmentName}})
+  assert.equal(heldFile.status,423,await heldFile.text())
   const reviewerPanel=recovery(sourceReviewerPage)
   await reviewerPanel.getByText('Review the staged room messages',{exact:true}).click()
   await reviewerPanel.getByText(body,{exact:true}).waitFor()
@@ -236,18 +309,23 @@ try{
   assert.equal((await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:randomUUID(),p_body:'Ordinary held write'})).error?.code,'PT423')
   await sourceReviewerPage.reload()
   await sourceReviewerPage.getByRole('region',{name:'Source rollback verification',exact:true})
-    .getByText('4 of 4 reviewed changes verified at the source. Workspace writes are held.',{exact:true}).waitFor()
-  console.log('Edge verified signed room messages and tasks, exact thread and task recovery, unchanged original history and both write holds.')
+    .getByText('6 of 6 reviewed changes verified at the source. Workspace writes are held.',{exact:true}).waitFor()
+  console.log('Edge verified room messages, tasks and signed private attachments, exact native recovery and both write holds.')
 } finally {
   await browser?.close()
+  if(scanner?.listening)await new Promise(resolve=>scanner.close(resolve))
   for(const site of [source,destination]){
     if(!site.admin)continue
+    await site.admin.storage.from('sectalk-workspace-files').remove([attachmentPath])
+    if(site===source)await site.admin.storage.from('sectalk-residency-recovery')
+      .remove([`${workspace}/${handoff}/${attachment}/${attachmentHash}`])
     sql(site,`begin;
       with removed as (delete from sectalk_private.st_v8_residency_rollback_manifest_admissions
         where handoff='${handoff}' returning vault_id) delete from vault.secrets s using removed r where s.id=r.vault_id;
       set local session_replication_role=replica;
       delete from sectalk_private.st_v8_content_export_entries where export_id='${approval}';
       set local session_replication_role=origin;
+      delete from sectalk_private.st_v6_room_files where workspace='${workspace}' and room='${room}' and id='${attachment}';
       delete from public.st_v2_workspaces where id='${workspace}';
       delete from sectalk_private.st_v8_residency_staged_content where cell='${cell}' and approval='${approval}';
       delete from sectalk_private.st_v8_residency_content_admissions where cell='${cell}' and approval='${approval}';

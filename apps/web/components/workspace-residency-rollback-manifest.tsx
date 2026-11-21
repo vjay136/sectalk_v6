@@ -199,7 +199,7 @@ export function WorkspaceResidencyRollbackManifest({workspace}:{workspace:string
       <p>{manifest.changeCount} reviewed {manifest.changeCount===1?'change':'changes'} · Review digest <code>{manifest.digest}</code></p>
       <p>Transfer digest <code>{manifest.packetSha256}</code></p>
       {!destination&&<form className="release-form" onSubmit={event=>void stageFile(event)}>
-        <p>Stage a reviewed workspace file copy within five minutes of downloading it. Staged files stay private while rollback review continues.</p>
+        <p>Stage a reviewed workspace or room file copy within five minutes of downloading it. Staged files stay private while rollback review continues.</p>
         <label>Signed recovery file<input name="recovery-file" type="file" accept=".json,application/json" required disabled={busy}/></label>
         <label>Authenticator code for file staging if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" disabled={busy}/></label>
         <button className="secondary" type="submit" disabled={busy}>Stage reviewed file copy</button>

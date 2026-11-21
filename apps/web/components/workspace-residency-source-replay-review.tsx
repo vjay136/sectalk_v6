@@ -7,7 +7,7 @@ import {workspaceFileRequest} from '../lib/workspace-files-client'
 
 type ReplayResult='matched'|'source_changed'|'not_replayed'
 type ReplayRecord={kind:string;id:string;change:string;revision:string|null;result:ReplayResult}
-type StagedFile={file:string;filename:string|null;sha256:string;bytes:number;digest:string;state:'staged'|'approved'|'changed'|'restored'}
+type StagedFile={file:string;room?:string|null;filename:string|null;sha256:string;bytes:number;digest:string;state:'staged'|'approved'|'changed'|'restored'}
 type FileReview={role?:'owner'|'reviewer';files?:StagedFile[]}
 type SourceReview={
   state:'inactive'|'awaiting_manifest'|'held'
@@ -152,9 +152,11 @@ export function WorkspaceResidencySourceReplayReview({workspace}:{workspace:stri
             file.state==='staged'&&fileReview.role==='reviewer'?'approve':file.state==='approved'&&fileReview.role==='owner'?'restore':undefined
           return <li key={file.file}>
           {file.filename&&<p>{file.filename}</p>}
+          {file.room&&<p>Room <code>{file.room}</code></p>}
           <p>File <code>{file.file}</code> · {file.bytes.toLocaleString()} bytes</p>
           <p>SHA-256 <code>{file.sha256}</code></p>
-          <p role="status">{!file.filename?'Stage a fresh signed copy for restoration':file.state==='restored'?'Restored to workspace Files':
+          <p role="status">{!file.filename?'Stage a fresh signed copy for restoration':file.state==='restored'?
+            file.room?'Restored to room Files':'Restored to workspace Files':
             file.state==='approved'?'Approved for restoration':file.state==='changed'?'Recovery copy changed or is missing':'Awaiting independent approval'}</p>
           {fileAction&&<form className="release-form" onSubmit={event=>void processFile(event,file,fileAction)}>
               <p>Workspace ID <code>{workspace}</code></p>

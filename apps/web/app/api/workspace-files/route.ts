@@ -5,7 +5,7 @@ import { allowedFileType, attachmentDocumentFormat, officeFormatPattern } from '
 import { attachmentInspectionLabel, inspectAttachment } from '../../../lib/attachment-inspection'
 import { scanAttachment } from '../../../lib/attachment-scan-server'
 import { checkFileEgress, scopedFileSession } from '../../../lib/file-egress'
-import { digestWorkspaceBytes, workspaceFileBucket, workspaceFileFingerprint, workspaceFileMaximum, workspaceFilePath, workspaceFileReadOnlyMessage } from '../../../lib/workspace-file-storage'
+import { digestWorkspaceBytes, roomFilePath, workspaceFileBucket, workspaceFileFingerprint, workspaceFileMaximum, workspaceFilePath, workspaceFileReadOnlyMessage } from '../../../lib/workspace-file-storage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 40
@@ -77,12 +77,14 @@ async function restoreRollbackFile(request: Request, workspace: string, file: st
   const args = { p_workspace: workspace, p_file: file, p_digest: digest }
   const restoreError = (code?: string) => code === 'PT409' ? fileFailure(409, 'The approved recovery copy changed or the file already exists.') :
     code === 'PT413' ? fileFailure(413, 'The workspace file storage limit was reached.') :
+    code === 'PT422' ? fileFailure(422, 'The recovery copy was blocked by platform policy.') :
     code === '42501' ? forbidden() : fileFailure(503, 'File restoration is unavailable.')
   const prepared = await auth.client.rpc('st_v8_residency_source_file_restore', args)
   if (prepared.error) return restoreError(prepared.error.code)
   const copy = prepared.data
   if (copy?.state === 'restored') return Response.json(copy, { headers: fileHeaders })
   if (copy?.state !== 'ready' || !validFileId(copy.handoff) || typeof copy.filename !== 'string' ||
+    (copy.room != null && !validFileId(copy.room)) ||
     typeof copy.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(copy.sha256) ||
     !Number.isInteger(copy.bytes) || copy.bytes < 1 || copy.bytes > workspaceFileMaximum) return forbidden()
 
@@ -95,7 +97,7 @@ async function restoreRollbackFile(request: Request, workspace: string, file: st
   if (inspection) return inspection
 
   const bucket = auth.storage.storage.from(workspaceFileBucket)
-  const object = workspaceFilePath(workspace, file)
+  const object = copy.room ? roomFilePath(workspace, copy.room, file) : workspaceFilePath(workspace, file)
   await bucket.upload(object, bytes, { contentType: 'application/octet-stream', upsert: false, cacheControl: '0',
     metadata: { sectalkRollbackApproval: digest, sectalkRollbackSha256: copy.sha256 } })
   const stored = await bucket.download(object)

@@ -33,6 +33,7 @@ export const permissions={
   'workspace.organization.manage':'Current workspace owner with fresh native assurance for settings, verified domains and invitation templates.',
   'workspace.residency.verify':'Independently assigned residency reviewer with fresh native MFA and an exact project-bound ticket.',
   'workspace.residency.routing':'Current workspace member with a published activation or an active, independently approved routing rehearsal.',
+  'workspace.residency.room_file_copy':'Current destination workspace and room owner with fresh native MFA, file egress access, an exact independent review and clear holds.',
   'workspace.offboarding.room_file_cleanup':'Current exact offboarding owner or reviewer with fresh native MFA, approved retained bytes, current room policy and confirmed Storage-path absence.',
   'workspace.offboarding.workspace_file_cleanup':'Current exact offboarding owner or reviewer with fresh native MFA, approved retained bytes, current workspace file policy and confirmed Storage-path absence.',
   'workspace.keys.rotate':'Enterprise workspace owner with fresh native MFA and a short-lived rotation ticket.',
@@ -219,6 +220,7 @@ account('workspaces/organization','POST','workspace.organization.manage','rpc:st
 account('workspaces/offboarding/room-file-cleanup','POST','workspace.offboarding.room_file_cleanup','handleFileRegistrationCleanup')
 account('workspaces/offboarding/workspace-file-cleanup','POST','workspace.offboarding.workspace_file_cleanup','handleFileRegistrationCleanup')
 account('workspaces/residency/verify','POST','workspace.residency.verify','operationalReportViewer','rpc:st_v8_begin_residency_provider_check','rpc:st_v8_finish_residency_provider_check')
+account('workspaces/residency/room-file-copy','GET','workspace.residency.room_file_copy','authenticateFileRequest','rpc:st_v8_residency_rollback_room_file_copy')
 account('workspaces/residency/route-link','GET','workspace.residency.routing','operationalReportViewer','rpc:st_v8_residency_active_route','rpc:st_v8_residency_routing_rehearsal')
 account('workspaces/rule-registry','POST','policy.rule.evaluate','getUser','rpc:st_v7_workspace_rule_registry')
 account('workspaces/trial','GET','billing.trial','billingIdentity','rpc:st_v7_workspace_trial_status')

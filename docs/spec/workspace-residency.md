@@ -122,9 +122,11 @@ In **Rollback recovery manifest → Destination retirement**, the destination ow
 
 After source sign-off, the source owner can choose **Refresh source reactivation status**, supply the signed retirement proof, and confirm the workspace ID. SecTalk checks native authenticator assurance, the exact signed handoff and the current source sign-off before releasing that handoff's source write hold. The old destination link stays unavailable. The retired destination stays read-only, and separate source restrictions such as offboarding or billing continue to apply.
 
-## Download a reviewed workspace file for recovery
+## Recover reviewed workspace and room files
 
-After independent destination review, the destination owner can open **View record revisions** and use **Download reviewed file copy** for an eligible workspace file uploaded after activation. SecTalk checks the current session, file egress policy, preservation holds, and the exact reviewed revisions of both the file registration and its private Storage object. It hashes the downloaded bytes and checks those revisions again before signing the copy. The downloadable file contains the exact bytes and a short-lived proof bound to the handoff, review, and verified owner identity. Both installations remain held. Source-side file staging and restoration require separate verification.
+After independent destination review, the destination owner can open **View record revisions** to download an eligible workspace or room file uploaded after activation. SecTalk checks the current session, file egress policy, preservation holds, and the exact reviewed revisions of both the file registration and its private Storage object. It hashes the bytes and rechecks those revisions before signing the copy. The proof binds the handoff, review, verified owner identity and original room where applicable.
+
+On the source, use **Stage reviewed file copy** before the five-minute proof expires. An independent reviewer approves the exact staging digest. The source owner can then restore the approved file. SecTalk scans the staged bytes and checks the live object after copying without overwrite. Room recovery publishes into the original paired room and requires its current access policy. The restored file registration and Storage revision appear as separate entries in source verification. Workspace writes on both installations stay held.
 
 ## Approved private-file transfer rehearsal
 
