@@ -9,7 +9,11 @@ import { fixtureAuthenticator, totpCode } from './workspace-admin-fixture.mjs'
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
 assert.equal(app.hostname, '127.0.0.1')
-assert.equal(supabase.origin, 'http://127.0.0.1:55321')
+const qaContainer = new Map([
+  ['http://127.0.0.1:55321', 'supabase_db_v4-auth-qa'],
+  ['http://127.0.0.1:56801', 'supabase_db_v6-bundle243-qa'],
+]).get(supabase.origin)
+assert.ok(qaContainer, 'Use a disposable local Supabase QA project')
 const options = {auth: {persistSession: false, autoRefreshToken: false}}
 const admin = createClient(supabase.origin, process.env.SECTALK_STORAGE_TEST_SERVICE_KEY, options)
 const publicKey = process.env.SECTALK_STORAGE_TEST_PUBLIC_KEY
@@ -27,7 +31,7 @@ function data(result) {
 }
 
 function sql(statement) {
-  return execFileSync('docker', ['exec', '-i', 'supabase_db_v4-auth-qa', 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
+  return execFileSync('docker', ['exec', '-i', qaContainer, 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
     '-At', '-U', 'postgres', '-d', 'postgres'], {input: statement, encoding: 'utf8', windowsHide: true})
 }
 
@@ -71,7 +75,13 @@ try {
   const crossOrigin = await fetch(new URL('/api/auth/sign-in', app), {method: 'POST',
     headers: {Origin: 'https://example.invalid', 'Content-Type': 'application/json'}})
   assert.equal(crossOrigin.status, 403)
-  sql(`insert into sectalk_private.staff(user_id) values ('${operator.user.id}');`)
+  const approval='local-operator-smoke-'+operator.user.id
+  const provision=`select sectalk_private.st_v8_provision_operator(
+    '${operator.user.id}','${operator.email}','moderation','${approval}');`
+  assert.equal(sql(provision).trim(),'t')
+  assert.equal(sql(provision).trim(),'f')
+  assert.equal(sql(`select count(*) from sectalk_private.st_v8_operator_provisioning_audit
+    where (account,capability,approval_reference)=('${operator.user.id}','moderation','${approval}');`).trim(),'1')
   chat = data(await ordinary.client.rpc('st_request', {p_handle: subject.handle}))
   assert.match(chat, /^[a-f0-9-]{36}$/)
   data(await subject.client.rpc('st_respond', {p_chat: chat, p_accept: true}))
@@ -204,7 +214,7 @@ try {
   assert.equal(await queue.count(), 0)
   await page.getByRole('button', {name: 'Sign out', exact: true}).click()
   await page.getByRole('heading', {name: 'Operator sign-in'}).waitFor()
-  console.log('PASS operator authentication, consented evidence, reporter-only resolution and private audit, warning and cross-chat call/message restriction and restoration, queue health, TOTP expiry and role revocation')
+  console.log('PASS named operator provisioning, TOTP, ordinary account denial, consented evidence, reporter-only resolution, moderation actions, queue health and role revocation')
 } finally {
   await browser?.close()
   if (report) sql(`delete from sectalk_private.audit where report_id='${report}';
@@ -218,6 +228,8 @@ try {
     delete from public.st_calls where chat_id='${id}'; delete from public.st_chats where id='${id}';`)
   for (const id of accounts) {
     sql(`delete from sectalk_private.st_v6_queue_operators where account_id='${id}';
+      delete from sectalk_private.st_v8_operator_provisioning_audit
+        where account='${id}' and approval_reference='local-operator-smoke-${id}';
       delete from sectalk_private.staff where user_id='${id}';`)
     data(await admin.auth.admin.deleteUser(id))
   }

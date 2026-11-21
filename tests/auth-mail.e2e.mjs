@@ -175,6 +175,14 @@ try {
   await page.getByRole('button', {name:'Skip for now',exact:true}).click()
   const activeDevice = page.getByRole('navigation', {name:'SecTalk features'})
   await activeDevice.waitFor()
+  for (const label of ['Group chats', 'Friends', 'Calls', 'Workspaces', 'Rooms', 'Tasks', 'Calendar', 'Meetings',
+    'Files', 'Search', 'Notifications', 'Safety', 'Billing', 'Profile', 'Inbox']) {
+    const tab = activeDevice.getByRole('button', {name:label, exact:true})
+    await tab.click()
+    await page.locator('nav.rail button[aria-current="page"]').filter({hasText: label}).waitFor()
+  }
+  assert.equal(await activeDevice.getByRole('button',{name:/operator|administration/i}).count(),0)
+  console.log('Passed fresh-account navigation through all 15 main tabs with no operator console entry.')
 
   const replay = await browser.newPage()
   await replay.goto(link)
