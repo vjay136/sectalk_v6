@@ -2,22 +2,21 @@ import { execFile } from 'node:child_process'
 import { createHash,timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 import { promisify } from 'node:util'
-import { cloudTrailKeyMaterialEvidence } from './cloudtrail-key-material.mjs'
+import { keyDeletionEvidence,kmsKeyArn } from './cloudtrail-key-deletion.mjs'
 
 const aws=promisify(execFile)
 const cli='/usr/local/aws-cli/v2/current/bin/aws'
 const tokenPattern=/^[A-Za-z0-9_-]{32,128}$/
-const accountArn=/^arn:aws:kms:([a-z]{2}-[a-z]+-[1-9][0-9]?):([0-9]{12}):key\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}|mrk-[a-f0-9]{32})$/
 const liveStates={Enabled:'active',Disabled:'disabled',PendingDeletion:'pending_deletion',PendingReplicaDeletion:'pending_replica_deletion'}
 
-export function awsErasureObserver(env,run=aws) {
+export function awsErasureObserver(env,run=aws,now=Date.now) {
   async function command(service,action,args,region) {
     const {stdout}=await run(cli,[service,action,...args,'--region',region,'--output','json','--no-cli-pager',
       '--cli-connect-timeout','1','--cli-read-timeout','1'],{cwd:'/tmp',env,timeout:1800,maxBuffer:1024*1024})
     return JSON.parse(stdout)
   }
   return async ({keyId,region,stagedAt})=>{
-    const [,expectedRegion,expectedAccount,key]=accountArn.exec(keyId)??[]
+    const [,expectedRegion,expectedAccount,key]=kmsKeyArn.exec(keyId)??[]
     if (!key||region!==expectedRegion||!Number.isFinite(Date.parse(stagedAt))) return {state:'unavailable'}
     try {
       const result=await command('kms','describe-key',['--key-id',keyId],region)
@@ -39,14 +38,7 @@ export function awsErasureObserver(env,run=aws) {
       for (const entry of result.Events) {
         let event
         try { event=JSON.parse(entry) } catch { continue }
-        const elements=event?.responseElements
-        if (elements!==null&&elements!==undefined&&(typeof elements!=='object'||Array.isArray(elements)||
-          ('keyId' in elements&&elements.keyId!==keyId))) continue
-        if (cloudTrailKeyMaterialEvidence(event?.additionalEventData) === null) continue
-        if (event?.eventName==='DeleteKey' && event.eventSource==='kms.amazonaws.com' && event.eventType==='AwsServiceEvent' &&
-          event.awsRegion===region && event.recipientAccountId===expectedAccount && event.readOnly===false && event.errorCode===undefined &&
-          Date.parse(event.eventTime)>=Date.parse(stagedAt) && Array.isArray(event.resources) && event.resources.some(resource=>
-            resource?.ARN===keyId && resource?.type==='AWS::KMS::Key' && resource?.accountId===expectedAccount)) return {state:'not_found',event}
+        if(keyDeletionEvidence(event,keyId,stagedAt,now())) return {state:'not_found',event}
       }
       next=result.NextToken
       if(typeof next!=='string'||next.length>4096||!next)break

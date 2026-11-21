@@ -17,6 +17,7 @@ const uuid='aaaaaaaa-bbbb-cccc-dddd-aaaaaaaaaaaa'
 function event(keyId,responseElements){
   return {eventID:uuid,eventTime:after,eventSource:'kms.amazonaws.com',eventName:'DeleteKey',eventType:'AwsServiceEvent',
     awsRegion:region,recipientAccountId:account,readOnly:false,
+    managementEvent:true,eventCategory:'Management',userIdentity:{accountId:account,invokedBy:'AWS Internal'},
     resources:[{ARN:keyId,type:'AWS::KMS::Key',accountId:account}],responseElements}
 }
 
@@ -46,24 +47,35 @@ test('one deleted multi-Region replica never produces an erasure receipt while p
     regional,stagedAt,now),{state:'unavailable'})
 })
 
-test('single-Region evidence requires agreement for the modern response ARN and keeps the exact legacy digest',async()=>{
-  const legacy=event(single,null),modern=event(single,{keyId:single}),mismatch=event(single,{keyId:wrong})
-  let matches=[mismatch]
+test('both reviewers reject malformed modern records and look past them to a valid service event',async()=>{
+  const modern=event(single,{keyId:single})
+  const invalid=[event(single,{keyId:wrong}),event(single,null),event(single,{}),event(single,[]),
+    {...modern,managementEvent:false},
+    {...modern,eventCategory:'Data'},
+    {...modern,userIdentity:{accountId:account,invokedBy:'unrelated.amazonaws.com'}},
+    {...modern,userIdentity:{...modern.userIdentity,accountId:'000000000000'}},
+    {...modern,eventTime:new Date(now+60_000).toISOString()},
+    {...modern,eventID:'invalid'},
+    {...modern,errorMessage:'unexpected provider failure'},
+  ]
+  let matches=invalid
   const observe=awsErasureObserver({},async(_binary,args)=>{
     if(args[1]==='describe-key')throw awsNotFound()
     return {stdout:JSON.stringify({Events:matches.map(value=>JSON.stringify(value))})}
-  })
+  },()=>now)
   const address={keyId:single,region,stagedAt}
   assert.deepEqual(await observe(address),{state:'not_found'})
-  matches=[mismatch,modern]
+  matches=[...invalid,modern]
   assert.deepEqual(await observe(address),{state:'not_found',event:modern})
   const check=value=>providerErasureObservation({keyId:single,state:'not_found',event:value},single,stagedAt,now)
-  assert.deepEqual(check(mismatch),{state:'unavailable'})
-  const legacyResult=check(legacy)
-  assert.equal(legacyResult.state,'deleted_event')
-  assert.match(legacyResult.sha256,/^[a-f0-9]{64}$/)
-  assert.deepEqual(check(modern),legacyResult)
-  assert.deepEqual(check(event(single,[])),{state:'unavailable'})
+  for(const entry of invalid) assert.deepEqual(check(entry),{state:'unavailable'})
+  const completion=check(modern)
+  assert.equal(completion.state,'deleted_event')
+  assert.match(completion.sha256,/^[a-f0-9]{64}$/)
+  assert.deepEqual(check(modern),completion)
+  const historical={...event(single,null),eventTime:'2022-11-22T00:00:00Z'}
+  assert.equal(providerErasureObservation({keyId:single,state:'not_found',event:historical},
+    single,'2022-11-21T00:00:00Z',now).state,'deleted_event')
 })
 
 test('custom key store deletion requires successful evidence for every listed backing key',async()=>{
@@ -97,7 +109,7 @@ test('custom key store deletion requires successful evidence for every listed ba
   assert.deepEqual(await observe(address),{state:'not_found',event:complete})
   const receipt=check(complete)
   assert.equal(receipt.state,'deleted_event')
-  assert.notEqual(receipt.sha256,check(event(single,null)).sha256)
+  assert.notEqual(receipt.sha256,check(event(single,{keyId:single})).sha256)
   assert.notEqual(receipt.sha256,check(withDetails({...complete.additionalEventData,clusterId:'cluster-other'})).sha256)
   assert.deepEqual(receipt,check(withDetails({...complete.additionalEventData,
     backingKeys:JSON.stringify([{backingKeyId:'two'},{backingKeyId:'one'}]),

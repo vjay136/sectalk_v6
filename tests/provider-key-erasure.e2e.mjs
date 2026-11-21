@@ -68,6 +68,8 @@ try {
       values('${hold}','${workspace}','${owner.id}','Synthetic hold activated during provider verification','${owner.id}');`)
     const event={eventID:eventId,eventTime,eventSource:'kms.amazonaws.com',eventName:'DeleteKey',eventType:'AwsServiceEvent',
       awsRegion:'us-east-1',recipientAccountId:'123456789012',readOnly:false,
+      managementEvent:true,eventCategory:'Management',userIdentity:{accountId:'123456789012',invokedBy:'AWS Internal'},
+      responseElements:mode==='missing_arn'?null:{keyId},
       resources:[{ARN:resource,type:'AWS::KMS::Key',accountId:'123456789012'}]}
     if(mode==='cloudhsm_incomplete'||mode==='deleted') {
       event.additionalEventData={customKeyStoreId:'cks-synthetickms',clusterId:'cluster-synthetic',
@@ -130,7 +132,7 @@ try {
   assert.deepEqual(statusBefore.versions,[{version:1,eventDigest:null,eventTime:null}])
   assert.equal(data(await outsider.client.rpc('st_v8_tenant_provider_erasure_status',{p_workspace:workspace})),null)
   for(const [state,expected] of [['pending','pending_deletion'],['denied','unavailable'],['missing','unavailable'],['foreign','unavailable'],
-    ['prestage','unavailable'],['cloudhsm_incomplete','unavailable']]) {
+    ['prestage','unavailable'],['missing_arn','unavailable'],['cloudhsm_incomplete','unavailable']]) {
     mode=state
     const response=await call(reviewer)
     assert.equal(response.status,200)
@@ -146,8 +148,9 @@ try {
   mode='deleted'
   providerTime=new Date().toISOString()
   browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER})
-  const page=await browser.newPage({acceptDownloads:true})
-  await page.addInitScript(session=>localStorage.setItem('sb-127-auth-token',JSON.stringify(session)),reviewer.session)
+  const page=await browser.newPage({acceptDownloads:true,storageState:{cookies:[],origins:[{
+    origin:app,localStorage:[{name:'sb-127-auth-token',value:JSON.stringify(reviewer.session)}],
+  }]}})
   await page.goto(app)
   await page.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Workspaces',exact:true}).click()
   await page.getByRole('group',{name:'Workspace sections'}).getByRole('button',{name:'Compliance exports',exact:true}).click()
