@@ -1,5 +1,6 @@
 begin;
 do $$
+<<fixture>>
 declare
   owner_id uuid:=gen_random_uuid(); actor uuid:=gen_random_uuid(); other uuid:=gen_random_uuid();
   factor uuid:=gen_random_uuid(); owner_session uuid:=gen_random_uuid();
@@ -80,6 +81,14 @@ begin
     raise exception 'Password owner created protected recurring meeting';
   exception when insufficient_privilege then null;
   end;
+  begin
+    perform public.st_v6_moderate_meeting(meeting,'lock',null,true);
+    raise exception 'Password owner moderated a protected meeting';
+  exception when insufficient_privilege then null;
+  end;
+  perform public.st_v6_moderate_meeting(room_call,'chat',null,false);
+  if not exists(select 1 from public.st_v3_meetings where id=room_call and chat_disabled) then
+    raise exception 'Schedule policy blocked independent room-call moderation'; end if;
   perform set_config('request.jwt.claims',plain_claim,true);
   if not public.st_v8_workspace_schedule_requires_sso(workspace)
     or exists(select 1 from public.st_v3_notifications where meeting_id=meeting)
@@ -117,11 +126,17 @@ begin
     values(owner_session,workspace,owner_id,'oidc',provider);
   set local role authenticated;
   perform public.st_v3_admit(meeting,actor,true);
+  perform public.st_v6_moderate_meeting(meeting,'chat',null,false);
+  if not exists(select 1 from public.st_v3_meetings where id=meeting and chat_disabled and not meeting_locked) then
+    raise exception 'Verified owner lost moderation or a denied request changed the meeting'; end if;
   if not exists(select 1 from public.st_v3_attendance where meeting_id=meeting and user_id=actor and status='admitted') then
     raise exception 'Live owner provider session could not admit attendee'; end if;
   reset role;
   update auth.custom_oauth_providers set enabled=false where identifier=provider;
   update public.st_v3_notifications n set read_at=null where n.id=protected_notice;
+  insert into sectalk_private.st_v8_workspace_entry_sso values(workspace,'oidc',provider);
+  if has_function_privilege('authenticated','sectalk_private.st_v6_moderate_meeting(uuid,text,uuid,boolean)','execute') then
+    raise exception 'Ungated moderation helper exposed'; end if;
   set local role authenticated;
   if not public.st_v8_workspace_schedule_requires_sso(workspace)
     or exists(select 1 from public.st_v3_meetings where id=meeting) then
@@ -133,7 +148,20 @@ begin
     raise exception 'Revoked provider session could acknowledge the notice'; end if;
   set local role authenticated;
   perform set_config('request.jwt.claims',owner_claim,true);
-  perform public.st_v3_meeting_state(meeting,'ended');
+  begin
+    perform public.st_v6_moderate_meeting(meeting,'chat',null,true);
+    raise exception 'Revoked provider session could moderate a meeting';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.st_v6_moderate_meeting(room_call,'chat',null,true);
+    raise exception 'Workspace entry policy did not block room-call moderation';
+  exception when insufficient_privilege then null;
+  end;
+  perform public.st_v6_moderate_meeting(meeting,'end',null,null);
+  reset role;
+  delete from sectalk_private.st_v8_workspace_entry_sso e where e.workspace=fixture.workspace;
+  set local role authenticated;
   if public.st_v8_workspace_schedule_policy(workspace,false)->>'required' is distinct from 'false' then
     raise exception 'Fresh owner could not recover schedule'; end if;
   if not exists(select 1 from public.st_v3_meetings where id=meeting and status='ended') then
