@@ -6,14 +6,20 @@ import {db,formatError} from '../lib/data'
 
 type Replay={state:'inactive'|'ready'|'staged'|'applied';side?:'source'|'destination';role?:'owner'|'reviewer';
   tasks?:{id:string;completed:boolean;kind?:'added';title?:string;details?:string;dueAt?:string|null}[];
-  records?:{id:string;kind:'channel'|'channel_message';name?:string;body?:string;existingChannelName?:string}[];
+  records?:{id:string;kind:'channel'|'channel_message'|'room_message';name?:string;body?:string;existingChannelName?:string;roomName?:string}[];
   packet?:{payload:string;signature:string}}
 
-export function WorkspaceResidencyBoardReplay({workspace,scope='board'}:{workspace:string;scope?:'board'|'channels'}) {
-  const channels=scope==='channels'
-  const rpcName=channels?'st_v8_residency_rollback_channels':'st_v8_residency_rollback_board_replay'
-  const title=channels?'Standard channel rollback replay':'Board task rollback replay'
-  const artifact=channels?'channel':'Board'
+const replayScopes={
+  board:{rpc:'st_v8_residency_rollback_board_replay',title:'Board task rollback replay',artifact:'Board',
+    records:'Board task changes',apply:'Apply reviewed task changes'},
+  channels:{rpc:'st_v8_residency_rollback_channels',title:'Standard channel rollback replay',artifact:'channel',
+    records:'channels and messages',apply:'Apply reviewed channels and messages'},
+  rooms:{rpc:'st_v8_residency_rollback_rooms',title:'Standard room rollback replay',artifact:'room message',
+    records:'room messages',apply:'Apply reviewed room messages'},
+} as const
+
+export function WorkspaceResidencyBoardReplay({workspace,scope='board'}:{workspace:string;scope?:keyof typeof replayScopes}) {
+  const {rpc:rpcName,title,artifact,records,apply}=replayScopes[scope]
   const [replay,setReplay]=useState<Replay>()
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
@@ -60,7 +66,7 @@ export function WorkspaceResidencyBoardReplay({workspace,scope='board'}:{workspa
         const url=URL.createObjectURL(new Blob([JSON.stringify(next.packet)],{type:'application/json'}))
         const link=document.createElement('a')
         link.href=url
-        link.download='sectalk-'+artifact.toLowerCase()+'-recovery-'+workspace+'.json'
+        link.download='sectalk-'+artifact.toLowerCase().replaceAll(' ','-')+'-recovery-'+workspace+'.json'
         link.click()
         window.setTimeout(()=>URL.revokeObjectURL(url),1000)
       }else setReplay(next)
@@ -75,12 +81,8 @@ export function WorkspaceResidencyBoardReplay({workspace,scope='board'}:{workspa
   return <section className="release-section" aria-label={title}>
     <h3>{title}</h3>
     {replay.state==='inactive'&&<p role="status">The signed recovery admission and verified manifest are required.</p>}
-    {replay.state==='staged'&&<p role="status">{channels?
-      'The original independent source reviewer can apply the staged channels and messages.':
-      'The original independent source reviewer can apply the staged Board task changes.'}</p>}
-    {replay.state==='applied'&&<p role="status">{channels?
-      'Reviewed channels and messages were replayed. Workspace writes remain held.':
-      'Reviewed Board task changes were replayed. Workspace writes remain held.'}</p>}
+    {replay.state==='staged'&&<p role="status">The original independent source reviewer can apply the staged {records}.</p>}
+    {replay.state==='applied'&&<p role="status">Reviewed {records} were replayed. Workspace writes remain held.</p>}
     {!!replay.tasks?.length&&<details><summary>Review the staged task changes</summary>
       <ul>{replay.tasks.map(task=><li key={task.id}>
         <code>{task.id}</code> · {task.completed?'Complete':'Incomplete'}
@@ -91,10 +93,11 @@ export function WorkspaceResidencyBoardReplay({workspace,scope='board'}:{workspa
         </>}
       </li>)}</ul>
     </details>}
-    {replay.state==='staged'&&!!replay.records?.length&&<details><summary>Review the staged channels and messages</summary>
+    {replay.state==='staged'&&!!replay.records?.length&&<details><summary>Review the staged {records}</summary>
       <ul>{replay.records.map(record=><li key={record.kind+record.id}>
         <code>{record.id}</code> · {record.kind==='channel'?'Channel':'Message'}
         {record.existingChannelName&&<span> · Previously migrated channel <strong>{record.existingChannelName}</strong></span>}
+        {record.roomName&&<span> · Previously migrated room <strong>{record.roomName}</strong></span>}
         <p>{record.name??record.body}</p>
       </li>)}</ul>
     </details>}
@@ -104,8 +107,7 @@ export function WorkspaceResidencyBoardReplay({workspace,scope='board'}:{workspa
       {action==='stage'&&<label>{`Signed ${artifact} recovery file`}<input name="batch" type="file" accept=".json,application/json" required disabled={busy}/></label>}
       <label>Authenticator code if prompted<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" disabled={busy}/></label>
       <button className="secondary" type="submit" disabled={busy}>
-        {action==='issue'?`Download ${artifact} recovery file`:action==='stage'?`Stage ${artifact} recovery file`:
-          channels?'Apply reviewed channels and messages':'Apply reviewed task changes'}
+        {action==='issue'?`Download ${artifact} recovery file`:action==='stage'?`Stage ${artifact} recovery file`:apply}
       </button>
     </form>}
     <button className="secondary" disabled={busy} onClick={()=>void refresh()}>{`Refresh ${artifact} replay`}</button>
