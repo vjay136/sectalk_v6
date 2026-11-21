@@ -58,7 +58,7 @@ assert.ok(!checkChannelReplay||checkBoardAdditions)
 assert.ok(!checkMemberChannelReplay||checkChannelReplay)
 assert.ok(!checkExistingChannelReplay||(checkCutover&&checkChannelReplay&&checkSourceReplayReview))
 assert.ok(!checkDefaultChannelReplay||(checkExistingChannelReplay&&checkSourceSignoff))
-assert.ok(!checkRollbackFileCopy||(checkRollbackManifest&&!checkSourceSignoff))
+assert.ok(!checkRollbackFileCopy||checkRollbackManifest)
 if(checkDestinationComparison)assert.ok(checkChannelHistory&&checkRoomTaskImport&&sourceApp&&targetApp)
 if(checkRoomTaskImport)assert.ok(checkRoomImport)
 if(checkRoomFileImport)assert.ok(sourceApp&&targetApp&&checkRoomImport)
@@ -1942,6 +1942,15 @@ try {
               }
               if(checkExistingChannelReplay)assert.equal(outcomes.get(existingChannelPost),'matched')
               if(!checkSourceSignoff)assert.equal(outcomes.get(reportedPost),'not_replayed')
+              if(checkRollbackFileCopy){
+                const destinationObject=JSON.parse(rollbackFileCopy.proof.payload).object
+                const file=result.records.find(record=>record.kind==='workspace_file'&&record.id===rollbackFile.id)
+                const object=result.records.find(record=>record.kind==='storage_object'&&record.id===destinationObject)
+                assert.equal(file.result,'matched')
+                assert.equal(object.result,'matched')
+                assert.match(file.sourceReceipt,/^[0-9a-f]{64}$/)
+                assert.equal(object.sourceReceipt,file.sourceReceipt)
+              }
               assert(!JSON.stringify(result).includes('Reviewed recovery chat message'))
               const sourcePanel=reviewPage.getByRole('region',{name:'Source rollback verification',exact:true})
               await sourcePanel.getByRole('button',{name:'Refresh source verification',exact:true}).click()
@@ -1959,6 +1968,30 @@ try {
                 await sourcePanel.getByLabel('Confirm source evidence workspace ID').fill(workspace)
                 await sourcePanel.getByRole('button',{name:'Sign off on source evidence',exact:true}).click()
                 await sourcePanel.getByText('The independent reviewer signed off on all changes in this manifest.',{exact:true}).waitFor()
+                if(checkRollbackFileCopy){
+                  const evidence=client=>client.rpc('st_v8_residency_source_evidence',{p_workspace:workspace})
+                  const original=data(await evidence(verifiedOwner))
+                  const objectId=JSON.parse(rollbackFileCopy.proof.payload).object
+                  const assertFileChanged=async()=>{
+                    const drifted=data(await evidence(verifiedReviewer))
+                    assert.equal(drifted.coverage,'incomplete')
+                    assert.equal(drifted.records.find(record=>record.id===rollbackFile.id).result,'source_changed')
+                    assert.equal(drifted.records.find(record=>record.id===objectId).result,'source_changed')
+                    assert.equal((await verifiedReviewer.rpc('st_v8_residency_source_evidence',{
+                      p_workspace:workspace,p_action:'confirm',p_confirmation:workspace,
+                      p_review:original.evidenceId,p_digest:original.evidenceDigest,
+                    })).error?.code,'PT409')
+                  }
+                  const fileFilter=`where (workspace,id)=('${workspace}','${rollbackFile.id}')`
+                  sourceSql(`update sectalk_private.st_v6_workspace_files set filename='Drifted source name.txt' ${fileFilter};`)
+                  try { await assertFileChanged() }
+                  finally { sourceSql(`update sectalk_private.st_v6_workspace_files set filename='${rollbackFile.name}' ${fileFilter};`) }
+                  const liveFilter=`where (bucket_id,name)=('sectalk-workspace-files','${workspace}/${rollbackFile.id}')`
+                  sourceSql(`update storage.objects set metadata=metadata||'{"fixturePostSignoffDrift":true}'::jsonb ${liveFilter};`)
+                  try { await assertFileChanged() }
+                  finally { sourceSql(`update storage.objects set metadata=metadata-'fixturePostSignoffDrift' ${liveFilter};`) }
+                  console.log('The exact file and storage records were included in final sign-off. Later file or Storage drift withdrew coverage for both records.')
+                }
                 console.log('Edge recorded and independently signed the exact source evidence, with both write holds preserved.')
               }else{
                 await sourcePanel.getByText(reportedPost,{exact:true}).waitFor()
