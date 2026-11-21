@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { supabaseApiFetch } from './supabase-api-fetch.mjs'
 
 export const fileHeaders={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'}
 export const fileAuthOptions={auth:{persistSession:false,autoRefreshToken:false}}
@@ -28,5 +29,7 @@ export async function authenticateFileRequest(request:Request,scope?:{type:'work
   if(admission.data>0)return Response.json({error:'Too many attachment requests. Try again shortly.'},{
     status:429,headers:{...fileHeaders,'Retry-After':String(admission.data)},
   })
-  return {actor:data.user.id,client,storage:createClient(url,storageKey,fileAuthOptions)}
+  return {actor:data.user.id,client,storage:createClient(url,storageKey,{
+    ...fileAuthOptions,global:{fetch:supabaseApiFetch(storageKey)},
+  })}
 }

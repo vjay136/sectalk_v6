@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createClient } from '@supabase/supabase-js'
-import { checkReadiness, checkSignupServiceReadiness, readinessResponse } from '../apps/web/lib/readiness.ts'
+import { checkAttachmentReadiness, checkReadiness, checkSignupServiceReadiness, readinessResponse } from '../apps/web/lib/readiness.ts'
 import { hostedSignup, signupConfiguration } from '../apps/web/lib/signup-configuration.mjs'
-import { signupFetch } from '../apps/web/lib/signup-transport.mjs'
+import { supabaseApiFetch } from '../apps/web/lib/supabase-api-fetch.mjs'
 
 const config={url:'https://database.example.invalid',key:'publishable-key'}
 
@@ -72,7 +72,7 @@ test('signup transport uses the modern key via apikey for both Auth and PostgRES
   const requests=[]
   const client=createClient(config.url,modernKey,{
     auth:{persistSession:false,autoRefreshToken:false},
-    global:{fetch:signupFetch(modernKey,async(input,options)=>{
+    global:{fetch:supabaseApiFetch(modernKey,async(input,options)=>{
       assert.equal(options.headers.get('apikey'),modernKey)
       assert.equal(options.headers.get('authorization'),null)
       assert.equal(options.redirect,'error')
@@ -84,10 +84,40 @@ test('signup transport uses the modern key via apikey for both Auth and PostgRES
   await client.auth.admin.createUser({email:'fixture@example.invalid'})
   assert.deepEqual(requests,['/rest/v1/rpc/st_v8_signup_service_ready','/auth/v1/admin/users'])
   for (const [key,bearer] of [['legacy-token','legacy-token'],[modernKey,'different-token']]) {
-    await signupFetch(key,async(_,options)=>{
+    await supabaseApiFetch(key,async(_,options)=>{
       assert.equal(options.headers.get('authorization'),`Bearer ${bearer}`)
     })(config.url,{headers:{Authorization:`Bearer ${bearer}`}})
   }
+})
+
+test('hosted attachment readiness requires a server key, distinct ticket secret and private chat bucket',async()=>{
+  const storage={...config,key:'sb_secret_fixture',publishableKey:config.key,ticketSecret:'x'.repeat(32)}
+  const bucket={id:'sectalk-chat-files',public:false}
+  assert.equal(await checkAttachmentReadiness(storage,async(url,options)=>{
+    assert.equal(url.pathname,'/storage/v1/bucket/sectalk-chat-files')
+    assert.equal(options.method,'GET')
+    assert.equal(options.cache,'no-store')
+    assert.equal(options.redirect,'error')
+    assert.equal(options.headers.get('apikey'),storage.key)
+    assert.equal(options.headers.get('authorization'),null)
+    return Response.json(bucket)
+  }),true)
+  for(const invalid of [
+    {key:undefined},{key:config.key},{key:'sb_publishable_other'},
+    {ticketSecret:'short'},{ticketSecret:undefined},{key:storage.ticketSecret},
+  ]) {
+    let requested=false
+    assert.equal(await checkAttachmentReadiness({...storage,...invalid},async()=>{requested=true}),false)
+    assert.equal(requested,false)
+  }
+  for(const response of [
+    Response.json(bucket,{status:403}),Response.json({...bucket,public:true}),
+    Response.json({...bucket,id:'other-bucket'}),new Response('invalid'),
+  ]) assert.equal(await checkAttachmentReadiness(storage,async()=>response),false)
+  assert.equal(await checkAttachmentReadiness({...storage,key:'legacy-fixture'},async(_,options)=>{
+    assert.equal(options.headers.get('authorization'),'Bearer legacy-fixture')
+    return Response.json(bucket)
+  }),true)
 })
 
 test('fails closed when configuration, network or the response body is invalid',async()=>{

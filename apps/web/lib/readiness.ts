@@ -1,3 +1,5 @@
+import { supabaseApiFetch } from './supabase-api-fetch.mjs'
+
 type DatabaseProbeConfig = { url?: string; key?: string }
 type Surface = 'web' | 'admin' | 'workers'
 
@@ -7,6 +9,27 @@ export async function checkReadiness(config: DatabaseProbeConfig, request: typeo
 
 export async function checkSignupServiceReadiness(config: DatabaseProbeConfig, request: typeof fetch = fetch) {
   return checkDatabaseProbe(config, 'st_v8_signup_service_ready', {}, request)
+}
+
+export async function checkAttachmentReadiness(
+  config: DatabaseProbeConfig & { publishableKey?: string; ticketSecret?: string }, request: typeof fetch = fetch,
+) {
+  const {url, key, publishableKey, ticketSecret}=config
+  if (!url || !key || key===publishableKey || key.startsWith('sb_publishable_') ||
+    !ticketSecret || Buffer.byteLength(ticketSecret)<32 || ticketSecret===key) return false
+  try {
+    const endpoint=new URL('/storage/v1/bucket/sectalk-chat-files',url)
+    if (!['http:','https:'].includes(endpoint.protocol)) return false
+    const response=await supabaseApiFetch(key,request)(endpoint,{
+      method:'GET',cache:'no-store',headers:{apikey:key,Authorization:`Bearer ${key}`},
+      signal:AbortSignal.timeout(2500),
+    })
+    if (!response.ok) return false
+    const bucket=await response.json()
+    return bucket?.id==='sectalk-chat-files' && bucket.public===false
+  } catch {
+    return false
+  }
 }
 
 async function checkDatabaseProbe(config: DatabaseProbeConfig, rpc: string, args: object, request: typeof fetch) {
