@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createClient } from '@supabase/supabase-js'
-import { checkAttachmentReadiness, checkReadiness, checkSignupServiceReadiness, readinessResponse } from '../apps/web/lib/readiness.ts'
+import { attachmentReadinessStatus, checkReadiness, checkSignupServiceReadiness, readinessResponse } from '../apps/web/lib/readiness.ts'
 import { hostedSignup, signupConfiguration } from '../apps/web/lib/signup-configuration.mjs'
 import { supabaseApiFetch } from '../apps/web/lib/supabase-api-fetch.mjs'
 
@@ -93,7 +93,7 @@ test('signup transport uses the modern key via apikey for both Auth and PostgRES
 test('hosted attachment readiness requires a server key, distinct ticket secret and private chat bucket',async()=>{
   const storage={...config,key:'sb_secret_fixture',publishableKey:config.key,ticketSecret:'x'.repeat(32)}
   const bucket={id:'sectalk-chat-files',public:false}
-  assert.equal(await checkAttachmentReadiness(storage,async(url,options)=>{
+  assert.equal(await attachmentReadinessStatus(storage,async(url,options)=>{
     assert.equal(url.pathname,'/storage/v1/bucket/sectalk-chat-files')
     assert.equal(options.method,'GET')
     assert.equal(options.cache,'no-store')
@@ -101,23 +101,28 @@ test('hosted attachment readiness requires a server key, distinct ticket secret 
     assert.equal(options.headers.get('apikey'),storage.key)
     assert.equal(options.headers.get('authorization'),null)
     return Response.json(bucket)
-  }),true)
+  }),'ready')
   for(const invalid of [
     {key:undefined},{key:config.key},{key:'sb_publishable_other'},
     {ticketSecret:'short'},{ticketSecret:undefined},{key:storage.ticketSecret},
   ]) {
     let requested=false
-    assert.equal(await checkAttachmentReadiness({...storage,...invalid},async()=>{requested=true}),false)
+    assert.notEqual(await attachmentReadinessStatus({...storage,...invalid},async()=>{requested=true}),'ready')
     assert.equal(requested,false)
   }
   for(const response of [
     Response.json(bucket,{status:403}),Response.json({...bucket,public:true}),
     Response.json({...bucket,id:'other-bucket'}),new Response('invalid'),
-  ]) assert.equal(await checkAttachmentReadiness(storage,async()=>response),false)
-  assert.equal(await checkAttachmentReadiness({...storage,key:'legacy-fixture'},async(_,options)=>{
+  ]) assert.notEqual(await attachmentReadinessStatus(storage,async()=>response),'ready')
+  assert.equal(await attachmentReadinessStatus({...storage,key:'legacy-fixture'},async(_,options)=>{
     assert.equal(options.headers.get('authorization'),'Bearer legacy-fixture')
     return Response.json(bucket)
-  }),true)
+  }),'ready')
+  assert.equal(await attachmentReadinessStatus({...storage,ticketSecret:'short'}),'invalid_ticket_secret')
+  assert.equal(await attachmentReadinessStatus({...storage,key:'sb_publishable_other'}),'invalid_storage_configuration')
+  assert.equal(await attachmentReadinessStatus(storage,async()=>Response.json({message:'ignored'},{status:401})),'storage_key_rejected')
+  assert.equal(await attachmentReadinessStatus(storage,async()=>Response.json(bucket,{status:503})),'storage_unavailable')
+  assert.equal(await attachmentReadinessStatus(storage,async()=>Response.json({...bucket,public:true})),'private_bucket_not_verified')
 })
 
 test('fails closed when configuration, network or the response body is invalid',async()=>{

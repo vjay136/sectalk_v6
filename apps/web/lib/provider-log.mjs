@@ -1,5 +1,7 @@
-const services = new Set(['meeting_access','meeting_signing','meeting_screen_share','meeting_moderation','call_networking','workspace_invitation_email'])
-const failureTypes = new Set(['unavailable','signing_failed'])
+const services = new Set(['meeting_access','meeting_signing','meeting_screen_share','meeting_moderation','call_networking',
+  'workspace_invitation_email','attachment_readiness'])
+const failureTypes = new Set(['unavailable','signing_failed','invalid_ticket_secret','invalid_storage_configuration',
+  'storage_key_rejected','storage_unavailable','private_bucket_not_verified'])
 
 /** Serialize only the reviewed diagnostic fields. Never serialize an Error, request, or provider response. */
 export function providerFailureEvent(service, failure){
