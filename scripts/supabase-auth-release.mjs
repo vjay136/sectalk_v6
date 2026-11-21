@@ -19,7 +19,6 @@ async function authReleaseSettings(siteUrl) {
       external_email_enabled: true,
       mailer_allow_unverified_email_sign_ins: false,
       mailer_autoconfirm: false,
-      mailer_otp_length: 6,
       mailer_subjects_confirmation: 'Verify email for SecTalk',
       mailer_templates_confirmation_content: confirmation,
       mailer_subjects_recovery: 'Reset password for SecTalk',

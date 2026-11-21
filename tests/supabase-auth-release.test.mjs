@@ -31,7 +31,7 @@ test('default Auth release inspection never writes and lists missing deployment 
 })
 
 test('applying Auth release preserves other callbacks, uses link and OTP templates, and is idempotent', async () => {
-  const fixture = project({ smtp_host: 'smtp.example', smtp_admin_email: 'auth@sectalk.example' })
+  const fixture = project({ smtp_host: 'smtp.example', smtp_admin_email: 'auth@sectalk.example', mailer_otp_length: 8 })
   const result = await fixture.run({ apply: true })
   assert.deepEqual(result.pending, [])
   assert.deepEqual(fixture.requests, ['GET', 'PATCH', 'GET'])
@@ -42,7 +42,7 @@ test('applying Auth release preserves other callbacks, uses link and OTP templat
   assert.equal(fixture.config.external_email_enabled, true)
   assert.equal(fixture.config.mailer_autoconfirm, false)
   assert.equal(fixture.config.mailer_allow_unverified_email_sign_ins, false)
-  assert.equal(fixture.config.mailer_otp_length, 6)
+  assert.equal(fixture.config.mailer_otp_length, 8)
   assert.match(fixture.config.mailer_templates_confirmation_content, /#token_hash=\{\{ \.TokenHash \}\}/)
   assert.match(fixture.config.mailer_templates_recovery_content, /\{\{ \.Token \}\}/)
   assert.doesNotMatch(fixture.config.mailer_templates_recovery_content, /ConfirmationURL/)
