@@ -35,9 +35,13 @@ async function subscribe(session) {
   channels.push(client)
   await client.realtime.setAuth(session.access_token)
   const seen = []
+  const notices = []
   const channel = client.channel('reaction-policy-' + randomUUID())
     .on('postgres_changes', {schema:'public', table:'st_v6_workspace_reaction_policy', event:'UPDATE'}, change => {
       if ([workspace, control].includes(change.new.workspace_id)) seen.push(change.new)
+    })
+    .on('postgres_changes', {schema:'public', table:'st_v3_notifications', event:'UPDATE', filter:'recipient=eq.'+owner}, change => {
+      if ([workspace, control].includes(change.new.workspace_id)) notices.push(change.new)
     })
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Reaction policy subscription did not join')), 15000)
@@ -49,12 +53,12 @@ async function subscribe(session) {
       }
     })
   })
-  return seen
+  return { seen, notices }
 }
 async function waitFor(events, predicate, description) {
   const deadline = Date.now() + 15000
   while (!events.some(predicate)) {
-    if (Date.now() >= deadline) throw new Error(`Expected reaction policy update did not arrive: ${description}`)
+    if (Date.now() >= deadline) throw new Error(`Expected Realtime update did not arrive: ${description}`)
     await delay(100)
   }
 }
@@ -80,33 +84,59 @@ try {
     insert into sectalk_private.st_v7_workspace_sso_sessions(session,workspace,principal,protocol,provider)
       values('${nativeSession}','${workspace}','${owner}','oidc','${provider}');
     insert into sectalk_private.st_v8_workspace_entry_sso values('${workspace}','oidc','${provider}');
+    with meetings as (
+      insert into public.st_v3_meetings(workspace_id,host_id,title,starts_at,ends_at)
+      select id,'${owner}','Synthetic notification fixture',now()+interval '1 hour',now()+interval '2 hours'
+      from public.st_v2_workspaces where id in ('${workspace}','${control}')
+      returning id,workspace_id
+    )
+    insert into public.st_v3_notifications(recipient,workspace_id,meeting_id,kind)
+      select '${owner}',workspace_id,id,'meeting.scheduled' from meetings;
     insert into public.st_v6_workspace_reaction_policy(workspace_id,emoji_set,per_person)
       values('${workspace}','native',2),('${control}','native',2); commit;`)
   const rows = async person => data(await person.client.from('st_v6_workspace_reaction_policy')
     .select('workspace_id').in('workspace_id',[workspace,control])).map(row => row.workspace_id).sort()
   assert.deepEqual(await rows(passwordOnly), [control])
   assert.deepEqual(await rows(signed), [workspace,control].sort())
-  const [plainEvents, signedEvents] = await Promise.all([subscribe(passwordOnly.session),subscribe(signed.session)])
+  const noticeRows = async person => data(await person.client.from('st_v3_notifications')
+    .select('workspace_id').eq('recipient',owner).in('workspace_id',[workspace,control])).map(row => row.workspace_id).sort()
+  assert.deepEqual(await noticeRows(passwordOnly), [control])
+  assert.deepEqual(await noticeRows(signed), [workspace,control].sort())
+  const [plainStream, signedStream] = await Promise.all([subscribe(passwordOnly.session),subscribe(signed.session)])
+  const {seen:plainEvents,notices:plainNotices}=plainStream
+  const {seen:signedEvents,notices:signedNotices}=signedStream
   // Joining the channel can precede initialization of a local logical replication slot.
   for (let attempt = 0; attempt < 20; attempt++) {
-    if (plainEvents.length && signedEvents.length) break
-    sql(`update public.st_v6_workspace_reaction_policy set per_person=2 where workspace_id='${control}';`)
+    if (plainEvents.length && signedEvents.length && plainNotices.length && signedNotices.length) break
+    sql(`update public.st_v6_workspace_reaction_policy set per_person=2 where workspace_id='${control}';
+      update public.st_v3_notifications set read_at=clock_timestamp() where workspace_id='${control}' and recipient='${owner}';`)
     await delay(500)
   }
   assert.ok(plainEvents.length && signedEvents.length, 'Both Realtime subscribers must receive the control workspace')
+  assert.ok(plainNotices.length && signedNotices.length, 'Both Realtime subscribers must receive the control notice')
   for (const revision of [3,4]) {
+    const readAt = `2026-11-2${revision}T00:00:00.000Z`
     sql(`begin;
       ${revision === 4 ? "update auth.custom_oauth_providers set enabled=false where identifier='"+provider+"';" : ''}
       update public.st_v6_workspace_reaction_policy set per_person=${revision} where workspace_id='${workspace}';
-      update public.st_v6_workspace_reaction_policy set per_person=${revision} where workspace_id='${control}'; commit;`)
+      update public.st_v6_workspace_reaction_policy set per_person=${revision} where workspace_id='${control}';
+      update public.st_v3_notifications set read_at='${readAt}' where workspace_id='${workspace}' and recipient='${owner}';
+      update public.st_v3_notifications set read_at='${readAt}' where workspace_id='${control}' and recipient='${owner}'; commit;`)
     const controlReached = row => row.workspace_id === control && row.per_person === revision
     await Promise.all([waitFor(plainEvents,controlReached,`password control revision ${revision}`),
       waitFor(signedEvents,controlReached,`signed control revision ${revision}`)])
     assert.equal(plainEvents.some(row => row.workspace_id === workspace),false)
     assert.equal(signedEvents.some(row => row.workspace_id === workspace && row.per_person === revision),revision === 3)
+    const matchesReadAt = row => new Date(row.read_at).toISOString() === readAt
+    const noticeControlReached = row => row.workspace_id === control && matchesReadAt(row)
+    await Promise.all([waitFor(plainNotices,noticeControlReached,`password control notice ${revision}`),
+      waitFor(signedNotices,noticeControlReached,`signed control notice ${revision}`)])
+    assert.equal(plainNotices.some(row => row.workspace_id === workspace),false)
+    assert.equal(signedNotices.some(row => row.workspace_id === workspace && matchesReadAt(row)),revision === 3)
   }
   assert.deepEqual(await rows(signed), [control])
-  console.log('Passed live policy SELECT and Realtime with isolated workspace scope and provider revocation.')
+  assert.deepEqual(await noticeRows(signed), [control])
+  console.log('Passed live reaction policy and notice reads and Realtime with isolated workspace scope and provider revocation.')
 } finally {
   await Promise.all(channels.map(client => client.removeAllChannels()))
   if (owner) sql(`begin; set local session_replication_role=replica;

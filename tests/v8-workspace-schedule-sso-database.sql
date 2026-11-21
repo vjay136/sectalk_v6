@@ -7,6 +7,7 @@ declare
   workspace uuid; second_workspace uuid;
   meeting uuid:=gen_random_uuid(); room uuid:=gen_random_uuid(); room_call uuid:=gen_random_uuid();
   unprotected uuid:=gen_random_uuid();
+  protected_notice bigint; ordinary_notice bigint;
   provider text:='custom:schedule-sso-rollback'; domain text:='schedule-sso.example.invalid';
   owner_claim text:=jsonb_build_object('sub',owner_id,'session_id',owner_session,'role','authenticated','aal','aal2')::text;
   plain_claim text:=jsonb_build_object('sub',actor,'session_id',password_session,'role','authenticated')::text;
@@ -49,6 +50,10 @@ begin
   if not exists(select 1 from public.st_v3_attendance where meeting_id=meeting and user_id=owner_id) then
     raise exception 'Default meeting schedule unexpectedly blocked the host'; end if;
   reset role;
+  select n.id into strict protected_notice from public.st_v3_notifications n
+    where (n.meeting_id,n.recipient,n.kind)=(meeting,actor,'meeting.scheduled');
+  select n.id into strict ordinary_notice from public.st_v3_notifications n
+    where (n.meeting_id,n.recipient,n.kind)=(unprotected,actor,'meeting.scheduled');
   insert into sectalk_private.st_v7_workspace_sso_sessions(session,workspace,principal,protocol,provider)
     values(sso_session,workspace,actor,'oidc',provider);
   set local role authenticated;
@@ -80,6 +85,13 @@ begin
     or exists(select 1 from public.st_v3_notifications where meeting_id=meeting)
     or exists(select 1 from public.st_v6_search('Scheduled SSO sentinel','meeting','{}') where id=meeting) then
     raise exception 'Workspace member password session saw protected meeting details or notifications'; end if;
+  perform public.st_v3_mark_notification(protected_notice,'meeting');
+  perform public.st_v3_mark_notification(null::bigint);
+  reset role;
+  if not exists(select 1 from public.st_v3_notifications n where n.id=protected_notice and n.read_at is null)
+    or not exists(select 1 from public.st_v3_notifications n where n.id=ordinary_notice and n.read_at is not null) then
+    raise exception 'Password-only notification acknowledgements did not respect the schedule scope'; end if;
+  set local role authenticated;
   begin
     perform public.st_v3_request_admission(meeting);
     raise exception 'Password member requested protected meeting admission';
@@ -91,6 +103,9 @@ begin
     or not exists(select 1 from public.st_v6_search('Scheduled SSO sentinel','meeting','{}') where id=meeting)
     or public.st_v3_request_admission(meeting) is distinct from 'waiting' then
     raise exception 'Live provider session lost schedule, Search, notification or lobby access'; end if;
+  perform public.st_v3_mark_notification(protected_notice,'meeting');
+  if not exists(select 1 from public.st_v3_notifications n where n.id=protected_notice and n.read_at is not null) then
+    raise exception 'Live provider session could not acknowledge the protected notice'; end if;
   perform set_config('request.jwt.claims',owner_claim,true);
   begin
     perform public.st_v3_admit(meeting,actor,true);
@@ -106,14 +121,26 @@ begin
     raise exception 'Live owner provider session could not admit attendee'; end if;
   reset role;
   update auth.custom_oauth_providers set enabled=false where identifier=provider;
+  update public.st_v3_notifications n set read_at=null where n.id=protected_notice;
   set local role authenticated;
   if not public.st_v8_workspace_schedule_requires_sso(workspace)
     or exists(select 1 from public.st_v3_meetings where id=meeting) then
     raise exception 'Disabled provider retained schedule access'; end if;
+  perform set_config('request.jwt.claims',provider_claim,true);
+  perform public.st_v3_mark_notification(null::bigint,'meeting');
+  reset role;
+  if not exists(select 1 from public.st_v3_notifications n where n.id=protected_notice and n.read_at is null) then
+    raise exception 'Revoked provider session could acknowledge the notice'; end if;
+  set local role authenticated;
+  perform set_config('request.jwt.claims',owner_claim,true);
   perform public.st_v3_meeting_state(meeting,'ended');
   if public.st_v8_workspace_schedule_policy(workspace,false)->>'required' is distinct from 'false' then
     raise exception 'Fresh owner could not recover schedule'; end if;
   if not exists(select 1 from public.st_v3_meetings where id=meeting and status='ended') then
     raise exception 'Meeting remained hidden after workspace recovery or could not end'; end if;
+  perform set_config('request.jwt.claims',plain_claim,true);
+  perform public.st_v3_mark_notification(protected_notice);
+  if not exists(select 1 from public.st_v3_notifications n where n.id=protected_notice and n.read_at is not null) then
+    raise exception 'Workspace recovery did not restore notification acknowledgement'; end if;
 end $$;
 rollback;
