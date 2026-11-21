@@ -17,11 +17,12 @@ const destination={
   users:[],
 }
 const workspace=randomUUID(),room=randomUUID(),anchor=randomUUID(),post=randomUUID(),handoff=randomUUID(),approval=randomUUID()
-const reply=randomUUID(),anchorReply=randomUUID()
+const reply=randomUUID(),anchorReply=randomUUID(),task=randomUUID()
 const cell=randomUUID(),plan=randomBytes(32).toString('hex'),secret=randomBytes(32).toString('hex')
 const roomName='Reviewed project room',body='Recovered owner room message '+post.slice(0,8)
 const replyBody='Recovered owner thread reply '+reply.slice(0,8)
 const anchorReplyBody='Recovered reply to imported history '+anchorReply.slice(0,8)
+const taskTitle='Recovered owner task '+task.slice(0,8)
 let browser
 
 function sql(site,input){
@@ -76,6 +77,7 @@ async function pageFor(site,who){
   return page
 }
 const recovery=page=>page.getByRole('region',{name:'Standard room rollback replay',exact:true})
+const taskRecovery=page=>page.getByRole('region',{name:'Room task rollback replay',exact:true})
 const review=page=>page.getByRole('region',{name:'Destination rollback change review',exact:true})
 async function submit(panel,confirmation,button){
   await panel.getByLabel(confirmation,{exact:true}).fill(workspace)
@@ -84,6 +86,9 @@ async function submit(panel,confirmation,button){
 async function recoveredRow(who,id=post){
   return data(await who.api.from('st_v6_room_posts').select('room_id,id,sender,body,created_at,parent_id')
     .eq('room_id',room).eq('id',id).single())
+}
+async function recoveredTask(who){
+  return data(await who.api.from('st_v6_tasks').select('*').eq('room_id',room).eq('id',task).single())
 }
 
 try{
@@ -136,9 +141,12 @@ try{
   data(await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:post,p_body:body}))
   data(await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:reply,p_body:replyBody,p_parent:post}))
   data(await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:anchorReply,p_body:anchorReplyBody,p_parent:anchor}))
+  data(await destinationOwner.api.rpc('st_v6_task_create',{p_id:task,p_room:room,p_chat:null,p_title:taskTitle,
+    p_due_at:'2030-01-01T00:00:00Z',p_priority:'high',p_labels:['release']}))
   const original=await recoveredRow(destinationOwner)
   const originalReply=await recoveredRow(destinationOwner,reply)
   const originalAnchorReply=await recoveredRow(destinationOwner,anchorReply)
+  const originalTask=await recoveredTask(destinationOwner)
   sql(destination,hold('destination'))
 
   const destinationOwnerPage=await pageFor(destination,destinationOwner)
@@ -170,6 +178,15 @@ try{
   assert.equal(proof.destinationAuthor,destinationReviewer.id)
   assert.match(proof.baselineDigest,/^[a-f0-9]{64}$/)
   assert.match(proof.authorTag,/^[a-f0-9]{64}$/)
+  const taskDownloadEvent=destinationOwnerPage.waitForEvent('download')
+  await submit(taskRecovery(destinationOwnerPage),'Confirm room task recovery workspace ID','Download room task recovery file')
+  const taskDownload=await taskDownloadEvent
+  const taskPacketBytes=await readFile(await taskDownload.path())
+  const taskClaim=JSON.parse(JSON.parse(taskPacketBytes.toString()).payload)
+  assert.equal(taskClaim.records.length,1)
+  assert.deepEqual({id:taskClaim.records[0].id,room:taskClaim.records[0].room,name:taskClaim.records[0].name,
+    priority:taskClaim.records[0].priority,labels:taskClaim.records[0].labels},
+    {id:task,room,name:taskTitle,priority:'high',labels:['release']})
 
   const sourceOwnerPage=await pageFor(source,sourceOwner)
   await recovery(sourceOwnerPage).getByLabel('Signed room message recovery file',{exact:true}).setInputFiles({
@@ -179,6 +196,13 @@ try{
   await recovery(sourceOwnerPage).getByText('The original independent source reviewer can apply the staged room messages.',{exact:true}).waitFor()
   assert.equal(await recovery(sourceOwnerPage).getByRole('button',{name:'Apply reviewed room messages',exact:true}).count(),0)
   assert.equal(data(await sourceOwner.api.from('st_v6_room_posts').select('id').eq('room_id',room).in('id',[post,reply,anchorReply])).length,0)
+  await taskRecovery(sourceOwnerPage).getByLabel('Signed room task recovery file',{exact:true}).setInputFiles({
+    name:taskDownload.suggestedFilename(),mimeType:'application/json',buffer:taskPacketBytes,
+  })
+  await submit(taskRecovery(sourceOwnerPage),'Confirm room task recovery workspace ID','Stage room task recovery file')
+  await taskRecovery(sourceOwnerPage).getByText('The original independent source reviewer can apply the staged room tasks.',{exact:true}).waitFor()
+  assert.equal(await taskRecovery(sourceOwnerPage).getByRole('button',{name:'Apply reviewed room tasks',exact:true}).count(),0)
+  assert.deepEqual(data(await sourceOwner.api.from('st_v6_tasks').select('id').eq('id',task)),[])
 
   const sourceReviewerPage=await pageFor(source,sourceReviewer)
   const reviewerPanel=recovery(sourceReviewerPage)
@@ -196,12 +220,24 @@ try{
   assert.deepEqual(await recoveredRow(sourceOwner,reply),{...originalReply,sender:sourceOwner.id,parent_id:post})
   assert.deepEqual(await recoveredRow(sourceOwner,anchorReply),{...originalAnchorReply,sender:sourceOwner.id,parent_id:anchor})
   assert.deepEqual(await recoveredRow(sourceOwner,anchor),approvedRoot)
+  const taskReviewerPanel=taskRecovery(sourceReviewerPage)
+  await taskReviewerPanel.getByText('Review the staged room tasks',{exact:true}).click()
+  const stagedTask=taskReviewerPanel.getByRole('listitem').filter({hasText:taskTitle})
+  await stagedTask.getByText(roomName,{exact:true}).waitFor()
+  await stagedTask.getByText('To do · high priority',{exact:true}).waitFor()
+  await stagedTask.getByText('Labels release',{exact:true}).waitFor()
+  await submit(taskReviewerPanel,'Confirm room task recovery workspace ID','Apply reviewed room tasks')
+  await taskReviewerPanel.getByText('Reviewed room tasks were replayed. Workspace writes remain held.',{exact:true}).waitFor()
+  assert.deepEqual(await recoveredTask(sourceOwner),{...originalTask,author_id:sourceOwner.id})
+  for(const owner of [sourceOwner,destinationOwner]){
+    assert.equal((await owner.api.rpc('st_v6_task_create',{p_id:randomUUID(),p_room:room,p_chat:null,p_title:'Ordinary held task'})).error?.code,'PT423')
+  }
   assert.equal((await sourceOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:randomUUID(),p_body:'Ordinary held write'})).error?.code,'PT423')
   assert.equal((await destinationOwner.api.rpc('st_v6_room_post',{p_room:room,p_id:randomUUID(),p_body:'Ordinary held write'})).error?.code,'PT423')
   await sourceReviewerPage.reload()
   await sourceReviewerPage.getByRole('region',{name:'Source rollback verification',exact:true})
-    .getByText('3 of 3 reviewed changes verified at the source. Workspace writes are held.',{exact:true}).waitFor()
-  console.log('Edge verified signed replies to new and imported roots, exact native parent linkage, unchanged original history and both write holds.')
+    .getByText('4 of 4 reviewed changes verified at the source. Workspace writes are held.',{exact:true}).waitFor()
+  console.log('Edge verified signed room messages and tasks, exact thread and task recovery, unchanged original history and both write holds.')
 } finally {
   await browser?.close()
   for(const site of [source,destination]){

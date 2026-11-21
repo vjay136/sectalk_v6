@@ -6,8 +6,8 @@ import {db,formatError} from '../lib/data'
 
 type Replay={state:'inactive'|'ready'|'staged'|'applied';side?:'source'|'destination';role?:'owner'|'reviewer';
   tasks?:{id:string;completed:boolean;kind?:'added';title?:string;details?:string;dueAt?:string|null}[];
-  records?:{id:string;kind:'channel'|'channel_message'|'room_message';name?:string;body?:string;existingChannelName?:string;
-    roomName?:string;parent?:string}[];
+  records?:{id:string;kind:'channel'|'channel_message'|'room_message'|'room_task';name?:string;body?:string;existingChannelName?:string;
+    roomName?:string;parent?:string;priority?:string;labels?:string[];dueAt?:string|null}[];
   packet?:{payload:string;signature:string}}
 
 const replayScopes={
@@ -17,6 +17,8 @@ const replayScopes={
     records:'channels and messages',apply:'Apply reviewed channels and messages'},
   rooms:{rpc:'st_v8_residency_rollback_rooms',title:'Standard room rollback replay',artifact:'room message',
     records:'room messages',apply:'Apply reviewed room messages'},
+  roomTasks:{rpc:'st_v8_residency_rollback_room_tasks',title:'Room task rollback replay',artifact:'room task',
+    records:'room tasks',apply:'Apply reviewed room tasks'},
 } as const
 
 export function WorkspaceResidencyBoardReplay({workspace,scope='board'}:{workspace:string;scope?:keyof typeof replayScopes}) {
@@ -96,11 +98,16 @@ export function WorkspaceResidencyBoardReplay({workspace,scope='board'}:{workspa
     </details>}
     {replay.state==='staged'&&!!replay.records?.length&&<details><summary>Review the staged {records}</summary>
       <ul>{replay.records.map(record=><li key={record.kind+record.id}>
-        <code>{record.id}</code> · {record.kind==='channel'?'Channel':record.parent?'Thread reply':'Message'}
+        <code>{record.id}</code> · {record.kind==='channel'?'Channel':record.kind==='room_task'?'Task':record.parent?'Thread reply':'Message'}
         {record.existingChannelName&&<span> · Previously migrated channel <strong>{record.existingChannelName}</strong></span>}
         {record.roomName&&<span> · Previously migrated room <strong>{record.roomName}</strong></span>}
         {record.parent&&<span> · Reply to <code>{record.parent}</code></span>}
         <p>{record.name??record.body}</p>
+        {record.kind==='room_task'&&<>
+          <p>To do · {record.priority} priority</p>
+          {!!record.labels?.length&&<p>Labels {record.labels.join(', ')}</p>}
+          {record.dueAt&&<p>Due <time dateTime={record.dueAt}>{new Date(record.dueAt).toLocaleString()}</time></p>}
+        </>}
       </li>)}</ul>
     </details>}
     {action&&<form className="release-form" onSubmit={event=>void submit(event,action)}>

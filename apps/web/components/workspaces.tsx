@@ -275,6 +275,8 @@ function WorkspaceArea({ space, user, view, initialRoom }: { space:Workspace;use
       key={'channels:'+space.id+':'+rollbackReviewVersion} workspace={space.id} scope="channels"/>}
     {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
       key={'rooms:'+space.id+':'+rollbackReviewVersion} workspace={space.id} scope="rooms"/>}
+    {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencyBoardReplay
+      key={'room-tasks:'+space.id+':'+rollbackReviewVersion} workspace={space.id} scope="roomTasks"/>}
     {view==='workspaces'&&(space.role==='owner'||space.role==='admin')&&<WorkspaceResidencySourceReplayReview
       key={'source-review:'+space.id+':'+rollbackReviewVersion} workspace={space.id}/>}
     {view==='workspaces'&&space.role==='member'&&<WorkspaceResidencyBoardAuthor key={space.id} workspace={space.id}/>}
