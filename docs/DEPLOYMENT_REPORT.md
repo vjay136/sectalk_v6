@@ -8,6 +8,8 @@ Deploy the updated Web app alongside the workspace trial SSO migration before en
 
 Run `npm run verify:registry -- --release-free` to check the 234 required rows for the Free-tier source. The full-scope gate is `npm run verify:registry -- --release` and requires all 239 rows. Both release gates scan the Web, Admin and Workers browser assets. The structural registry check runs separately as `npm run verify:registry`.
 
+The current candidate's generated schema installed all 378 migrations on a fresh disposable Supabase project. SHA-256 is `2cfa16e620ee72114a58a65c4feafb8fd4a4e3c9e17f11838846cd8f1bfd9443`. The install recorded every repository version and name in Supabase migration history, created no Auth users, and matched the checked-in RPC permission inventory. A second-install check rejected the existing schema. The Supabase CLI dry run recognized the full history and selected only a later synthetic migration. The published pilot remains on the earlier release schema and hosted backend.
+
 Local production builds passed for Web, Admin and Workers with loopback fixture settings. The isolated Web build passed its browser asset scan. The Free-tier gate passed the three project asset scans. A synthetic full-gate check verified that a server-only value in a Workers browser asset blocks release and the error redacts the value.
 
 | Optional in the Free-tier scope | Current boundary |
