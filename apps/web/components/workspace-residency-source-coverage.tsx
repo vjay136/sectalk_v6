@@ -6,12 +6,15 @@ import {db,formatError} from '../lib/data'
 const labels={workspace_task:'Workspace tasks',room_task:'Room tasks',channel_message:'Channel messages',room_message:'Room messages',
   workspace_file:'Workspace files',room_file:'Room files'}
 type Family={kind:keyof typeof labels;observed:number;approved:number;current:number;unapproved:number;drifted:number;capped:boolean}
-type Coverage={measuredAt:string;approvedRecords:number;families:Family[]}
+const boardLabels={event:'Workspace events',note:'Workspace notes',announcement:'Workspace announcements'}
+type UnsupportedBoardItems={kind:keyof typeof boardLabels;observed:number;capped:boolean}
+type Coverage={measuredAt:string;approvedRecords:number;families:Family[];unsupportedBoardItems?:UnsupportedBoardItems[]}
 
 export function WorkspaceResidencySourceCoverage({workspace,approval}:{workspace:string;approval:string}) {
   const [coverage,setCoverage]=useState<Coverage>()
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
+  const unsupportedBoardItems=coverage?.unsupportedBoardItems?.filter(row=>row.observed>0)
 
   async function check(){
     if(busy)return
@@ -35,6 +38,12 @@ export function WorkspaceResidencySourceCoverage({workspace,approval}:{workspace
       <ul aria-label="Source coverage totals">{coverage.families.map(row=><li key={row.kind}>
         <strong>{labels[row.kind]}</strong> · {row.capped?'At least ':''}{row.observed} observed · {row.current} current approvals · {row.unapproved} unapproved · {row.drifted} changed or unavailable
       </li>)}</ul>
+      {!!unsupportedBoardItems?.length&&<>
+        <p role="alert">These Board items are outside the supported transfer. Review them before moving this workspace.</p>
+        <ul aria-label="Board items outside the transfer">{unsupportedBoardItems.map(row=><li key={row.kind}>
+          <strong>{boardLabels[row.kind]}</strong> · {row.capped?'At least ':''}{row.observed} on the source
+        </li>)}</ul>
+      </>}
     </>}
   </details>
 }

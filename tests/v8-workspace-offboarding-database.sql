@@ -10,6 +10,7 @@ declare owner_id uuid:=gen_random_uuid(); reviewer_id uuid:=gen_random_uuid(); o
   fid uuid:=gen_random_uuid(); file_export uuid:=gen_random_uuid(); file_hash text:=repeat('7',64);
   private_room uuid:=gen_random_uuid(); room_file_export uuid:=gen_random_uuid(); house_file uuid:=gen_random_uuid();
   foreign_file uuid:=gen_random_uuid(); room_hash text:=repeat('6',64);
+  coverage jsonb; owner_coverage jsonb;
 begin
   foreach who in array array[owner_id,reviewer_id,outsider_id] loop
     session_id:=gen_random_uuid(); factor_id:=gen_random_uuid();
@@ -33,7 +34,9 @@ begin
   insert into sectalk_private.st_v8_workspace_compliance_sso(workspace,protocol,provider)
     values(wid,'saml','disconnected-offboarding-fixture');
   if has_table_privilege('authenticated','sectalk_private.st_v8_offboarding_requests','select')
-    or has_function_privilege('anon','public.st_v8_workspace_offboarding(uuid)','execute') then raise exception 'Private state exposed';end if;
+    or has_function_privilege('anon','public.st_v8_workspace_offboarding(uuid)','execute')
+    or has_function_privilege('authenticated','sectalk_private.st_v8_residency_source_coverage(uuid,uuid)','execute')
+    then raise exception 'Private state exposed';end if;
   set local role authenticated;
   begin
     perform public.st_v8_workspace_offboarding(wid);
@@ -106,6 +109,12 @@ begin
     values(gen_random_uuid(),room_id,owner_id,'Shared room task');
   insert into public.st_v2_items(workspace_id,kind,title,created_by)
     select wid,'task','Exact task '||i,owner_id from generate_series(1,26) i;
+  insert into public.st_v2_items(workspace_id,kind,title,created_by,due_at) values
+    (wid,'event','Private source calendar title',owner_id,now()+interval '1 day'),
+    (wid,'announcement','Private source announcement',owner_id,null),
+    (foreign_wid,'event','Foreign calendar title',outsider_id,now()+interval '1 day');
+  insert into public.st_v2_items(workspace_id,kind,title,created_by)
+    select wid,'note','Source note '||i,owner_id from generate_series(1,502) i;
   perform set_config('request.jwt.claims',claims->>outsider_id::text,true);
   foreign_channel:=public.st_v2_create_channel(foreign_wid,'offboarding-foreign');
   perform public.st_v2_post(foreign_channel,gen_random_uuid(),'Foreign channel must stay private');
@@ -116,14 +125,33 @@ begin
     perform public.st_v8_offboarding_content(wid,'page',content_id,wid::text);
     raise exception 'Content became available before independent approval';
   exception when insufficient_privilege then null; end;
+  begin
+    perform public.st_v8_residency_source_coverage(wid,content_id);
+    raise exception 'Coverage disclosed counts before independent approval';
+  exception when insufficient_privilege then null; end;
   perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
   perform public.st_v8_offboarding_content(wid,'approve',content_id,wid::text);
   perform public.st_v8_offboarding_content(wid,'approve',content_id,wid::text);
+  coverage:=public.st_v8_residency_source_coverage(wid,content_id);
+  if coverage->'unsupportedBoardItems' is distinct from
+    '[{"kind":"announcement","observed":1,"capped":false},{"kind":"event","observed":1,"capped":false},{"kind":"note","observed":501,"capped":true}]'::jsonb
+    or coverage->>'approvedRecords' is distinct from '30'
+    or coverage::text like '%Private source%' or coverage::text like '%Foreign calendar%' then
+    raise exception 'Unexpected Board coverage or manifest count'; end if;
+  perform set_config('request.jwt.claims',claims->>outsider_id::text,true);
+  begin
+    perform public.st_v8_residency_source_coverage(wid,content_id);
+    raise exception 'Coverage disclosed Board counts across workspaces';
+  exception when insufficient_privilege then null; end;
+  perform set_config('request.jwt.claims',claims->>reviewer_id::text,true);
   begin
     perform public.st_v8_offboarding_content(wid,'page',content_id,wid::text);
     raise exception 'Reviewer could download owner content';
   exception when insufficient_privilege then null; end;
   perform set_config('request.jwt.claims',claims->>owner_id::text,true);
+  owner_coverage:=public.st_v8_residency_source_coverage(wid,content_id);
+  if owner_coverage is distinct from coverage then
+    raise exception 'Source count access differed between reviewer and owner'; end if;
   page:=public.st_v8_offboarding_content(wid,'page',content_id,wid::text);
   again:=public.st_v8_offboarding_content(wid,'page',content_id,wid::text,25);
   if jsonb_array_length(page->'records')<>25 or page->>'next'<>'25'

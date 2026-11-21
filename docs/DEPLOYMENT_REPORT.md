@@ -30,6 +30,8 @@ Windows ran 114 passing unit tests with three Linux-only skips, and all workspac
 | SEC-04 Tenant key lifecycle | Managed key features and synthetic provider checks have local evidence. Enable hosted BYOK only after scoped provider and recovery verification. |
 | PLAT-13 Effective legal documents | Public pages and versioned acceptance are implemented. Terms and Privacy render as drafts until the actual operator approves and configures the effective documents. |
 
+The residency source review now reports Board events, notes, and announcements that the approved transfer omits (ORG-08). A rollback-only test on isolated Supabase verified matching counts for the approved owner and reviewer, capped counts, no Board text in the response, denial before independent approval, and denial across workspaces. The approved manifest and record count stayed the same.
+
 Set `SECTALK_RELEASE_SCOPE=free` on the Vercel Web project. The UI presents availability notices for Enterprise SSO, dedicated regions, permanent tenant erasure and external tenant keys. Terms and Privacy remain available as labeled drafts until operator approval. Existing workspace access rules still apply. Run the hosted readiness, integration, security, accessibility, load and recovery checks for enabled services before opening it to users.
 
 Keep the Free-tier defaults when upgrading the v6 backend. Enable each optional capability after its own hosted check passes:
