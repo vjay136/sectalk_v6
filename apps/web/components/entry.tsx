@@ -10,6 +10,7 @@ import { db, passkeysEnabled, transientAuthClient } from '../lib/data'
 import { signInWithAppPassword } from '../lib/account-credential'
 import {pendingWorkspaceInvite} from '../lib/workspace-invite'
 import {solveSignupProof} from '../lib/signup-proof'
+import { isFreeRelease } from '../lib/release-scope'
 import type { PlainMessageKey } from '../lib/locale'
 import { LanguageSelect, useLocale } from './locale-provider'
 import { WorkspaceSsoSignIn } from './workspace-sso-sign-in'
@@ -296,7 +297,7 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
             {t('alreadyVerified')} <button className="text-button" type="button" disabled={busy} onClick={() => go('forgot')}>{t('resetPasswordLink')}</button>.
           </p>}
         </form>
-        {current==='sign-in'&&<WorkspaceSsoSignIn/>}
+        {current==='sign-in'&&!isFreeRelease&&<WorkspaceSsoSignIn/>}
         <div className="auth-footnote"><Fingerprint size={16} /> {current === 'sign-up' || checkEmail ? t('verificationFootnote') : t('contactsFootnote')}</div>
       </section>
     </section>

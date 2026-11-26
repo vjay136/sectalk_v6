@@ -5,6 +5,7 @@ import { OfflineRegistration } from '../components/offline-registration'
 import { locales, resolveLocale } from '../lib/locale'
 import { loopbackLocaleCookie, securedLocaleCookie } from '../lib/browser-request-policy'
 import './styles.css'
+import './messenger.css'
 
 export const metadata: Metadata = {
   title: 'SecTalk by Eagle Security',

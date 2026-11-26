@@ -115,7 +115,6 @@ export function TenantArtifactKeys({ workspace }: { workspace: string }) {
   return <section className="release-section" aria-label="Managed artifact keys">
     <h3>Managed artifact keys</h3>
     <p>These workspace keys protect new compliance bundles and evidence vault captures.</p>
-    {isFreeRelease&&<p role="status">External key custody and provider erasure verification are planned for a future release. Managed custody is available.</p>}
     {error && <p role="alert" className="error">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {!state && !error && <p role="status">Loading workspace keys…</p>}

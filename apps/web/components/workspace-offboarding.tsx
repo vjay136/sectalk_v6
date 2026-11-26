@@ -141,7 +141,6 @@ export function WorkspaceOffboarding({workspace,reviewOnly=false}:{workspace:str
   const request=state.request
   return <section className="release-section" aria-label="Workspace offboarding">
     <h3>Workspace offboarding</h3>
-    {isFreeRelease&&<p role="status">Permanent workspace erasure is planned for a future release. Use the available export, preservation, and offboarding review controls.</p>}
     <p>The inventory includes workspace settings and record counts. Message content, files, personal accounts and other workspaces stay out of this export.</p>
     <p>Read-only staging preserves the workspace. Permanent deletion and key destruction are separate from this workflow.</p>
     {state.access==='mfa'&&<StaffMfa refresh={load} explanation="Verify your authenticator to manage workspace offboarding."/>}
