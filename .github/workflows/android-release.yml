@@ -46,11 +46,12 @@ jobs:
           VERSION=$(sed -n "s/^[[:space:]]*versionName '\([^']*\)'/\1/p" app/build.gradle)
           test -n "$VERSION"
           test "$TAG" = "android-v$VERSION"
-      - name: Test and build APK and unsigned Android App Bundle
-        run: gradle --no-daemon --console=plain :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:bundleRelease
+      - name: Test and build Android packages
+        run: gradle --no-daemon --console=plain :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:bundleRelease
       - name: Verify build outputs
         run: |
           test -s app/build/outputs/apk/debug/app-debug.apk
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
           test -s app/build/outputs/bundle/release/app-release.aab
           jarsigner -verify app/build/outputs/bundle/release/app-release.aab | grep -Fq 'jar is unsigned.'
       - uses: actions/upload-artifact@v4
@@ -58,5 +59,32 @@ jobs:
           name: sectalk-android-${{ github.run_number }}
           path: |
             apps/android/app/build/outputs/apk/debug/app-debug.apk
+            apps/android/app/build/outputs/apk/release/app-release-unsigned.apk
             apps/android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
+      - name: Enable KVM for the Android emulator
+        if: github.ref == 'refs/heads/codex/v6-android-free'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+      - name: Render the debug APK on Android
+        if: github.ref == 'refs/heads/codex/v6-android-free'
+        uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
+        with:
+          api-level: 35
+          target: google_apis_playstore
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 240
+          disable-linux-hw-accel: false
+          working-directory: apps/android
+          script: bash smoke-render.sh app/build/outputs/apk/debug/app-debug.apk app/build/outputs/render-smoke
+      - name: Upload Android render evidence
+        if: always() && github.ref == 'refs/heads/codex/v6-android-free'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sectalk-android-render-${{ github.run_number }}
+          path: apps/android/app/build/outputs/render-smoke/
+          if-no-files-found: ignore
