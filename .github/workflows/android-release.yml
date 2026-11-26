@@ -2,6 +2,11 @@ name: SecTalk Android builds
 
 on:
   workflow_dispatch:
+    inputs:
+      signed_apk_sha256:
+        description: SHA-256 of the owner-signed release APK to test
+        type: string
+        required: false
   pull_request:
     paths:
       - 'apps/android/**'
@@ -69,7 +74,27 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           sudo udevadm settle
-      - name: Render the debug APK on Android
+      - name: Select the APK to render
+        if: github.ref == 'refs/heads/codex/v6-android-free'
+        env:
+          SECTALK_SIGNED_SHA: ${{ inputs.signed_apk_sha256 }}
+        run: |
+          if [[ -z "$SECTALK_SIGNED_SHA" ]]; then
+            echo 'SECTALK_EMULATOR_APK=app/build/outputs/apk/debug/app-debug.apk' >> "$GITHUB_ENV"
+            echo 'SECTALK_EMULATOR_MODE=debug' >> "$GITHUB_ENV"
+            exit 0
+          fi
+          [[ "$SECTALK_SIGNED_SHA" =~ ^[0-9a-fA-F]{64}$ ]]
+          version=$(sed -n "s/^[[:space:]]*versionName '\([^']*\)'/\1/p" app/build.gradle)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-free\.[0-9]+$ ]]
+          apk=app/build/outputs/apk/sectalk-owner-signed.apk
+          curl --fail --location --proto '=https' --max-time 60 \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/android-v$version/sectalk-android-$version-signed.apk" -o "$apk"
+          printf '%s  %s\n' "$SECTALK_SIGNED_SHA" "$apk" | sha256sum --check
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
+          echo "SECTALK_EMULATOR_APK=$apk" >> "$GITHUB_ENV"
+          echo 'SECTALK_EMULATOR_MODE=signed' >> "$GITHUB_ENV"
+      - name: Render the APK on Android
         if: github.ref == 'refs/heads/codex/v6-android-free'
         uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
         with:
@@ -80,7 +105,7 @@ jobs:
           emulator-boot-timeout: 240
           disable-linux-hw-accel: false
           working-directory: apps/android
-          script: bash smoke-render.sh app/build/outputs/apk/debug/app-debug.apk app/build/outputs/render-smoke
+          script: bash smoke-render.sh "$SECTALK_EMULATOR_APK" app/build/outputs/render-smoke "$SECTALK_EMULATOR_MODE"
       - name: Upload Android render evidence
         if: always() && github.ref == 'refs/heads/codex/v6-android-free'
         uses: actions/upload-artifact@v4

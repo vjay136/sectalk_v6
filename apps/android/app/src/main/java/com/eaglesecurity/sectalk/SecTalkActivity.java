@@ -14,9 +14,12 @@ public final class SecTalkActivity extends LauncherActivity {
         Intent incoming = getIntent();
         String link = incoming == null ? null : incoming.getDataString();
         Intent clean = new Intent(Intent.ACTION_MAIN);
+        clean.setClass(this, SecTalkActivity.class);
+        clean.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         if (incoming != null && Intent.ACTION_VIEW.equals(incoming.getAction())
                 && SecTalkLink.isAllowed(link, getString(R.string.launch_url))) {
-            clean = new Intent(Intent.ACTION_VIEW, Uri.parse(link));
+            clean.setAction(Intent.ACTION_VIEW);
+            clean.setData(Uri.parse(link));
         }
         setIntent(clean);
         super.onCreate(savedInstanceState);
