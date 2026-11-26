@@ -96,6 +96,31 @@ The owner enabled per-contact tracking consent with unknown contacts excluded. B
 
 ## Friends pilot acceptance
 
+### Web and Android release phases
+
+| Phase | Acceptance evidence |
+| --- | --- |
+| Web redesign | Test desktop and mobile navigation, keyboard focus, opening a conversation, and sending through the revised composer. Keep workspace and account tools reachable from the same shell. |
+| Free scope | Verify all 234 required matrix rows. Exclude Enterprise SSO setup, dedicated regional migration, irreversible tenant erasure, external key custody and approved legal publication from the release gate. Keep managed keys, export and review, and clearly labeled draft legal pages available. |
+| Public Web | Deploy the schema-compatible Web candidate to Vercel Production. Verify the canonical origin and confirmation callback without a Vercel session. Test app authentication and ensure the separate Admin project still requires Vercel Authentication. |
+| Android | Build the independent Android source, verify the APK and bundle build, and test launch, authentication, chat, attachments, and audio and video on an Android device. Publish the signing certificate fingerprint at `/.well-known/assetlinks.json` for verified App Links. Both clients use the same Web application and Supabase project. |
+| Versioned handover | Publish separate Web and Android tags with their own source and test evidence. A signed Android release requires the owner's release or Play App Signing certificate. |
+
+Web version `web-v6.0.0-free.1` is deployed from `5624625` on the separate v6 project. Vercel Standard Protection lets anonymous visitors reach the production domain. The app and confirmation page both returned HTTP 200, `/api/ready` returned `ready`, and the unauthenticated call API returned HTTP 401. The immutable deployment and separate Admin hostname continued to redirect to Vercel Authentication. v5 returned HTTP 200. [Public Web app](https://sectalk-v6-pilot.vercel.app) · [Web release](https://github.com/vjay136/sectalk_v6/releases/tag/web-v6.0.0-free.1)
+
+The exact Web release passed 120 Linux unit tests with zero skips. The Free gate requires 234 rows and excludes five advanced capabilities. The redesigned shell passed an Edge run against disposable Supabase at 390 × 844 and 1440 × 900. The test verified the mobile More menu, Tab and Escape focus behavior, primary navigation, message sending, Back to inbox, and persistence in a separate desktop browser session.
+
+Android version `android-v6.0.0-free.1` was built from `ebda104`. GitHub Actions passed unit tests, lint, APK and unsigned bundle packaging, and artifact validation. The GitHub release includes the installable test APK, the unsigned bundle, and SHA-256 checksums. The canonical App Links endpoint currently returns 404 because no production signing certificate has been configured. The test package can use the browser until Android App Links are verified. [Android build](https://github.com/vjay136/sectalk_v6/actions/runs/45834165784) · [Android release](https://github.com/vjay136/sectalk_v6/releases/tag/android-v6.0.0-free.1)
+
+The current production readiness probe covers the Web schema, signup-service access, and private attachment credentials. Wider hosted acceptance still needs the production email and reset flow, recipient attachment retrieval, and cross-network media. Billing checkout, relay coverage, voice-note credentials, speech transcription, group meeting media, push, digests, and scheduled Workers require independent provider deployment and acceptance. Their local implementation or matrix evidence alone does not verify hosted operation.
+
+| Open acceptance | Required hosted proof |
+| --- | --- |
+| Account and messaging | Confirm a new account through a real inbox, sign in, use a recovery code, and sign in again. Use a second account to receive an attachment and observe the same message and report status. |
+| Calling and media | Verify TURN across independent networks and exercise LiveKit meetings if enabled. Verify voice-note record and playback with production storage and encryption, and validate transcription separately with the configured worker. |
+| Delivery and billing | Deliver a push and digest through the configured Workers jobs. Verify recurring checkout and webhook receipts with a hosted billing sandbox before enabling paid purchase. Confirm automatic key rotation produced its expected receipt. |
+| Android distribution | Use the owner's Android signing identity, verify the public association, and exercise sign-in, links, chat, attachments, and media on a physical Android device. |
+
 The current go-live scope is the 234-feature Free-tier Web pilot. The five optional capabilities listed above are deferred and do not block this rollout. The tested deployment runs with `SECTALK_RELEASE_SCOPE=free`. The full release has its own acceptance gate.
 
 | Phase | Remaining work and acceptance |
