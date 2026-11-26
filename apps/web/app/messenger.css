@@ -41,6 +41,9 @@
 .inbox-list .chat-item { min-height: 61px; }
 .inbox-list .chat-item.selected { border-color: color-mix(in srgb, var(--accent) 36%, var(--line)); }
 .inbox-list .saved-shortcut { border-color: transparent; background: transparent; }
+.workspace :is(.inbox-list > .tabs, .section-tabs) { gap: 5px; }
+.workspace .section-tabs button { border-radius: 8px; min-height: 40px; padding-inline: 13px; }
+.workspace :is(.inbox-list > .tabs, .section-tabs) button.active { background: var(--accent-soft); }
 .thread { background: var(--bg); }
 .thread .default-header, .thread .thread-header {
   background: var(--surface);
@@ -53,6 +56,11 @@
   border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
 }
 .welcome-thread h2 { font-size: clamp(1.35rem, 2.5vw, 2.05rem); letter-spacing: -.035em; }
+.thread .bubble { padding: 11px 14px; border: 1px solid color-mix(in srgb, var(--line) 58%, transparent); }
+.thread .own .bubble { background: color-mix(in srgb, var(--accent-soft) 92%, var(--accent)); }
+.thread .composer { border-radius: 16px; background: var(--surface); }
+.thread .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); }
+.thread .composer .square { border-radius: 12px; }
 
 .landing .access-layout { align-items: start; }
 .landing .hero-copy { padding-block-start: clamp(12px, 4vw, 60px); }
@@ -114,5 +122,8 @@
   .messenger-sections button span { font-size: .86rem; }
   .inbox-mobile-brand { display: block; margin-bottom: 19px; }
   .inbox-heading { margin-bottom: 12px; }
+  .thread .composer { flex-wrap: wrap; gap: 4px; }
+  .thread .composer textarea { flex: 1 0 100%; }
+  .thread .composer .square { margin-inline-start: auto; }
   .workspace .toast, .workspace .call-panel { bottom: calc(67px + env(safe-area-inset-bottom)); }
 }

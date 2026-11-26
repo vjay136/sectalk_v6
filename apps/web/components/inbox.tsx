@@ -1499,6 +1499,9 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         if(!supportedFile(file)){inform('Choose an image, PDF, text or supported Office file up to 4 MiB.');return}
         setReplying(null);setAttachment({file,id:crypto.randomUUID()})
       }}/>
+      <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => void changeDraft(e.target.value)} onBlur={syncedDraft.flush} onKeyDown={event => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
+      }} />
       <button type="button" className="icon" title="Attach file" aria-label="Attach file"
         aria-describedby={!blocked&&fileCapacity?'attachment-capacity':undefined}
         disabled={blocked||busy||Boolean(expireAfter)} onClick={()=>filePicker.current?.click()}><Paperclip size={19}/></button>
@@ -1506,9 +1509,6 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         if(composerInput.current)cursor.current={start:composerInput.current.selectionStart,end:composerInput.current.selectionEnd}
         setEmoji(true)
       }}><Smile size={20}/></button>
-      <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => void changeDraft(e.target.value)} onBlur={syncedDraft.flush} onKeyDown={event => {
-        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
-      }} />
       <button type="button" className="icon" title="Scheduled messages" aria-label="Scheduled messages" onClick={()=>setScheduleOpen(true)}><CalendarClock size={19}/></button>
       <button className="primary square" title="Send message" aria-label="Send message" disabled={busy||(!draft.trim()&&!attachment)||blocked}><Send size={19} /></button>
     </form>
