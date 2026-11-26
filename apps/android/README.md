@@ -1,0 +1,24 @@
+# SecTalk for Android
+
+This standalone Gradle project launches the existing free SecTalk web app as a Trusted Web Activity (TWA) with [Android Browser Helper 2.8.0](https://github.com/GoogleChrome/android-browser-helper). It uses the web app's account, data, and Supabase backend and ships no separate backend credentials. The only launch origin is `https://sectalk-v6-pilot.vercel.app`. Android handles supported account, invitation, guest, and shared-file links for that origin once verified. Other links continue through the browser. If TWA verification or browser support is unavailable, the app uses a browser Custom Tab or the installed browser. No embedded WebView is configured.
+
+## Build and test
+
+Use JDK 17, Gradle 8.13, Android SDK Platform 36, and Build Tools 35.0.0. Set `ANDROID_HOME` to the SDK path or select the SDK in Android Studio. From `apps/android` run:
+
+```sh
+gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:bundleRelease
+```
+
+The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. Install it with `adb install -r app/build/outputs/apk/debug/app-debug.apk`. The unsigned AAB is `app/build/outputs/bundle/release/app-release.aab`. The Android builds workflow uploads both without requiring signing secrets. A debug APK does not verify against the production site unless its debug certificate is explicitly approved and configured, so browser UI is expected on ordinary debug builds.
+
+## Owner signing and verified links
+
+1. Use Android Studio **Build → Generate Signed Bundle / APK** with the owner's Android upload keystore. If this is a new Play listing, the owner can create an upload key in that dialog and enroll in Play App Signing. Securely back up the keystore credentials outside this repository and keep `com.eaglesecurity.sectalk` as the application ID. The workflow does not sign or publish.
+2. Obtain the SHA-256 fingerprint of the certificate that will sign installed APKs. For Google Play installs use the **app signing key certificate** from Play Console, not the upload certificate. For direct APK distribution obtain it with `apksigner verify --print-certs path/to/signed.apk`.
+3. Set the public Web deployment's `SECTALK_ANDROID_CERT_SHA256` to the colon-delimited SHA-256 fingerprint (or comma-separated fingerprints for multiple approved signers). Verify the deployed Digital Asset Links response at `https://sectalk-v6-pilot.vercel.app/.well-known/assetlinks.json`. It must return HTTP 200 with JSON without login or redirects. The required target is `android_app`, package `com.eaglesecurity.sectalk`, relation `delegate_permission/common.handle_all_urls`, and the exact SHA-256 fingerprint under `sha256_cert_fingerprints`. Do not publish placeholders or CI debug keys to production. See [Android App Links verification](https://developer.android.com/training/app-links/configure-assetlinks).
+4. Install the signed build and verify it on Android 12 or newer. Run `adb shell pm verify-app-links --re-verify com.eaglesecurity.sectalk`, then `adb shell pm get-app-links com.eaglesecurity.sectalk` and check the canonical host is `verified`. Tap real account and invitation links from email, open guest and shared-file links, and test sign-in, messaging, and calling on a device. Check unrelated or off-origin links stay in the browser. Verify that the TWA opens without a browser address bar after association succeeds.
+
+## Independent release tags
+
+Android's first tag is `android-v6.0.0-free.1`, corresponding to `versionName '6.0.0-free.1'` and `versionCode 6000001`. Create it only on the intended Android release commit after the build and device checks. Future Android tags use `android-v<versionName>` and require a strictly increasing `versionCode`. This tag triggers the Android build workflow only and does not deploy the website or publish to Google Play.

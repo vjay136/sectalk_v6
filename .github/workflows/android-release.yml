@@ -1,0 +1,60 @@
+name: SecTalk Android builds
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android-release.yml'
+  push:
+    branches: [main, codex/v6-android-free]
+    tags: ['android-v*']
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android-release.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+      - name: Validate Android release tag
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=$(sed -n "s/^[[:space:]]*versionName '\([^']*\)'/\1/p" app/build.gradle)
+          test -n "$VERSION"
+          test "$TAG" = "android-v$VERSION"
+      - name: Test and build APK and unsigned Android App Bundle
+        run: gradle --no-daemon --console=plain :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:bundleRelease
+      - name: Verify build outputs
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -s app/build/outputs/bundle/release/app-release.aab
+          jarsigner -verify app/build/outputs/bundle/release/app-release.aab | grep -Fq 'jar is unsigned.'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sectalk-android-${{ github.run_number }}
+          path: |
+            apps/android/app/build/outputs/apk/debug/app-debug.apk
+            apps/android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
