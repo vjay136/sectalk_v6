@@ -41,6 +41,8 @@ import { downloadChatFile, extensions, formatChatFileBytes, getChatFileCapacity,
 import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
 import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
+import { Avatar } from './avatar'
+import { useContactPhotos } from './contact-photos'
 import { AccountMfa } from './account-mfa'
 import { DeviceSessions } from './device-sessions'
 import { AccountAppearance, useAccountAppearance } from './account-appearance'
@@ -55,11 +57,6 @@ import { QuietHoursSettings, useEffectiveAvailability, useQuietIncoming } from '
 const ChatEmoji=dynamic(()=>import('./chat-emoji'))
 const Friends=dynamic(()=>import('./friends').then(module=>module.Friends))
 const DiscoverySettings=dynamic(()=>import('./friends').then(module=>module.DiscoverySettings))
-
-export function Avatar({ name, tint = 'green', photo }: { name:string; tint?:string; photo?:string }) {
-  const initials = name.trim().split(/\s+/).slice(0, 2).map(word => [...word][0]).join('').toUpperCase()
-  return <span className={'avatar ' + tint} aria-hidden="true">{photo?<img src={photo} alt="" width={42} height={42}/>:initials||'?'}</span>
-}
 
 type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id: string | null; latest_at: string | null }
 type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'|'invisible'; expires_at:string }
@@ -355,7 +352,6 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   const blocked = chat ? blocks.includes(peerId(chat, user)) : false
   const acceptedChat=chat?.status==='accepted'&&!blocked?chat.id:null
   const myExtras=useProfileExtras(profile?.id)
-  const peerExtras=useProfileExtras(acceptedChat?peer?.id:undefined,true)
   const effectiveAvailability=useEffectiveAvailability(acceptedChat && tab==='inbox' ? peer?.id : undefined,hints)
   const peerState=rawPeerState && effectiveAvailability?.busy ? 'busy' : rawPeerState
   const statusMessage=effectiveAvailability?.status
@@ -385,6 +381,11 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
     (!search || [profiles[peerId(item, user)]?.name, profiles[peerId(item, user)]?.handle]
       .some(value => value?.toLowerCase().includes(search.toLowerCase().trim()))))
   const callerId = call.call ? (call.call.caller === user ? call.call.callee : call.call.caller) : ''
+  const callContact=call.call&&chats.some(item=>item.id===call.call?.chat_id&&item.status==='accepted')&&!blocks.includes(callerId)
+    ? callerId : ''
+  const contactPhoto=useContactPhotos(user,
+    chats.filter(item=>item.status==='accepted'&&!blocks.includes(peerId(item,user))).map(item=>peerId(item,user)),
+    [callContact,acceptedChat&&tab==='inbox'&&chat?peerId(chat,user):''])
 
   function showSearch(query='') {
     setPaletteSearch(previous=>({query,sequence:previous.sequence+1}))
@@ -535,7 +536,8 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
         {visible.map(item => {
           const person = profiles[peerId(item, user)]
           return <button key={item.id} className={'chat-item ' + (item.id === selected ? 'selected' : '')} onClick={() => select(item.id)}>
-            <Avatar name={person?.name || 'Contact'} tint={item.status === 'pending' ? 'peach' : 'green'} />
+            <Avatar name={person?.name || 'Contact'} tint={item.status === 'pending' ? 'peach' : 'green'}
+              photo={item.status==='accepted'?contactPhoto(peerId(item,user)):undefined} />
             <span><strong>{person?.name || 'Contact'}</strong><small>{blocks.includes(peerId(item, user)) ? 'Blocked' : person ? '@' + person.handle : 'Contact'}</small></span>
             {inboxStatus[item.id]?.muted && <BellOff size={13} aria-label="Muted"/>}
             {inboxStatus[item.id]?.unread ? <span className="status-dot" aria-label="Unread messages"/> : <ChevronRight size={15} />}
@@ -554,7 +556,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
         try { await navigator.clipboard.writeText(profile.handle); setNotice('Handle copied.') }
         catch { setNotice('Could not copy your handle. Select and copy it from your profile.') }
       }}><Copy size={15} /> Copy handle</button></div>
-      <ProfileForm profile={profile} onSave={refresh} /><ProfileAppearance user={user} profile={myExtras}/></> :
+      <ProfileForm profile={profile} onSave={refresh} /><ProfileAppearance key={user} user={user} name={profile.name} profile={myExtras}/></> :
       profileTab==='appearance'?<AccountAppearance settings={accountAppearance}/>:
       profileTab==='privacy'?<AccountData key={user} user={user}/>:
       profileTab==='security'?<AccountMfa hints={hints}/>:
@@ -613,9 +615,9 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       tab === 'group-chats' ? <GroupChat key={user} user={user} hints={hints} openDeviceSettings={() => { setProfileTab('sessions'); setTab('profile') }}
         contacts={chats.filter(chat => chat.status === 'accepted' && !blocks.includes(peerId(chat,user)))
           .map(chat => ({ id: peerId(chat,user), name: profiles[peerId(chat,user)]?.name || 'Contact' }))} /> :
-      tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} openChat={select} openInbox={() => setTab('inbox')} /> :
+      tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} contactPhoto={contactPhoto} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
-        <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={peerExtras.photo}/>
+        <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={acceptedChat?contactPhoto(peerId(chat,user)):undefined}/>
           <div><h2>{peer?.name || 'Contact'}</h2><p aria-label="Contact availability">{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : chat.status==='accepted' ? ['Offline',lastSeenLabel].filter(Boolean).join(' · ') : 'Contact request'}</p>
             {statusMessage&&<p className="thread-profile-status" title={statusMessage}>{statusMessage}</p>}</div>
           <div className="thread-actions">
@@ -687,14 +689,15 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       {incoming && !quietIncoming ? 'Incoming '+(incoming.video?'video':'audio')+' call from '+(profiles[callerId]?.name || 'a contact')+'.' : ''}
     </div>
     {call.call && !quietIncoming && <CallPanel key={call.call.id} state={call} self={user} name={profiles[callerId]?.name || 'Contact'}
+      photo={contactPhoto(callContact)}
       enableSounds={callSounds.needsActivation ? callSounds.enable : undefined}
       openChat={select} reportContact={chatId => setReport({chat:chatId,message:null})} />}
   </main>
 }
 
-function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
+function Calls({ user, chats, profiles, blocks, state, contactPhoto, openChat, openInbox }: {
   user: string; chats: Chat[]; profiles: Record<string, Profile>; blocks: string[];
-  state: ReturnType<typeof useCalling>; openChat: (id: string) => void; openInbox: () => void
+  state: ReturnType<typeof useCalling>; contactPhoto: (id: string) => string|undefined; openChat: (id: string) => void; openInbox: () => void
 }) {
   const [rows, setRows] = useState<Call[] | null>(null)
   const [filter, setFilter] = useState<'all' | 'missed' | 'audio' | 'video' | 'diagnostics' | 'groups'>('all')
@@ -738,7 +741,7 @@ function Calls({ user, chats, profiles, blocks, state, openChat, openInbox }: {
           row.end_reason==='declined'?'Declined':row.end_reason==='cancelled'?'Cancelled':row.end_reason==='busy'?'Busy':
           row.status==='active'&&Date.parse(row.expires_at)>now?'In progress':row.status==='ringing'?'Ringing':'Ended'
         return <div className="report-row" key={row.id}>
-          <Avatar name={name} />
+          <Avatar name={name} photo={reachable?contactPhoto(peer):undefined} />
           <div><strong>{name}</strong><small>{incoming ? 'Incoming' : 'Outgoing'} {row.media_protection===1?'protected ':''}{row.video ? 'video' : 'audio'} · {new Date(row.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</small><span className="call-state">{status}</span></div>
           {reachable && <span className="call-history-controls">
             {incoming&&missed(row)&&<button className="secondary" aria-label={'Call back '+name}

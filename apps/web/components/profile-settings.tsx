@@ -1,46 +1,55 @@
 'use client'
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { Camera, Check, Trash2, X } from 'lucide-react'
 import { db, formatError } from '../lib/data'
+import { Avatar } from './avatar'
+import { downloadProfilePhoto } from './contact-photos'
 
 type Extras = { status_message:string; photo_revision:string|null; share_last_seen:boolean }
 type Counts = { sent:number;received:number;reports:number;open_reports:number }
 
-export function useProfileExtras(user: string|undefined, photoOnly=false) {
+export function useProfileExtras(user: string|undefined) {
   const [details,setDetails]=useState<{user:string;value:Extras}|null>(null)
-  const [peerRevision,setPeerRevision]=useState<{user:string;value:string}|null>(null)
-  const [photo,setPhoto]=useState<{user:string;url:string}|null>(null)
+  const [photo,setPhoto]=useState<{user:string;revision:string;url?:string}|null>(null)
+  const [loading,setLoading]=useState(true)
+  const [loadError,setLoadError]=useState(false)
+  const [retry,setRetry]=useState(0)
   const refresh=useCallback(async()=>{
     if(!user)return
-    if(photoOnly){
-      const {data,error}=await db!.rpc('st_v6_profile_photo_revision',{p_user:user})
-      setPeerRevision(!error&&typeof data==='string'?{user,value:data}:null)
-      return
-    }
     const {data,error}=await db!.from('st_v5_profile_details').select('status_message,photo_revision,share_last_seen').eq('user_id',user).maybeSingle()
+    setLoading(false)
+    setLoadError(!!error)
     if(error)return
     setDetails(previous=>previous?.user===user&&previous.value.photo_revision===data?.photo_revision&&previous.value.status_message===data?.status_message&&previous.value.share_last_seen===data?.share_last_seen
       ? previous : data?{user,value:data}:null)
-  },[user,photoOnly])
+  },[user])
   useEffect(()=>{
     void refresh()
-    const timer=window.setInterval(refresh,14000)
-    return ()=>window.clearInterval(timer)
+    const sync=()=>{if(document.visibilityState==='visible')void refresh()}
+    window.addEventListener('focus',sync)
+    return ()=>window.removeEventListener('focus',sync)
   },[refresh])
-  const revision=photoOnly
-    ? (peerRevision?.user===user?peerRevision?.value:null)
-    : (details?.user===user?details?.value.photo_revision:null)
+  const revision=details?.user===user?details?.value.photo_revision:null
   useEffect(()=>{
-    setPhoto(null)
     if(!user||!revision)return
-    let live=true
+    const controller=new AbortController()
     let url:string|undefined
-    void db!.storage.from('sectalk-avatars').download(user+'.jpg').then(({data,error})=>{
-      if(live&&!error){url=URL.createObjectURL(new Blob([data],{type:'image/jpeg'}));setPhoto({user,url})}
+    void downloadProfilePhoto(user,controller.signal).then(data=>{
+      if(controller.signal.aborted)return
+      url=URL.createObjectURL(data)
+      setPhoto({user,revision,url})
+    }).catch(()=>{
+      if(!controller.signal.aborted)setPhoto({user,revision})
     })
-    return ()=>{live=false;if(url)URL.revokeObjectURL(url)}
-  },[revision,user])
-  return {details:details?.user===user?details?.value:undefined,photo:photo?.user===user?photo?.url:undefined,refresh}
+    return ()=>{controller.abort();if(url)URL.revokeObjectURL(url)}
+  },[revision,user,retry])
+  const currentPhoto=photo?.user===user&&photo?.revision===revision?photo:null
+  return {
+    details:details?.user===user?details?.value:undefined,photo:currentPhoto?.url,refresh,
+    loadingPhoto:loading||Boolean(revision&&!currentPhoto),photoError:loadError||Boolean(currentPhoto&&!currentPhoto.url),
+    retryPhoto:()=>{void refresh();setPhoto(null);setRetry(value=>value+1)},
+  }
 }
 
 async function encodePhoto(file:File) {
@@ -63,49 +72,106 @@ async function encodePhoto(file:File) {
   }finally{bitmap.close()}
 }
 
-export function ProfileAppearance({user,profile}: {user:string;profile:ReturnType<typeof useProfileExtras>}) {
-  const [error,setError]=useState('')
-  const [message,setMessage]=useState('')
-  const [busy,setBusy]=useState(false)
-  async function savePhoto(file?:File) {
-    if(busy)return
-    setBusy(true);setError('');setMessage('')
+export function ProfileAppearance({user,name,profile}: {user:string;name:string;profile:ReturnType<typeof useProfileExtras>}) {
+  const fileInput=useRef<HTMLInputElement>(null)
+  const pickerButton=useRef<HTMLButtonElement>(null)
+  const previewRef=useRef<string|undefined>(undefined)
+  const editorMounted=useRef(false)
+  const [pending,setPending]=useState<{blob:Blob;url:string}|null>(null)
+  const [photoError,setPhotoError]=useState('')
+  const [photoMessage,setPhotoMessage]=useState('')
+  const [work,setWork]=useState<'prepare'|'save'|'remove'|null>(null)
+  const [statusError,setStatusError]=useState('')
+  const [statusMessage,setStatusMessage]=useState('')
+  const [statusBusy,setStatusBusy]=useState(false)
+  function clearPreview(){
+    if(previewRef.current)URL.revokeObjectURL(previewRef.current)
+    previewRef.current=undefined
+    setPending(null)
+  }
+  useEffect(()=>{
+    editorMounted.current=true
+    return ()=>{
+      editorMounted.current=false
+      if(previewRef.current)URL.revokeObjectURL(previewRef.current)
+    }
+  },[])
+  function focusPicker(){
+    window.requestAnimationFrame(()=>pickerButton.current?.focus())
+  }
+  async function preparePhoto(file:File){
+    setWork('prepare');setPhotoError('');setPhotoMessage('')
+    try {
+      const blob=await encodePhoto(file)
+      if(!editorMounted.current)return
+      clearPreview()
+      const url=URL.createObjectURL(blob)
+      previewRef.current=url
+      setPending({blob,url})
+      setPhotoMessage('Preview ready. Save to use this photo.')
+    } catch(error){setPhotoError(formatError(error,'Could not preview this image.'))}
+    finally{setWork(null)}
+  }
+  async function savePhoto(blob?:Blob) {
+    if(work)return
+    setWork(blob?'save':'remove');setPhotoError('');setPhotoMessage('')
     try{
       const bucket=db!.storage.from('sectalk-avatars')
       const path=user+'.jpg'
-      const result=file ? await bucket.upload(path,await(await encodePhoto(file)).arrayBuffer(),{upsert:true,contentType:'image/jpeg',cacheControl:'0'}) : await bucket.remove([path])
+      const result=blob ? await bucket.upload(path,await blob.arrayBuffer(),{upsert:true,contentType:'image/jpeg',cacheControl:'0'}) : await bucket.remove([path])
       if(result.error)throw result.error
       const saved=await db!.rpc('st_v5_profile_details_save',{p_status:null,p_refresh_photo:true})
       if(saved.error)throw saved.error
       await profile.refresh()
-      setMessage(file?'Profile photo updated.':'Profile photo removed.')
-    }catch(error){setError(formatError(error,'Could not save your profile photo.'))}
-    finally{setBusy(false)}
+      clearPreview()
+      setPhotoMessage(blob?'Profile photo updated.':'Profile photo removed.')
+      focusPicker()
+    }catch(error){setPhotoError(formatError(error,blob?'Could not save your profile photo.':'Could not remove your profile photo.'))}
+    finally{setWork(null)}
   }
   async function saveStatus(event:FormEvent<HTMLFormElement>){
     event.preventDefault()
-    if(busy)return
+    if(statusBusy||work)return
     const status=String(new FormData(event.currentTarget).get('status'))
-    setBusy(true);setError('');setMessage('')
+    setStatusBusy(true);setStatusError('');setStatusMessage('')
     const result=await db!.rpc('st_v5_profile_details_save',{p_status:status,p_refresh_photo:false})
-    if(result.error)setError(formatError(result.error,'Could not save status.'))
-    else{await profile.refresh();setMessage(status?'Status updated.':'Status cleared.')}
-    setBusy(false)
+    if(result.error)setStatusError(formatError(result.error,'Could not save status.'))
+    else{await profile.refresh();setStatusMessage(status?'Status updated.':'Status cleared.')}
+    setStatusBusy(false)
   }
   return <div className="panel release-panel release-section">
-    <h2>Photo and text status</h2><p>Only you and your accepted, unblocked contacts can see these.</p>
-    {profile.photo&&<img src={profile.photo} alt="Your profile photo" className="profile-photo-preview" width={96} height={96}/>}
-    <div className="release-flex"><label>Upload profile photo<input type="file" disabled={busy} accept="image/jpeg,image/png,image/webp" onChange={event=>{
-      const file=event.target.files?.[0];event.target.value=''
-      if(file)void savePhoto(file)
-    }}/></label>
-      {profile.details?.photo_revision&&<button type="button" className="secondary" disabled={busy} onClick={()=>void savePhoto()}>Remove photo</button>}
+    <h2>Photo and text status</h2><p>Visible only to you and your accepted, unblocked contacts.</p>
+    <div className="profile-photo-editor">
+      <Avatar name={name} photo={pending?.url||profile.photo} className="profile-photo-preview"/>
+      <div className="profile-photo-meta">
+        <strong>{pending?'Photo preview':'Profile photo'}</strong>
+        <small id="profile-photo-help">JPEG, PNG, or WebP up to 6 MiB. Your photo is cropped to a square.</small>
+        <div className="profile-photo-actions">
+          <button ref={pickerButton} type="button" className="secondary" disabled={!!work||statusBusy} aria-describedby="profile-photo-help"
+            onClick={()=>fileInput.current?.click()}><Camera size={16} aria-hidden="true"/>{pending?'Choose another':profile.details?.photo_revision?'Change photo':'Add photo'}</button>
+          <input ref={fileInput} type="file" hidden aria-label="Upload profile photo" disabled={!!work||statusBusy} accept="image/jpeg,image/png,image/webp" onChange={event=>{
+            const file=event.target.files?.[0];event.target.value=''
+            if(file)void preparePhoto(file)
+          }}/>
+          {pending ? <>
+            <button type="button" className="primary" disabled={!!work||statusBusy} onClick={()=>void savePhoto(pending.blob)}><Check size={16} aria-hidden="true"/>Save photo</button>
+            <button type="button" className="secondary" disabled={!!work||statusBusy} onClick={()=>{clearPreview();setPhotoError('');setPhotoMessage('Photo change discarded.');focusPicker()}}><X size={16} aria-hidden="true"/>Cancel</button>
+          </> : profile.details?.photo_revision&&<button type="button" className="secondary" disabled={!!work||statusBusy} onClick={()=>void savePhoto()}><Trash2 size={16} aria-hidden="true"/>Remove photo</button>}
+        </div>
+        {(work||(!pending&&profile.loadingPhoto)||photoMessage)&&<small role="status">
+          {work==='prepare'?'Preparing preview…':work==='save'?'Saving photo…':work==='remove'?'Removing photo…':photoMessage||'Loading profile photo…'}
+        </small>}
+        {photoError&&<small className="error" role="alert">{photoError}</small>}
+        {!pending&&!photoError&&profile.photoError&&<small className="profile-photo-retry"><span role="alert">Could not load profile photo.</span>
+          <button type="button" className="text-button" onClick={profile.retryPhoto}>Retry</button></small>}
+      </div>
     </div>
-    <form className="release-form" onSubmit={saveStatus}><label>Text status<input key={profile.details?.status_message??''} name="status" maxLength={140}
+    <form className="release-form profile-status" onSubmit={saveStatus}><label>Text status<input key={profile.details?.status_message??''} name="status" maxLength={140}
       placeholder="Add a short status" defaultValue={profile.details?.status_message||''}/></label>
-      <button className="primary" disabled={busy}>Save status</button></form>
-    {error&&<p role="alert" className="error">{error}</p>}
-    {message&&<p role="status">{message}</p>}
+      <button className="primary" disabled={statusBusy||!!work}>{statusBusy?'Saving status…':'Save status'}</button>
+      {statusError&&<p role="alert" className="error">{statusError}</p>}
+      {statusMessage&&<p role="status">{statusMessage}</p>}
+    </form>
   </div>
 }
 

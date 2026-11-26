@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Mic, MicOff, Monitor, MonitorOff, MoreHorizontal, Phone, PhoneOff, Video, VideoOff } from 'lucide-react'
 import { type useCalling } from '../lib/calling'
+import { Avatar } from './avatar'
 
 function Media({ stream, muted, label }: { stream: MediaStream; muted?: boolean; label: string }) {
   const ref = useRef<HTMLVideoElement>(null)
@@ -18,9 +19,9 @@ function Media({ stream, muted, label }: { stream: MediaStream; muted?: boolean;
   </div>
 }
 
-export function CallPanel({ state, self, name, openChat, reportContact, enableSounds }: {
+export function CallPanel({ state, self, name, photo, openChat, reportContact, enableSounds }: {
   state: ReturnType<typeof useCalling>; self:string; name:string; openChat:(chat:string)=>void; reportContact:(chat:string)=>void;
-  enableSounds?:()=>void
+  enableSounds?:()=>void; photo?:string
 }) {
   const [muted, setMuted] = useState(false)
   const [camera, setCamera] = useState(true)
@@ -36,8 +37,10 @@ export function CallPanel({ state, self, name, openChat, reportContact, enableSo
     : secure && connection==='connected' && protection?.ready ? 'Protected media connected'
     : connection === 'connected' ? 'Connected' : connection === 'disconnected' || connection === 'failed' ? 'Reconnecting…' : 'Connecting…'
   return <section className="call-panel" aria-label={secure ? 'Protected '+mode.toLowerCase()+' call' : mode+' call'}>
-    <div className="card-icon">{call.video ? <Video size={22} /> : <Phone size={21} />}</div>
-    <div className="call-title"><h2>{name}</h2><p role={incoming ? undefined : 'status'}>{mode} · {status}</p></div>
+    <div className="call-identity">
+      <Avatar name={name} photo={photo}/>
+      <div className="call-title"><h2>{name}</h2><p role={incoming ? undefined : 'status'}>{call.video ? <Video size={15} aria-hidden="true"/> : <Phone size={14} aria-hidden="true"/>}{mode} · {status}</p></div>
+    </div>
     {secure && protection && <div>
       <p>Verification code <output aria-label="Call verification code">{protection.code}</output></p>
       {!protection.verified && <>

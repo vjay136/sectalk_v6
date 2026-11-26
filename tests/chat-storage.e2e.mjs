@@ -139,7 +139,32 @@ if(app) {
   }
   try{
     const first=await openChat(sender,'Receiver')
+    if(v6){
+      await first.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Profile',exact:true}).click()
+      const editor=first.locator('.profile-photo-editor')
+      const fileInput=editor.locator('input[type="file"]')
+      const photoFile={name:'avatar.png',mimeType:'image/png',buffer:Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGUlEQVQokWMwz5lIEmIY1ZAzGkrmwzVpAABkqTQQWsw+FgAAAABJRU5ErkJggg==','base64')}
+      await fileInput.setInputFiles(photoFile)
+      await editor.locator('.avatar img.loaded').waitFor()
+      await editor.getByRole('button',{name:'Cancel',exact:true}).click()
+      await editor.getByRole('button',{name:'Add photo',exact:true}).waitFor()
+      assert.equal(data(await recipient.client.rpc('st_v6_profile_photo_revision',{p_user:sender.user})),null)
+      await fileInput.setInputFiles(photoFile)
+      await editor.getByRole('button',{name:'Save photo',exact:true}).click()
+      await editor.getByText('Profile photo updated.',{exact:true}).waitFor()
+      await editor.locator('.avatar img.loaded').waitFor()
+      assert.equal(typeof data(await recipient.client.rpc('st_v6_profile_photo_revision',{p_user:sender.user})),'string')
+      assert.equal(data(await outsider.client.rpc('st_v6_profile_photo_revision',{p_user:sender.user})),null)
+      await first.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Inbox',exact:true}).click()
+      await first.locator('.chat-item').filter({hasText:'Receiver'}).click()
+    }
     const second=await openChat(recipient,'Sender')
+    if(v6){
+      await second.locator('.chat-item').filter({hasText:'Sender'}).locator('.avatar img.loaded').waitFor()
+      await second.locator('.thread-header .avatar img.loaded').waitFor()
+      console.log('Passed profile photo preview, cancel, save, and accepted-chat avatars.')
+    }
     await first.getByLabel('Write a message').fill('Emoji reaction integration')
     await first.getByRole('button',{name:'Send message',exact:true}).click()
     const sample='.message'
@@ -520,7 +545,9 @@ if(app) {
       await second.getByRole('group',{name:'Call history'}).getByRole('button',{name:'Missed',exact:true}).click()
       const history=second.locator('.report-row').filter({hasText:'Sender'})
       await history.getByText('Missed',{exact:true}).waitFor()
+      await history.locator('.avatar img.loaded').waitFor()
       await history.getByRole('button',{name:'Call back Sender',exact:true}).click()
+      await second.getByRole('region',{name:'Video call',exact:true}).locator('.avatar img.loaded').waitFor()
       const incomingCall=first.getByRole('region',{name:'Video call',exact:true})
       await incomingCall.getByText('Video · Incoming call',{exact:true}).waitFor()
       await incomingCall.getByRole('button',{name:'Decline',exact:true}).click()
