@@ -34,6 +34,7 @@ const steps = {
 } as const
 
 function authMessage(error: { code?: string; status?: number }, step: Step): PlainMessageKey {
+  if (step === 'forgot' && error.code === 'over_email_send_rate_limit') return 'recoveryRequestCooldown'
   if (error.status === 429) return 'tooManyRequests'
   if (step === 'sign-in') return 'invalidSignIn'
   if (error.code === 'over_email_send_rate_limit') return 'emailRateLimit'
@@ -42,6 +43,7 @@ function authMessage(error: { code?: string; status?: number }, step: Step): Pla
   if (error.code === 'password_check_unavailable') return 'passwordCheckUnavailable'
   if (step === 'recover') return 'invalidRecoveryCode'
   if (step === 'new-password') return error.code === 'same_password' ? 'samePassword' : 'passwordUpdateFailed'
+  if (step === 'forgot') return 'recoverySendFailed'
   return 'verificationSendFailed'
 }
 
@@ -106,15 +108,6 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
     if (new URLSearchParams(window.location.search).get('mode') === 'signup') setStep('sign-up')
   }, [])
 
-  useEffect(() => {
-    if (!recovering) return
-    let active=true
-    void db?.auth.mfa.listFactors().then(({data,error})=>{
-      if (active&&!error) setRecoveryFactor(data.totp.find(factor=>factor.status==='verified')?.id??'')
-    })
-    return ()=>{active=false}
-  }, [recovering])
-
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (busy) return
@@ -173,16 +166,30 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
           const client = transientAuthClient()
           const result = await client!.auth.verifyOtp({ email: address, token: code, type: 'recovery' })
           if (result.error) throw result.error
-          const factors=await client!.auth.mfa.listFactors()
-          if (factors.error) throw factors.error
-          setRecoveryFactor(factors.data.totp.find(factor=>factor.status==='verified')?.id??'')
           recovery.current = client
           go('new-password')
+          // The email code is single-use. Keep its session even if the next
+          // request fails, so the user can retry without requesting a new code.
+          const factor = result.data.user?.factors?.find(item=>item.status==='verified'&&item.factor_type==='totp')
+          setRecoveryFactor(factor?.id??'')
           break
         }
         case 'new-password': {
           const client = recovering ? db : recovery.current
           if (!client) { go('forgot'); return }
+          const session=await client.auth.getSession()
+          if (session.error) throw session.error
+          if (!session.data.session) {setAlert('passwordUpdateFailed'); return}
+          const assurance=await client.auth.mfa.getAuthenticatorAssuranceLevel(session.data.session.access_token)
+          if (assurance.error) throw assurance.error
+          if (assurance.data.currentLevel!=='aal2' && assurance.data.nextLevel==='aal2' && !recoveryFactor) {
+            const factors=await client.auth.mfa.listFactors()
+            if (factors.error) throw factors.error
+            const factor=factors.data.totp.find(item=>item.status==='verified')
+            if (!factor) {setAlert('passwordUpdateFailed'); return}
+            setRecoveryFactor(factor.id)
+            return
+          }
           if (recoveryFactor) {
             const assurance=await client.auth.mfa.challengeAndVerify({factorId:recoveryFactor,code:factorCode})
             if (assurance.error) {setAlert('authenticatorCodeError');return}
@@ -292,6 +299,8 @@ export function Entry({ recovering, authenticatorReset, startRecovery }: { recov
           {current !== 'sign-in' && current !== 'sign-up' && <div className="form-links">
             {current !== 'confirm' && <button type="button" disabled={busy} onClick={() => void backToSignIn()}><ArrowLeft size={14} /> {t('backToSignIn')}</button>}
             {checkEmail && <button type="button" onClick={resend} disabled={busy}>{current === 'confirm' ? t('resendLink') : t('resendCode')}</button>}
+            {current === 'recover' && <button type="button" onClick={() => go('forgot')} disabled={busy}>{t('changeRecoveryEmail')}</button>}
+            {current === 'forgot' && alert === 'recoveryRequestCooldown' && <button type="button" onClick={() => go('recover')} disabled={busy}>{t('useRecoveryCode')}</button>}
           </div>}
           {current === 'confirm' && <p className="form-message">
             {t('alreadyVerified')} <button className="text-button" type="button" disabled={busy} onClick={() => go('forgot')}>{t('resetPasswordLink')}</button>.

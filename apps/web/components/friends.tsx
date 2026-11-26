@@ -1,14 +1,31 @@
 'use client'
 
-import { useEffect, useState, type FormEvent } from 'react'
-import { Search, UserPlus, Users, X } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { AtSign, ChevronDown, Inbox, Search, ShieldCheck, SlidersHorizontal, Tags, UserPlus, Users, X } from 'lucide-react'
 import { db, formatError } from '../lib/data'
 import { lifeStages, topicGroups, topicLabels } from '../lib/discovery-catalog'
 import { SectionTabs } from './section-tabs'
+import styles from './friends.module.css'
 
 type Stage = keyof typeof lifeStages
 type Result = { handle:string;name:string;stage:Stage;categories:string[] }
 const stageOptions=Object.entries(lifeStages).map(([value,label])=><option key={value} value={value}>{label}</option>)
+const browseStages:Record<Stage,string>={
+  student:'Adult student',college:'College student',professional:'Professional',freelancer:'Freelancer',
+  founder:'Business owner',career_change:'Career change',retired:'Retired',other:'Other',
+}
+const starterTopics=['study-cybersecurity','study-data-science','interest-photography','interest-fitness','interest-language-exchange']
+const categoryIndex=Object.values(topicGroups).flat().map(topic=>({...topic,searchName:topic.name.toLocaleLowerCase()}))
+
+function matchingCategories(query:string,limit:number) {
+  const term=query.trim().toLocaleLowerCase()
+  return categoryIndex.filter(topic=>topic.searchName.startsWith(term))
+    .concat(categoryIndex.filter(topic=>!topic.searchName.startsWith(term)&&topic.searchName.includes(term))).slice(0,limit)
+}
+
+function initials(name:string) {
+  return name.trim().split(/\s+/).slice(0,2).map(word=>Array.from(word)[0]).join('').toLocaleUpperCase()
+}
 
 function Topics({ choose }: {choose:(id:string)=>void}) {
   const [group,setGroup]=useState<keyof typeof topicGroups>('interest')
@@ -90,54 +107,155 @@ export function Friends({user,pending,working,send,openRequests}: {
   user:string;pending:number;working:boolean;send:(handle:string)=>void;openRequests:()=>void
 }) {
   const [tab,setTab]=useState<'find'|'handle'|'settings'>('find')
+  const [visibility,setVisibility]=useState<{user:string;enabled:boolean}|null>(null)
+  const [query,setQuery]=useState('')
+  const [stage,setStage]=useState('')
   const [category,setCategory]=useState('')
-  const [results,setResults]=useState<Result[]|null>(null)
-  const [busy,setBusy]=useState(false)
-  const [error,setError]=useState('')
+  const [categoryQuery,setCategoryQuery]=useState('')
+  const [byCategory,setByCategory]=useState(false)
+  const [attempt,setAttempt]=useState(0)
+  const [loadError,setLoadError]=useState('')
+  const [searched,setSearched]=useState<{key:string;people:Result[];error:string;rateLimited:boolean}|null>(null)
+  const searchInput=useRef<HTMLInputElement>(null)
+  const categoryToggle=useRef<HTMLButtonElement>(null)
+  const term=query.trim()
+  const eligible=visibility?.user===user&&visibility.enabled
+  const filtered=Boolean((term&&term!=='@')||stage||category)
+  const key=JSON.stringify([user,term,stage,category,attempt])
+  const result=searched?.key===key?searched:null
+  const suggestions=term.length>=2&&!term.startsWith('@')&&!category?matchingCategories(term,4):[]
+  const categories=categoryQuery.trim()?matchingCategories(categoryQuery,12):starterTopics.map(id=>({id,name:topicLabels[id]}))
 
-  async function search(event:FormEvent<HTMLFormElement>){
-    event.preventDefault()
-    if(busy)return
-    const fields=new FormData(event.currentTarget)
-    if(!category&&!fields.get('stage')&&String(fields.get('query')).trim().length<2){setError('Enter a name or select a filter.');return}
-    setBusy(true);setError('')
-    try{
-      const {data,error}=await db!.rpc('st_v5_find_friends',{p_query:fields.get('query'),p_stage:fields.get('stage')||null,p_category:category||null})
-      if(error)throw error
-      setResults(data as Result[])
-    }catch(error){setError(formatError(error,'Search is unavailable.'))}
-    finally{setBusy(false)}
+  useEffect(()=>{
+    if(tab!=='find')return
+    const request=new AbortController()
+    void (async()=>{
+      const {data,error}=await db!.from('st_v5_discovery').select('discoverable').eq('user_id',user)
+        .abortSignal(request.signal).maybeSingle()
+      if(request.signal.aborted)return
+      setLoadError(error?'Could not load your discovery settings.':'')
+      setVisibility(error?null:{user,enabled:data?.discoverable??false})
+    })()
+    return ()=>request.abort()
+  },[user,tab,attempt])
+
+  useEffect(()=>{
+    if(tab!=='find'||!eligible||!filtered)return
+    const request=new AbortController()
+    const timer=window.setTimeout(async()=>{
+      const {data,error}=await db!.rpc('st_v5_find_friends',{
+        p_query:term,p_stage:stage||null,p_category:category||null,
+      }).abortSignal(request.signal)
+      if(request.signal.aborted)return
+      setSearched({key,people:(data as Result[]|null)??[],
+        error:error?formatError(error,'Search is unavailable.'):'',rateLimited:error?.code==='PT429'})
+    },450)
+    return ()=>{window.clearTimeout(timer);request.abort()}
+  },[eligible,filtered,key,term,stage,category,tab])
+
+  function clearSearch() {
+    setQuery('');setStage('');setCategory('');setCategoryQuery('')
+    searchInput.current?.focus()
   }
 
-  return <section className="content-page">
-    <header className="content-title"><div className="card-icon"><Users size={22}/></div><div><h1>Find Friends</h1>
-      <p>Discover people who share your interests or connect with someone by their SecTalk handle.</p></div></header>
-    <button type="button" className="secondary" onClick={openRequests}>View contact requests{pending>0?' ('+pending+')':''}</button>
-    <SectionTabs label="Find Friends sections" value={tab} onChange={next=>{setTab(next);setError('')}} options={[
+  return <section className={`content-page ${styles.page}`}>
+    <header className={styles.header}>
+      <div className="content-title">
+        <div className="card-icon"><Users size={22} aria-hidden="true"/></div>
+        <div><h1>Find Friends</h1><p>Find someone you know or meet people who share your interests.</p></div>
+      </div>
+      <button type="button" className="secondary" onClick={openRequests}><Inbox size={17} aria-hidden="true"/> Contact requests{pending>0&&<span className={styles.count}>{pending}</span>}</button>
+    </header>
+    <SectionTabs label="Find Friends sections" value={tab} onChange={next=>{
+      if(next===tab)return
+      setVisibility(null);setLoadError('');setSearched(null);setTab(next)
+    }} options={[
       ['find','Discover'],['handle','Use a handle'],['settings','My discovery profile'],
     ]}/>
     {tab==='settings'?<DiscoverySettings user={user}/>:
-      tab==='handle'?<form className="panel release-panel release-form" onSubmit={event=>{
-        event.preventDefault();send(String(new FormData(event.currentTarget).get('handle')).trim())
-      }}><label>SecTalk handle<input name="handle" required maxLength={24} pattern="[a-zA-Z0-9_]{3,24}" placeholder="e.g. avery_m"/></label>
-        <button className="primary" disabled={working}><UserPlus size={16}/> Send request</button>
-      </form>:<>
-        <form className="panel release-panel release-form" onSubmit={search}>
-          <label>Name or handle<input name="query" type="search" maxLength={64}/></label>
-          <label>Stage<select name="stage"><option value="">Any stage</option>{stageOptions}</select></label>
-          <details className="release-create"><summary>{category?'Category: '+topicLabels[category]:'Filter by category'}</summary>
-            {category&&<button type="button" className="text-button" onClick={()=>setCategory('')}>Clear category</button>}
-            <Topics choose={id=>setCategory(id)}/>
-          </details>
-          <button className="primary" disabled={busy}><Search size={16}/> {busy?'Searching…':'Find people'}</button>
-        </form>
-        {error&&<p role="alert" className="error">{error}</p>}
-        {results?.length===0&&<p>No matching profiles. Try a different filter.</p>}
-        {results?.map(person=><article className="panel release-panel" key={person.handle}>
-          <h2>{person.name}</h2><p>@{person.handle} · {lifeStages[person.stage]}</p>
-          <div className="topic-grid">{person.categories.filter(id=>topicLabels[id]).map(id=><span className="pill" key={id}>{topicLabels[id]}</span>)}</div>
-          <button type="button" className="secondary" disabled={working} onClick={()=>send(person.handle)}><UserPlus size={16}/> Send request</button>
-        </article>)}
+      tab==='handle'?<form className={`panel ${styles.handleForm}`} onSubmit={event=>{
+        event.preventDefault()
+        send(String(new FormData(event.currentTarget).get('handle')).trim().replace(/^@/,''))
+      }}>
+        <h2>Connect by handle</h2><p>Enter the exact handle they shared with you.</p>
+        <label>SecTalk handle<input name="handle" required maxLength={25} pattern="@?[a-zA-Z0-9_]{3,24}" placeholder="@avery_m" autoCapitalize="none" autoComplete="off" spellCheck={false}/></label>
+        <button className="primary" disabled={working}><UserPlus size={16} aria-hidden="true"/> Send request</button>
+      </form>:
+      loadError?<div className={`panel ${styles.state}`}>
+        <p role="alert">{loadError}</p><button type="button" className="secondary" onClick={()=>setAttempt(n=>n+1)}>Try again</button>
+      </div>:
+      !visibility?<div className={`panel ${styles.state}`}><p role="status">Loading discovery…</p></div>:
+      !eligible?<div className={`panel ${styles.state}`}>
+        <div className="card-icon"><ShieldCheck size={22} aria-hidden="true"/></div>
+        <h2>Discovery is off</h2>
+        <p>To browse people, turn on discovery in your profile. You can still connect by exact handle.</p>
+        <div className={styles.actions}>
+          <button type="button" className="primary" onClick={()=>setTab('settings')}>Set up discovery</button>
+          <button type="button" className="secondary" onClick={()=>setTab('handle')}><AtSign size={16} aria-hidden="true"/> Use a handle</button>
+        </div>
+      </div>:<>
+        <div className={`panel ${styles.searchPanel}`}>
+          <label htmlFor="friends-query">Search people</label>
+          <div className={styles.searchField}>
+            <Search size={18} aria-hidden="true"/>
+            <input id="friends-query" ref={searchInput} type="search" value={query} maxLength={query.startsWith('@')?65:64}
+              placeholder="Name, @handle, or category" autoComplete="off" autoCapitalize="none" spellCheck={false}
+              onChange={event=>setQuery(event.target.value)}/>
+          </div>
+          {suggestions.length>0&&<div className={styles.chips} role="group" aria-label="Matching categories">
+            {suggestions.map(topic=><button type="button" key={topic.id} className={styles.chip}
+              onClick={()=>{setCategory(topic.id);setQuery('');searchInput.current?.focus()}}><Tags size={14} aria-hidden="true"/>{topic.name}</button>)}
+          </div>}
+          <div className={styles.filters}>
+            <label className={styles.stage}><span className="visually-hidden">Stage</span>
+              <select value={stage} onChange={event=>setStage(event.target.value)}>
+                <option value="">Any stage</option>{Object.entries(browseStages).map(([value,label])=><option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <button ref={categoryToggle} type="button" className="secondary" aria-expanded={byCategory} aria-controls="friends-category"
+              onClick={()=>setByCategory(open=>!open)}><SlidersHorizontal size={16} aria-hidden="true"/> Categories <ChevronDown size={14} aria-hidden="true"/></button>
+            {category&&<button type="button" className={`${styles.chip} ${styles.selectedChip}`} aria-label={'Remove category '+topicLabels[category]}
+              onClick={()=>{setCategory('');categoryToggle.current?.focus()}}>{topicLabels[category]} <X size={14} aria-hidden="true"/></button>}
+            {filtered&&<button type="button" className={`text-button ${styles.clear}`} onClick={clearSearch}>Clear all</button>}
+          </div>
+          <div id="friends-category" hidden={!byCategory} className={styles.categoryPanel}>
+            <label>Find a category<input type="search" maxLength={100} value={categoryQuery}
+              placeholder="Search interests, studies, or occupations" onChange={event=>setCategoryQuery(event.target.value)}/></label>
+            <div className={styles.chips}>{categories.map(topic=><button type="button" key={topic.id} className={styles.chip}
+              aria-pressed={category===topic.id} onClick={()=>{
+                setCategory(category===topic.id?'':topic.id);setByCategory(false);categoryToggle.current?.focus()
+              }}>
+              {topic.name}</button>)}</div>
+            {!categories.length&&<p role="status">No matching categories.</p>}
+          </div>
+        </div>
+        <section aria-label="People results" aria-busy={filtered&&!result}>
+          {!filtered?<div className={`panel ${styles.state}`}>
+            <h2>Browse by interest</h2>
+            <div className={styles.chips}>{starterTopics.map(id=><button type="button" className={styles.chip} key={id}
+              onClick={()=>{setCategory(id);searchInput.current?.focus()}}>{topicLabels[id]}</button>)}</div>
+          </div>:!result?<p className={styles.resultStatus} role="status">Searching…</p>:
+          result.error?<div className={`panel ${styles.state}`}>
+            <p className="error" role="alert">{result.error}</p>
+            {!result.rateLimited&&<button type="button" className="secondary" onClick={()=>setAttempt(n=>n+1)}>Try again</button>}
+          </div>:result.people.length===0?<div className={`panel ${styles.state}`}>
+            <Search size={23} aria-hidden="true"/>
+            <h2>No new people found</h2><p>Try different words or remove a filter. Only people who turn on discovery are listed.</p>
+            <button type="button" className="secondary" onClick={clearSearch}>Clear search</button>
+          </div>:<>
+            <p className={styles.resultStatus} role="status">{result.people.length===24?'Showing the first 24 matches':`${result.people.length} ${result.people.length===1?'match':'matches'}`}</p>
+            <ul className={`panel ${styles.results}`}>{result.people.map(person=><li className={styles.person} key={person.handle}>
+              <span className="avatar green" aria-hidden="true">{initials(person.name)}</span>
+              <div className={styles.identity}>
+                <h2>{person.name}</h2><p><bdi>@{person.handle}</bdi> · {lifeStages[person.stage]}</p>
+                {person.categories.some(id=>topicLabels[id])&&<div className={styles.personTopics}>{person.categories.filter(id=>topicLabels[id]).map(id=>
+                  <span className="pill" key={id}>{topicLabels[id]}</span>)}</div>}
+              </div>
+              <button type="button" className="secondary" disabled={working} aria-label={'Send request to @'+person.handle}
+                onClick={()=>send(person.handle)}><UserPlus size={16} aria-hidden="true"/> Send request</button>
+            </li>)}</ul>
+          </>}
+        </section>
       </>}
   </section>
 }

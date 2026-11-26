@@ -1,0 +1,114 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.page > * { width: min(100%, 58rem); }
+.page > :global(.section-tabs) { margin-block-end: 0; }
+
+.header, .actions, .filters, .chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.header { justify-content: space-between; gap: 12px; }
+.header :global(.content-title) { margin: 0; }
+.count { background: var(--accent-soft); color: var(--accent); border-radius: 99px; padding: 1px 7px; }
+
+.searchPanel, .state, .handleForm {
+  display: grid;
+  gap: 12px;
+  padding: clamp(15px, 2.6vw, 23px);
+}
+
+.searchPanel {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-soft) 35%, var(--surface)), var(--surface) 58%);
+}
+
+.searchField { position: relative; }
+.searchField > svg {
+  position: absolute;
+  inset-inline-start: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--muted);
+}
+.searchField > input { min-height: 51px; padding-inline-start: 43px; }
+.stage { min-width: 0; max-width: 100%; }
+.stage > select { padding-block: 8px; min-height: 42px; }
+.clear { min-height: 42px; padding-inline: 7px; }
+
+.categoryPanel {
+  margin-block-start: 3px;
+  border-block-start: 1px solid var(--line);
+  padding-block-start: 13px;
+}
+.categoryPanel > .chips { margin-block-start: 9px; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  white-space: normal;
+  text-align: start;
+  min-height: 40px;
+  padding: 7px 12px;
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  font-size: .82rem;
+}
+.chip:hover { border-color: var(--muted); }
+.chip[aria-pressed=true], .selectedChip {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.handleForm { max-width: 32rem; }
+.handleForm > button, .state > button { justify-self: start; }
+.state > h2, .handleForm > h2 { font-size: 1.12rem; }
+.state > svg { color: var(--muted); }
+.resultStatus { padding: 0 4px 8px; font-size: .82rem; }
+
+.results { list-style: none; padding: 0; margin: 0; }
+.person {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 11px;
+  padding: clamp(13px, 2.2vw, 19px);
+}
+.person + .person { border-block-start: 1px solid var(--line); }
+.identity { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.identity > h2 { font-size: 1rem; line-height: 1.3; }
+.identity > p { font-size: .83rem; }
+.personTopics { display: flex; flex-wrap: wrap; gap: 6px; margin-block-start: 5px; }
+.personTopics > span { max-width: 100%; }
+.person > button { white-space: nowrap; }
+
+@media (max-width: 560px) {
+  .page > :global(.section-tabs) {
+    display: grid;
+    grid-template-columns: minmax(0, .8fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  }
+  .page > :global(.section-tabs) button {
+    justify-content: center;
+    text-wrap: balance;
+    min-height: 44px;
+    padding-inline: 4px;
+    font-size: .82rem;
+  }
+  .stage { width: clamp(130px, 41vw, 170px); }
+  .stage > select { text-overflow: ellipsis; }
+  .clear { margin-inline-start: auto; }
+  .person { grid-template-columns: auto minmax(0, 1fr); }
+  .person > button { grid-column: 2; justify-self: start; }
+  .header > button, .filters > button, .stage > select, .chip, .person > button { min-height: 44px; }
+}
