@@ -1,0 +1,26 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.eaglesecurity.sectalk'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.eaglesecurity.sectalk'
+        minSdk 24
+        targetSdk 36
+        versionCode 6000001
+        versionName '6.0.0-free.1'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.8.0'
+    testImplementation 'junit:junit:4.13.2'
+}
