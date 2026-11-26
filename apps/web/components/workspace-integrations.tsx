@@ -21,12 +21,9 @@ export function WorkspaceIntegrations({workspace, onManageDomains}: {workspace: 
   return <section aria-label="Workspace integrations">
     <h2>Integrations</h2>
     <SectionTabs label="Integration sections" value={tab} onChange={setTab}
-      options={ [['keys','API keys'], ['webhooks','Outbound webhooks'], ['sso','Single sign-on'], ['scim','SCIM']] }/>
-    {tab === 'sso' ? isFreeRelease
-      ? <section aria-label="Enterprise workspace sign-in"><h3>Enterprise workspace SSO</h3>
-        <p role="status">Enterprise single sign-on is planned for a future release. Use your email and password for standard workspaces.</p>
-      </section>
-      : <WorkspaceSsoSettings workspace={workspace} onManageDomains={onManageDomains}/> :
+      options={ [['keys','API keys'], ['webhooks','Outbound webhooks'],
+        ...(isFreeRelease ? [] : [['sso','Single sign-on']] as const), ['scim','SCIM']] }/>
+    {tab === 'sso' ? <WorkspaceSsoSettings workspace={workspace} onManageDomains={onManageDomains}/> :
       tab === 'scim' ? <WorkspaceScim workspace={workspace} onManageDomains={onManageDomains}/> :
         <WorkspaceIntegrationCredentials key={tab} workspace={workspace} tab={tab}/>}
   </section>

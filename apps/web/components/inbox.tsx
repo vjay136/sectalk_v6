@@ -81,6 +81,8 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
     requestedMeeting?'meetings':openWorkspaces||pendingWorkspaceInvite()?'workspaces':
       typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('billing') ? 'billing' :
         typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('trial')==='return' ? 'workspaces' : 'inbox')
+  const [navigationOpen, setNavigationOpen] = useState(false)
+  const navigationTrigger = useRef<HTMLButtonElement>(null)
   const [mode, setMode] = useState<'chats' | 'requests' | 'sent'>('chats')
   const [taskSection,setTaskSection]=useState<'scoped'|'workspace'>('scoped')
   const [paletteOpen,setPaletteOpen]=useState(false)
@@ -473,27 +475,54 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   if(onboarding) return <main className="discovery-onboarding"><Brand/><DiscoverySettings user={user} complete={()=>setOnboarding(false)}/></main>
 
   return <main className={'workspace ' + (selected && tab === 'inbox' ? 'thread-open' : '') + (tab !== 'inbox' ? ' full-panel' : '')}>
-    <nav className="rail" aria-label={t('features')}>
-      <Brand compact />
-      <button className={tab === 'inbox' || tab === 'saved' ? 'active' : ''} aria-current={tab === 'inbox' || tab === 'saved' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>{t('inbox')}</span></button>
-      <button className={tab === 'group-chats' ? 'active' : ''} aria-current={tab === 'group-chats' ? 'page' : undefined} onClick={() => setTab('group-chats')}><Users size={19}/><span>Group chats</span></button>
-      <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>{t('friends')}</span></button>
-      <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>{t('calls')}</span></button>
-      <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>{t('workspaces')}</span></button>
-      <button className={tab==='rooms'?'active':''} aria-current={tab==='rooms'?'page':undefined} onClick={()=>{setRequestedRoom(null);setTab('rooms')}}><Hash size={19}/><span>{t('rooms')}</span></button>
-      <button className={tab==='tasks'?'active':''} aria-current={tab==='tasks'?'page':undefined} onClick={()=>setTab('tasks')}><ListChecks size={19}/><span>{t('tasks')}</span></button>
-      <button className={tab==='calendar'?'active':''} aria-current={tab==='calendar'?'page':undefined} onClick={()=>setTab('calendar')}><CalendarDays size={19}/><span>{t('calendar')}</span></button>
-      <button className={tab==='meetings'?'active':''} aria-current={tab==='meetings'?'page':undefined} onClick={()=>{setRequestedMeeting(null);setTab('meetings')}}><CalendarDays size={19}/><span>{t('meetings')}</span></button>
-      <button className={tab==='vault'?'active':''} aria-current={tab==='vault'?'page':undefined} onClick={()=>setTab('vault')}><Folder size={19}/><span>{t('files')}</span></button>
-      <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} onClick={()=>showSearch()}><Search size={19}/><span>{t('search')}</span></button>
-      <button className={tab==='notifications'?'active':''} aria-current={tab==='notifications'?'page':undefined} onClick={()=>setTab('notifications')}><Bell size={19}/><span>{t('notifications')}</span></button>
-      <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>{t('safety')}</span></button>
-      <div className="rail-end"><button className={tab === 'billing' ? 'active' : ''} aria-current={tab === 'billing' ? 'page' : undefined} onClick={() => setTab('billing')}><CreditCard size={19} /><span>{t('billing')}</span></button><button className={tab === 'profile' ? 'active' : ''} aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}><UserRound size={20} /><span>{t('profile')}</span></button>
-        <button onClick={async () => { await call.end(); void db!.auth.signOut({ scope: 'local' }) }}><LogOut size={19} /><span>{t('signOut')}</span></button></div>
+    <nav className="rail messenger-nav" aria-label={t('features')} onKeyDown={event=>{
+      if (event.key === 'Escape' && navigationOpen) {
+        setNavigationOpen(false)
+        navigationTrigger.current?.focus()
+      }
+    }}>
+      <Brand />
+      <div className="messenger-primary" onClick={() => setNavigationOpen(false)}>
+        <button className={tab === 'inbox' || tab === 'saved' ? 'active' : ''} aria-current={tab === 'inbox' || tab === 'saved' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>{t('inbox')}</span></button>
+        <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>{t('friends')}</span></button>
+        <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>{t('calls')}</span></button>
+        <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>{t('safety')}</span></button>
+      </div>
+      <button ref={navigationTrigger} type="button" className="messenger-more" aria-expanded={navigationOpen}
+        aria-controls="messenger-sections" onClick={() => setNavigationOpen(value => !value)}>
+        <MoreHorizontal size={21}/><span>More</span>
+      </button>
+      <div id="messenger-sections" className="messenger-sections" data-open={navigationOpen}
+        onClick={event=>{
+          if (event.target instanceof Element && event.target.closest('button')) {
+            setNavigationOpen(false)
+            if (navigationTrigger.current?.getClientRects().length) navigationTrigger.current.focus()
+          }
+        }}>
+        <div className="messenger-nav-group" role="group" aria-label="Communication tools">
+        <button className={tab === 'group-chats' ? 'active' : ''} aria-current={tab === 'group-chats' ? 'page' : undefined} onClick={() => setTab('group-chats')}><Users size={19}/><span>Group chats</span></button>
+        <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} onClick={()=>showSearch()}><Search size={19}/><span>{t('search')}</span></button>
+        <button className={tab==='notifications'?'active':''} aria-current={tab==='notifications'?'page':undefined} onClick={()=>setTab('notifications')}><Bell size={19}/><span>{t('notifications')}</span></button>
+        </div>
+        <div className="messenger-nav-group" role="group" aria-label="Workspace tools">
+          <p>Workspace</p>
+        <button className={tab === 'workspaces' ? 'active' : ''} aria-current={tab === 'workspaces' ? 'page' : undefined} onClick={() => setTab('workspaces')}><Users size={19} /><span>{t('workspaces')}</span></button>
+        <button className={tab==='rooms'?'active':''} aria-current={tab==='rooms'?'page':undefined} onClick={()=>{setRequestedRoom(null);setTab('rooms')}}><Hash size={19}/><span>{t('rooms')}</span></button>
+        <button className={tab==='tasks'?'active':''} aria-current={tab==='tasks'?'page':undefined} onClick={()=>setTab('tasks')}><ListChecks size={19}/><span>{t('tasks')}</span></button>
+        <button className={tab==='calendar'?'active':''} aria-current={tab==='calendar'?'page':undefined} onClick={()=>setTab('calendar')}><CalendarDays size={19}/><span>{t('calendar')}</span></button>
+        <button className={tab==='meetings'?'active':''} aria-current={tab==='meetings'?'page':undefined} onClick={()=>{setRequestedMeeting(null);setTab('meetings')}}><CalendarDays size={19}/><span>{t('meetings')}</span></button>
+        <button className={tab==='vault'?'active':''} aria-current={tab==='vault'?'page':undefined} onClick={()=>setTab('vault')}><Folder size={19}/><span>{t('files')}</span></button>
+        </div>
+        <div className="messenger-nav-group messenger-account" role="group" aria-label="Account">
+          <p>Account</p>
+          <button className={tab === 'billing' ? 'active' : ''} aria-current={tab === 'billing' ? 'page' : undefined} onClick={() => setTab('billing')}><CreditCard size={19} /><span>{t('billing')}</span></button><button className={tab === 'profile' ? 'active' : ''} aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}><UserRound size={20} /><span>{t('profile')}</span></button>
+          <button onClick={async () => { await call.end(); void db!.auth.signOut({ scope: 'local' }) }}><LogOut size={19} /><span>{t('signOut')}</span></button>
+        </div>
+      </div>
     </nav>
     <aside className="inbox-list">
-      <header><Brand /><div className="inbox-heading"><h1>{t('inbox')}</h1><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> {t('findFriends')}</button></div>
-        <div className="input-icon search"><Search size={17} /><input aria-label="Search contacts" placeholder="Search contacts" value={search} onChange={e => setSearch(e.target.value)} /></div>
+      <header><div className="inbox-mobile-brand"><Brand /></div><div className="inbox-heading"><h1>{t('inbox')}</h1><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> {t('findFriends')}</button></div>
+        <div className="input-icon search"><Search size={17} /><input aria-label="Search contacts" placeholder="Search conversations" value={search} onChange={e => setSearch(e.target.value)} /></div>
       </header>
       <div className="tabs" aria-label="Conversation filters">
         <button aria-pressed={mode === 'chats'} className={mode === 'chats' ? 'active' : ''} onClick={() => setMode('chats')}>Chats</button>
@@ -637,7 +666,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
             </div>}
           </div>}
       </section> : <section className="thread"><header className="thread-header default-header"><h2>Messages</h2><span className="pill"><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} />{online || broadcastOnline ? 'Live updates' : 'Syncing'}</span></header>
-        <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>{t('yourConversations')}</h2><p>{t('conversationWelcome')}</p><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> {t('findFriends')}</button><button className="secondary" onClick={showHelp}>{t('gettingStarted')}</button></div>
+        <div className="empty-thread welcome-thread"><div className="card-icon"><MessageCircle size={27}/></div><h2>{t('yourConversations')}</h2><p>{t('conversationWelcome')}</p><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> {t('findFriends')}</button><button className="text-button" onClick={showHelp}>{t('gettingStarted')}</button></div>
       </section>}
     {(priorityNotice || notice) && <div className="toast" role={priorityNotice?.priority === 'critical' ? 'alert' : 'status'}>
       <CircleHelp size={18} aria-hidden="true" />
@@ -1470,6 +1499,9 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         if(!supportedFile(file)){inform('Choose an image, PDF, text or supported Office file up to 4 MiB.');return}
         setReplying(null);setAttachment({file,id:crypto.randomUUID()})
       }}/>
+      <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => void changeDraft(e.target.value)} onBlur={syncedDraft.flush} onKeyDown={event => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
+      }} />
       <button type="button" className="icon" title="Attach file" aria-label="Attach file"
         aria-describedby={!blocked&&fileCapacity?'attachment-capacity':undefined}
         disabled={blocked||busy||Boolean(expireAfter)} onClick={()=>filePicker.current?.click()}><Paperclip size={19}/></button>
@@ -1477,9 +1509,6 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         if(composerInput.current)cursor.current={start:composerInput.current.selectionStart,end:composerInput.current.selectionEnd}
         setEmoji(true)
       }}><Smile size={20}/></button>
-      <textarea ref={composerInput} aria-label="Write a message" placeholder={blocked ? 'Contact blocked' : 'Write a message…'} disabled={blocked} rows={1} maxLength={4000} value={draft} onChange={e => void changeDraft(e.target.value)} onBlur={syncedDraft.flush} onKeyDown={event => {
-        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
-      }} />
       <button type="button" className="icon" title="Scheduled messages" aria-label="Scheduled messages" onClick={()=>setScheduleOpen(true)}><CalendarClock size={19}/></button>
       <button className="primary square" title="Send message" aria-label="Send message" disabled={busy||(!draft.trim()&&!attachment)||blocked}><Send size={19} /></button>
     </form>
