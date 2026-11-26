@@ -7,12 +7,20 @@ This standalone Gradle project launches the existing free SecTalk web app as a T
 Use JDK 17, Gradle 8.13, Android SDK Platform 36, and Build Tools 35.0.0. Set `ANDROID_HOME` to the SDK path or select the SDK in Android Studio. From `apps/android` run:
 
 ```sh
-gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:bundleRelease
+gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:bundleRelease
 ```
 
-The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. Install it with `adb install -r app/build/outputs/apk/debug/app-debug.apk`. The unsigned AAB is `app/build/outputs/bundle/release/app-release.aab`. The Android builds workflow uploads both without requiring signing secrets. A debug APK does not verify against the production site unless its debug certificate is explicitly approved and configured, so browser UI is expected on ordinary debug builds.
+The workflow uploads three packages without requiring signing secrets. The debug APK at `app/build/outputs/apk/debug/app-debug.apk` can be used for smoke tests. The unsigned release APK at `app/build/outputs/apk/release/app-release-unsigned.apk` is for direct distribution after signing. The unsigned AAB at `app/build/outputs/bundle/release/app-release.aab` is for Play upload after signing. Browser UI is expected on ordinary debug builds because their certificate has no production association.
 
 ## Owner signing and verified links
+
+For direct distribution, use SDK Build Tools to align and sign the CI release APK on the owner's computer. `apksigner` prompts for the keystore password. Compare its public SHA-256 certificate fingerprint with the expected owner certificate before publishing.
+
+```sh
+zipalign -P 16 -f 4 app-release-unsigned.apk sectalk-aligned.apk
+apksigner sign --ks /secure/path/sectalk.jks --ks-key-alias sectalk --out sectalk-release.apk sectalk-aligned.apk
+apksigner verify --verbose --print-certs sectalk-release.apk
+```
 
 1. Use Android Studio **Build → Generate Signed Bundle / APK** with the owner's Android upload keystore. If this is a new Play listing, the owner can create an upload key in that dialog and enroll in Play App Signing. Securely back up the keystore credentials outside this repository and keep `com.eaglesecurity.sectalk` as the application ID. The workflow does not sign or publish.
 2. Obtain the SHA-256 fingerprint of the certificate that will sign installed APKs. For Google Play installs use the **app signing key certificate** from Play Console, not the upload certificate. For direct APK distribution obtain it with `apksigner verify --print-certs path/to/signed.apk`.
