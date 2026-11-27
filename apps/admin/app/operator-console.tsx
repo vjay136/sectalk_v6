@@ -12,13 +12,15 @@ import { StaffMfa } from '../../web/components/staff-mfa'
 import { ThreatTriage, type ThreatTriageAccess } from '../../web/components/threat-triage'
 import { db } from '../../web/lib/data'
 import { WorkspaceReports } from './workspace-reports'
+import { OperatorOverview } from './operator-overview'
+import type { FeatureCoverage } from '../lib/feature-coverage'
 
 type Access = 'loading' | 'signed_out' | 'denied' | 'mfa' | 'verified' | 'unavailable'
-type Area = 'moderation' | 'workspaceReports' | 'queue' | 'disclosures' | 'accounts' | 'triage' | 'responses' | 'audit'
+type Area = 'overview' | 'moderation' | 'workspaceReports' | 'queue' | 'disclosures' | 'accounts' | 'triage' | 'responses' | 'audit'
 type Assignment = 'none' | 'mfa' | 'verified'
 const idleLimit = 15 * 60 * 1000
 
-export function OperatorConsole() {
+export function OperatorConsole({features}: {features: FeatureCoverage[]}) {
   const [access, setAccess] = useState<Access>('loading')
   const [staffModeration, setStaffModeration] = useState(false)
   const [queueAccess, setQueueAccess] = useState<Assignment>('none')
@@ -28,7 +30,7 @@ export function OperatorConsole() {
   const [triageAccess, setTriageAccess] = useState<ThreatTriageAccess>({status:'none'})
   const [responseAccess, setResponseAccess] = useState(false)
   const [auditWorkspaces, setAuditWorkspaces] = useState<AuditWorkspace[]>([])
-  const [area, setArea] = useState<Area>('moderation')
+  const [area, setArea] = useState<Area>('overview')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const request = useRef(0)
@@ -140,6 +142,7 @@ export function OperatorConsole() {
   }
 
   const sections: [Area, string][] = []
+  if (staffModeration) sections.push(['overview', 'Overview'])
   if (staffModeration) sections.push(['moderation', 'Moderation'])
   if (staffModeration || workspaceAccess !== 'none') sections.push(['workspaceReports', 'Workspace reports'])
   if (queueAccess !== 'none') sections.push(['queue', 'Queue operations'])
@@ -161,7 +164,9 @@ export function OperatorConsole() {
     </header>
     {notice && <p role="alert">{notice}</p>}
     {access === 'verified' && selected && <>
-      <SectionTabs label="Operator sections" value={selected} onChange={setArea} options={sections}/>
+      <div className="operator-nav"><SectionTabs label="Operator sections" value={selected} onChange={setArea} options={sections}/></div>
+      {selected === 'overview' && <OperatorOverview features={features} openModeration={() => setArea('moderation')}
+        openAccounts={accountAccess !== 'none' ? () => setArea('accounts') : undefined}/>}
       {selected === 'moderation' && <ModerationQueue/>}
       {selected === 'workspaceReports' && <WorkspaceReports platform={staffModeration} workspace={workspaceAccess === 'verified'}/>}
       {selected === 'queue' && queueAccess === 'verified' && <QueueOperations onAccessChanged={refresh}/>}
