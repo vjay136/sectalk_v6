@@ -244,6 +244,8 @@ begin
   perform set_config('request.jwt.claims',(claims->reviewer::text)::text,true);
   set local role authenticated;
   if not public.st_v7_link_policy_allows(exact_url) then raise exception 'Unapproved URL request was applied'; end if;
+  if public.st_v8_link_safety_summary(exact_url) is distinct from '{"allowed":true,"recordedRisk":false}'::jsonb then
+    raise exception 'Pending URL request was projected as recorded risk'; end if;
   if public.st_v7_decide_soc_response(exact_url_response,true,note)<>'executed'
     or public.st_v7_decide_soc_response(group_response,true,note)<>'executed'
     or public.st_v7_decide_soc_response(room_response,true,note)<>'executed' then
@@ -254,6 +256,13 @@ begin
     or not public.st_v7_link_policy_allows(replace(exact_url,'Specific','specific'))
     or not public.st_v7_link_policy_allows(replace(exact_url,'https:','http:')) then
     raise exception 'URL exact scope diverged or suppressed neighboring URLs'; end if;
+  if public.st_v8_link_safety_summary(exact_url||'?discard=this') is distinct from '{"allowed":false,"recordedRisk":true}'::jsonb
+    or public.st_v8_link_safety_summary(replace(exact_url,'/Specific','/%53pecific')) is distinct from '{"allowed":false,"recordedRisk":true}'::jsonb
+    or public.st_v8_link_safety_summary(exact_url||'/neighbor') is distinct from '{"allowed":true,"recordedRisk":false}'::jsonb
+    or public.st_v8_link_safety_summary(replace(exact_url,'Specific','specific')) is distinct from '{"allowed":true,"recordedRisk":false}'::jsonb
+    or public.st_v8_link_safety_summary(replace(exact_url,'https:','http:')) is distinct from '{"allowed":true,"recordedRisk":false}'::jsonb
+    or public.st_v8_link_safety_summary('file:///fixture') is not null then
+    raise exception 'Recorded URL safety projection did not respect its exact normalized address'; end if;
   if public.st_v7_read_room_quarantine_evidence(room_report) is distinct from 'Benign room review fixture' then
     raise exception 'Authorized room reviewer lost consented evidence'; end if;
   reset role;
@@ -266,10 +275,18 @@ begin
   set local role authenticated;
   if public.st_v7_read_room_quarantine_evidence(room_report) is not null then
     raise exception 'Foreign reviewer obtained retained room evidence'; end if;
+  if public.st_v8_link_safety_summary(exact_url) is distinct from '{"allowed":false,"recordedRisk":true}'::jsonb then
+    raise exception 'An active signed-in account cannot check a global recorded URL risk'; end if;
   reset role;
+  if has_function_privilege('anon','public.st_v8_link_safety_summary(text)','execute')
+    or has_function_privilege('service_role','public.st_v8_link_safety_summary(text)','execute') then
+    raise exception 'Recorded URL risks exposed outside the signed-in projection'; end if;
+  update sectalk_private.st_v7_soc_url_blocks set expires_at=now()-interval '1 second' where url_key=exact_url;
 
   perform set_config('request.jwt.claims',reporter_claims,true);
   set local role authenticated;
+  if public.st_v8_link_safety_summary(exact_url) is distinct from '{"allowed":true,"recordedRisk":false}'::jsonb then
+    raise exception 'Expired block was projected as active URL risk'; end if;
   group_feed:=public.st_group_chat('read',group_key);
   if not exists(select 1 from jsonb_array_elements(group_feed->'messages') m where m->>'id'=group_message::text
       and m->>'quarantined'='true' and not (m?'payload' or m?'signature' or m?'signing'))

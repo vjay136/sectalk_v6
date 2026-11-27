@@ -1,5 +1,6 @@
 import { billingIdentity, billingWriter, origin, stripe } from '../../../../lib/stripe-server'
 import { readBoundedText } from '../../../../lib/request-body'
+import { billingMode, billingPausedResponse } from '../../../../lib/billing-mode'
 
 export const runtime='nodejs'
 const headers={'Cache-Control':'private, no-store'}
@@ -12,6 +13,7 @@ function trialPolicy() {
 }
 
 export async function GET(request:Request) {
+  if (billingMode() === 'free') return response({ policy: 'unavailable', billingPaused: true })
   const identity=await billingIdentity(request)
   if(!identity)return response({error:'Sign in to view your workspace trial.'},401)
   const workspace=new URL(request.url).searchParams.get('workspace')||''
@@ -22,6 +24,7 @@ export async function GET(request:Request) {
 }
 
 export async function POST(request:Request) {
+  if (billingMode() === 'free') return billingPausedResponse()
   const identity=await billingIdentity(request)
   if(!identity)return response({error:'Sign in to start a workspace trial.'},401)
   const policy=trialPolicy()

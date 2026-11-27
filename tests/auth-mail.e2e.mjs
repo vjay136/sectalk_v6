@@ -205,16 +205,31 @@ try {
   await reset.goto(app + '/#account')
   await reset.getByRole('button', { name: 'Forgot password?' }).click()
   await reset.getByLabel('Email address', { exact: true }).fill(email)
+  await reset.route('**/auth/v1/recover?*', route => route.fulfill({
+    status: 429, headers: { 'access-control-allow-origin': '*' },
+    json: { error_code: 'over_email_send_rate_limit', msg: 'Recovery cooldown' },
+  }), { times: 1 })
+  await reset.getByRole('button', { name: 'Send recovery code' }).click()
+  await reset.getByRole('alert').filter({ hasText: 'No new code was sent' }).waitFor()
+  await reset.getByRole('button', { name: 'Enter an existing code' }).click()
+  await reset.getByRole('heading', { name: 'Verify your recovery code' }).waitFor()
+  await reset.getByRole('button', { name: 'Change email address' }).click()
   await reset.getByRole('button', { name: 'Send recovery code' }).click()
   await reset.getByRole('heading', { name: 'Verify your recovery code' }).waitFor()
   const recovery = await delivered('reset password')
-  const code = recovery.HTML.match(/>\s*(\d{6})\s*</)?.[1]
+  const code = recovery.HTML.match(/>\s*(\d{6,10})\s*</)?.[1]
   assert.ok(code, 'The recovery email must contain a numeric OTP')
   await reset.getByLabel('Verification code').fill(code)
   await reset.getByRole('button', { name: 'Verify code' }).click()
   await reset.getByRole('heading', { name: 'Set a new password' }).waitFor()
   await reset.getByLabel('Password', { exact: true }).fill(changed)
   await reset.getByLabel('Confirm password', { exact: true }).fill(changed)
+  await reset.route('**/auth/v1/user', route => route.fulfill({
+    status: 503, headers: { 'access-control-allow-origin': '*' },
+    json: { msg: 'Synthetic authentication service outage' },
+  }), { times: 1 })
+  await reset.getByRole('button', { name: 'Update password' }).click()
+  await reset.getByRole('alert').filter({ hasText: 'Your password could not be updated' }).waitFor()
   await reset.getByRole('button', { name: 'Update password' }).click()
   await reset.getByText('Password updated. Sign in with your new password.').waitFor()
   await page.getByText('There is new activity in your account security settings.', {exact:true}).waitFor()

@@ -11,7 +11,7 @@ import {useSensitiveAction} from './sensitive-action'
 import type {PortalPurpose} from '../lib/stripe-portal'
 
 type Renewal = {state:'clear'|'grace'|'expired'; grace_until?:string; retry_at?:string|null}
-type Catalog = { plans: PlanVersion[]; checkoutAvailable: boolean; portalConfigured: boolean;
+type Catalog = { billingMode: 'free' | 'paid'; plans: PlanVersion[]; checkoutAvailable: boolean; portalConfigured: boolean;
   razorpayOffers:{plan:Plan;version:number;cadence:Cadence}[];taxConfigured:boolean }
 type Subscription = {
   plan: Plan; status: string; period_end: string | null; cancel_at_period_end: boolean; customer_id: string | null
@@ -24,15 +24,44 @@ const labels: Record<string, string> = {
 }
 
 export function Billing({ user }: { user: string }) {
-  const {authorize,confirmation}=useSensitiveAction()
   const [catalog, setCatalog] = useState<Catalog | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch('/api/billing/catalog', { signal: controller.signal }).then(async response => {
+      if (!response.ok) throw new Error('Catalog unavailable')
+      const result = await response.json() as Catalog
+      if (!controller.signal.aborted) setCatalog(result)
+    }).catch(() => {
+      if (!controller.signal.aborted) setError('Could not load your plan.')
+    })
+    return () => controller.abort()
+  }, [])
+
+  if (catalog?.billingMode === 'paid') return <PaidBilling user={user} catalog={catalog}/>
+  return <section className="content-page">
+    <header><h1>Billing</h1></header>
+    {error ? <p role="alert">{error}</p> : !catalog ? <p role="status">Loading your plan…</p> :
+      <section className="panel" aria-label="Your plan">
+        <h2>Free</h2>
+        <p>SecTalk is free for everyone during the v6 pilot. No subscription or payment details are required.</p>
+      </section>}
+  </section>
+}
+
+function PaidBilling({ user, catalog }: { user: string; catalog: Catalog }) {
+  const {authorize,confirmation}=useSensitiveAction()
   const [renewal,setRenewal] = useState<Renewal | null>(null)
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [subscriptionTitle, setSubscriptionTitle] = useState<string | null>(null)
   const [entitlements, setEntitlements] = useState<PlanEntitlements | null>(null)
   const [cadence, setCadence] = useState<Cadence>('monthly')
   const [coupon,setCoupon] = useState('')
-  const [currency, setCurrency] = useState<BillingCurrency>('USD')
+  const [currency, setCurrency] = useState<BillingCurrency>(() => {
+    const currencies = catalog.plans.flatMap(plan => plan.prices.map(price => price.currency))
+    return currencies.includes('USD') ? 'USD' : currencies[0] ?? 'USD'
+  })
   const [view, setView] = useState<'subscription'|'plans'>('subscription')
   const [workspaceBilling, setWorkspaceBilling] = useState<'delegated' | 'owner' | null>(null)
   const [busy, setBusy] = useState(false)
@@ -46,14 +75,6 @@ export function Billing({ user }: { user: string }) {
     if (result === 'cancel') setNotice('Checkout was canceled.')
     if (result === 'portal-return') setNotice('Stripe changes appear after the billing provider confirms them.')
     const controller = new AbortController()
-    fetch('/api/billing/catalog', { signal: controller.signal }).then(async res => {
-      if (!res.ok) throw new Error('Catalog unavailable')
-      const options = await res.json() as Catalog
-      if (controller.signal.aborted) return
-      setCatalog(options)
-      const currencies = options.plans.flatMap(plan => plan.prices.map(price => price.currency))
-      if (currencies[0] && !currencies.includes('USD')) setCurrency(currencies[0])
-    }).catch(() => { if (!controller.signal.aborted) setError('Could not load the billing catalog.') })
     void db!.rpc('st_v7_billing_admin_view').abortSignal(controller.signal).then(result => {
       if (!controller.signal.aborted && !result.error) {
         const scopes = result.data as {delegated: boolean; manages: boolean}[]
@@ -157,7 +178,7 @@ export function Billing({ user }: { user: string }) {
     {catalog?.checkoutAvailable && !catalog.taxConfigured && currentPlan==='free' && <label>Coupon code (optional)
       <input value={coupon} maxLength={40} autoComplete="off" onChange={event=>setCoupon(event.target.value)}/>
     </label>}
-    <div className="tabs release-tabs billing-interval" aria-label="Billing interval">
+    <div className="tabs release-tabs portrait-tabs billing-interval" aria-label="Billing interval">
       <button aria-pressed={cadence === 'monthly'} className={cadence === 'monthly' ? 'active' : ''} onClick={() => setCadence('monthly')}>Monthly</button>
       <button aria-pressed={cadence === 'annual'} className={cadence === 'annual' ? 'active' : ''} onClick={() => setCadence('annual')}>Annual</button>
     </div>

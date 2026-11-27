@@ -28,10 +28,21 @@ self.addEventListener('fetch', event => {
 })
 
 self.addEventListener('push', event => {
-  try {
-    const payload = event.data?.json()
-    if (!payload || payload.v !== 1) return
-  } catch { return }
+  let payload
+  try { payload = event.data?.json() } catch { return }
+  if (payload?.v === 2 && payload.kind === 'incoming-call') {
+    if (!Number.isSafeInteger(payload.expiresAt) || payload.expiresAt <= Date.now()) return
+    event.waitUntil(self.registration.showNotification('SecTalk', {
+      body: 'Incoming call. Open SecTalk to answer.',
+      icon: '/pwa-192.png',
+      tag: 'sectalk-call',
+      renotify: true,
+      silent: false,
+      vibrate: [250, 150, 250],
+    }))
+    return
+  }
+  if (payload?.v !== 1) return
   event.waitUntil(self.registration.showNotification('SecTalk', {
     body: 'You have a new alert. Open SecTalk to view it.',
     icon: '/pwa-192.png',

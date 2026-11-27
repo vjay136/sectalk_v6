@@ -1,6 +1,7 @@
 import {createHmac, createPublicKey, verify} from 'node:crypto'
 import {BlockList, isIP} from 'node:net'
 import {createClient} from '@supabase/supabase-js'
+import {supabaseApiFetch} from './supabase-api-fetch.mjs'
 
 type Network = {
   asn: number | null
@@ -123,7 +124,10 @@ export function sessionRiskGateway(url: string, email: string) {
   if (!serviceKey || !secret || secret.length < 32) throw new Error('Incomplete session risk configuration')
   // Use the Project API origin for trusted service RPCs, even if password calls use an Auth ingress.
   const dbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || url
-  const db = createClient(dbUrl, serviceKey, {auth: {persistSession: false, autoRefreshToken: false}})
+  const db = createClient(dbUrl, serviceKey, {
+    auth: {persistSession: false, autoRefreshToken: false},
+    global: {fetch: supabaseApiFetch(serviceKey)},
+  })
   const hash = createHmac('sha256', secret).update('sectalk-password-risk:' + email.toLowerCase()).digest('hex')
   return {
     async admit(ip: string | null) {

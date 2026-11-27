@@ -5,7 +5,8 @@ import type { ThreatTriageAccess } from '../../web/components/threat-triage'
 type Access = 'denied' | 'unavailable' | 'mfa' | 'verified'
 type Assignment = 'none' | 'mfa' | 'verified'
 type Admission = {access: Access; status: number; moderation?: boolean; queue?: Assignment; disclosures?: Assignment;
-  workspaceReports?: Assignment; accounts?: AccountOperatorAccess; triage?: ThreatTriageAccess; responses?: boolean}
+  workspaceReports?: Assignment; accounts?: AccountOperatorAccess; triage?: ThreatTriageAccess; responses?: boolean;
+  blocklists?: Assignment; detection?: Assignment; incidents?: boolean}
 
 function assignment(value: unknown): Assignment {
   return value === 'verified' || value === 'mfa' ? value : 'none'
@@ -30,7 +31,8 @@ export async function operatorAccess(request: Request): Promise<Admission> {
   if (risk.data === 'authenticator') return {access: 'mfa', status: 200}
   if (risk.data !== 'clear') return {access: 'denied', status: 403}
 
-  const [staff, queueRole, disclosureRole, workspaceRole, accountRole, triageRole, responseCatalog] = await Promise.all([
+  const [staff, queueRole, disclosureRole, workspaceRole, accountRole, triageRole, responseCatalog,
+    blocklistRole, detectionRole, incidentRole] = await Promise.all([
     viewer.client.rpc('st_staff_status'),
     viewer.client.rpc('st_v6_queue_operations_status'),
     viewer.client.rpc('st_v8_disclosure_access'),
@@ -38,6 +40,9 @@ export async function operatorAccess(request: Request): Promise<Admission> {
     viewer.client.rpc('st_v7_account_operator_access'),
     viewer.client.rpc('st_v7_threat_triage_access'),
     viewer.client.rpc('st_v7_soc_response_catalog'),
+    viewer.client.rpc('st_v7_abuse_blocklist_access'),
+    viewer.client.rpc('st_v7_detection_rule_access'),
+    viewer.client.rpc('st_v6_incident_access'),
   ])
   if (staff.error || queueRole.error) return {access: 'unavailable', status: 503}
   const workspaceReports = workspaceRole.error ? 'none' : assignment(workspaceRole.data)
@@ -50,9 +55,13 @@ export async function operatorAccess(request: Request): Promise<Admission> {
     ? {status:'verified', scopes:nativeTriage.scopes.filter((scope:unknown) => scope==='detection' || scope==='attachment_inspection' || scope==='malware')}
     : {status:nativeTriage?.status === 'mfa' ? 'mfa' : 'none'}
   const responses = !responseCatalog.error && Array.isArray(responseCatalog.data) && responseCatalog.data.length > 0
-  if (staff.data === 'none' && workspaceReports === 'none' && accounts === 'none' && triage.status === 'none' && !responses)
+  const blocklists = blocklistRole.error ? 'none' : assignment(blocklistRole.data)
+  const detection = detectionRole.error ? 'none' : assignment(detectionRole.data)
+  if (staff.data === 'none' && workspaceReports === 'none' && accounts === 'none' && triage.status === 'none' &&
+    !responses && blocklists === 'none' && detection === 'none')
     return {access: 'denied', status: 403}
-  const verified = workspaceReports === 'verified' || accountVerified || triage.status === 'verified' || responses
+  const verified = workspaceReports === 'verified' || accountVerified || triage.status === 'verified' || responses ||
+    blocklists === 'verified' || detection === 'verified'
   if (staff.data !== 'verified' && !verified) return {access: 'mfa', status: 200}
   const bearer = request.headers.get('Authorization')?.match(/^Bearer (\S+)$/i)?.[1]
   const proof = await viewer.client.auth.getClaims(bearer)
@@ -66,7 +75,8 @@ export async function operatorAccess(request: Request): Promise<Admission> {
   if (staffCheck?.error && staffCheck.error.code !== '42501') return {access: 'unavailable', status: 503}
   const moderation = staffCheck !== null && !staffCheck.error
   if (!moderation && !verified) return {access: 'denied', status: 403}
-  return {access: 'verified', status: 200, moderation, workspaceReports, accounts, triage, responses,
+  return {access: 'verified', status: 200, moderation, workspaceReports, accounts, triage, responses, blocklists, detection,
+    incidents: moderation && !incidentRole.error && (incidentRole.data === 'lead' || incidentRole.data === 'responder'),
     queue: moderation ? assignment(queueRole.data) : 'none',
     disclosures: moderation && !disclosureRole.error ? assignment(disclosureRole.data) : 'none'}
 }

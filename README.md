@@ -87,7 +87,7 @@ For signed workspace audit exports, configure `SECTALK_AUDIT_SIGNING_PRIVATE_KEY
 - `/api/health` checks environment presence. Use the SQL verification script in a database SQL Editor to test consent, permissions and moderation. It rolls back its fixtures.
 - Use two different accounts in isolated browser profiles to verify signup links, password login, recovery codes, request acceptance, live messages, incoming call notifications, mute and hang-up, two-way video, reconnection, block enforcement and report submission. Test on separate networks with relay enabled. Open the staff console with an independent staff account to verify role and MFA gates.
 
-See [MASTER-PROMPT.md](MASTER-PROMPT.md) for the consolidated product specification and [RELEASE-v5.md](RELEASE-v5.md) for the current release scope.
+See [MASTER-PROMPT.md](MASTER-PROMPT.md) for the consolidated product specification and [the v6 deployment report](docs/DEPLOYMENT_REPORT.md) for the current release scope.
 ## Workspace trials
 
 Set `SECTALK_WORKSPACE_TRIALS=optional` to offer card-free 14-day Professional and Business workspace trials. Set it to `required` to verify a card with Stripe Checkout in setup mode. The required mode uses the configured Stripe credentials and the signed `checkout.session.completed` event on `/api/billing/webhook`. Stripe confirms the card without starting a paid subscription. The workspace's trial entitlement expires after 14 days and the previously applicable limits resume.

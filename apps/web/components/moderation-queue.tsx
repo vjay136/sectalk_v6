@@ -8,6 +8,7 @@ import { SocResponseActions } from './soc-response-actions'
 import { CaseCollaboration, CaseCollaborationAlerts } from './case-collaboration'
 import { CaseEscalation, CaseEscalationAssignments } from './case-escalation'
 import { CaseBehaviorPanel } from './case-behavior-panel'
+import { CaseMessageSafety } from './case-message-safety'
 
 type Category = keyof typeof categories
 export type Report = { id: string; category: Category; status: string; created_at: string }
@@ -35,6 +36,8 @@ export const labels: Record<string, string> = {
   submitted:'Report received', escalated:'Escalated for review', warn:'Account warning issued',
   restrict:'Seven-day restriction', remove:'Indefinite restriction',
   redacted:'Reported message removed',
+  advisory_warning:'Message safety warning issued', advisory_cleared:'Message safety review cleared',
+  advisory_remove:'Message safety label removed',
   case_note_added:'Collaboration note added', case_note_evidence_viewed:'Linked evidence opened',
   case_routed:'On-call stage assigned', case_route_acknowledged:'On-call stage acknowledged',
 }
@@ -143,6 +146,8 @@ export function ModerationQueue({linkIncident}: {linkIncident?: (report: string)
       <SocResponseActions key={'response:' + selected.id} report={selected.id}/>
       <CaseEscalation key={'escalation-' + selected.id} report={selected.id}/>
       <CaseBehaviorPanel key={'behavior-' + selected.id} report={selected.id}/>
+      {selected.report_scope==='direct' && <CaseMessageSafety key={selected.id + ':' + selected.status}
+        report={selected.id} reportStatus={selected.status}/>}
       <form onSubmit={action}><h3>Record a decision</h3><label>Action<select aria-label="Action" name="action" required
         value={decisionAction} onChange={event=>setDecisionAction(event.currentTarget.value)}>
         <option value="reviewing">Mark in review</option><option value="escalated">Flag for further review</option>

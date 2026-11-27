@@ -54,9 +54,12 @@ function textFile(file){
 }
 
 export function verifySecrets({root=fileURLToPath(new URL('..',import.meta.url)),build=false,buildAll=false}={}){
-  const tracked=execFileSync('git',['ls-files','-z'],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean)
+  const listFiles=(...args)=>execFileSync('git',['ls-files','-z',...args],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean)
+  const deleted=new Set(listFiles('--deleted'))
+  const candidates=new Set(listFiles('--cached','--others','--exclude-standard'))
   const findings=[]
-  for(const file of tracked){
+  for(const file of candidates){
+    if(deleted.has(file))continue
     const text=textFile(resolve(root,file))
     if(text===null)continue
     const source=/^apps\/(?:web|admin|workers)\/(?:app|components|lib)\/.+\.(?:ts|tsx|js|mjs)$/.test(file)
@@ -94,7 +97,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
     if(findings.length){
       for(const {file,rule} of findings)console.error(file+' — '+rule)
       process.exitCode=1
-    }else console.log(build||buildAll?'Tracked source and browser assets passed secret checks.':'Tracked source passed secret checks.')
+    }else console.log(build||buildAll?'Working-tree files and browser assets passed secret checks.':'Working-tree files passed secret checks.')
   }catch{
     console.error('Secret checks could not complete. Check the Git checkout and, if requested, the production build.')
     process.exitCode=1

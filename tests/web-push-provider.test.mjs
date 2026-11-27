@@ -40,6 +40,18 @@ test('Web Push uses VAPID and recipient encryption with a generic payload', asyn
   assert.equal(claims.sub, vapid.subject)
   assert.deepEqual(JSON.parse(ece.decrypt(body, { version: 'aes128gcm', privateKey: recipient, authSecret: auth })), { v: 1 })
 
+  const before = Date.now()
+  assert.equal(await sendWebPush(subscription, 600, vapid, true), 'sent')
+  const call = requests[1]
+  assert.equal(Number(call.options.headers.TTL), 30)
+  assert.equal(call.options.headers.Urgency, 'high')
+  assert.equal(call.options.headers.Topic, 'sectalk-call')
+  const alert = JSON.parse(ece.decrypt(call.body, { version: 'aes128gcm', privateKey: recipient, authSecret: auth }))
+  assert.deepEqual(Object.keys(alert).sort(), ['expiresAt', 'kind', 'v'])
+  assert.equal(alert.kind, 'incoming-call')
+  assert.equal(alert.v, 2)
+  assert.ok(alert.expiresAt >= before + 30000 && alert.expiresAt <= Date.now() + 30000)
+
   providerStatus = 410
   assert.equal(await sendWebPush(subscription, 60, vapid), 'gone')
   providerStatus = 429
@@ -47,7 +59,7 @@ test('Web Push uses VAPID and recipient encryption with a generic payload', asyn
   providerStatus = 403
   assert.equal(await sendWebPush(subscription, 60, vapid), 'rejected')
   assert.equal(await sendWebPush({ ...subscription, endpoint: 'https://localhost:55322/private' }, 60, vapid), 'discard')
-  assert.equal(requests.length, 4)
+  assert.equal(requests.length, 5)
   assert.equal(pushEndpoint('https://fcm.googleapis.com.attacker.invalid/fcm/send/s'), null)
   assert.equal(pushEndpoint('https://fcm.googleapis.com@localhost/fcm/send/s'), null)
 })
@@ -68,6 +80,13 @@ test('the service worker shows generic copy and opens only the SecTalk inbox', a
   assert.equal(shown[0].title, 'SecTalk')
   assert.equal(shown[0].options.body, 'You have a new alert. Open SecTalk to view it.')
   valid({ data: { json: () => ({ v: 2 }) }, waitUntil() { assert.fail('Unknown push version was displayed') } })
+  valid({ data: { json: () => ({ v: 2, kind: 'incoming-call', expiresAt: Date.now() - 1000 }) },
+    waitUntil() { assert.fail('Expired call was displayed') } })
+  valid({ data: { json: () => ({ v: 2, kind: 'incoming-call', expiresAt: Date.now() + 30000,
+    body: 'private caller name', url: 'https://outside.example' }) }, waitUntil() {} })
+  assert.equal(shown[1].options.body, 'Incoming call. Open SecTalk to answer.')
+  assert.equal(shown[1].options.tag, 'sectalk-call')
+  assert.equal(shown[1].options.silent, false)
 
   let pending
   handlers.get('notificationclick')({

@@ -14,6 +14,7 @@ import { LoginStepUp } from '../components/login-step-up'
 import { unsubscribeBrowserPush } from '../components/web-push-settings'
 import { CommunityRulesGate } from '../components/community-rules-gate'
 import { clearWorkspaceLink, workspaceLink } from '../lib/workspace-link'
+import { useCallAudioActivation } from '../lib/call-sounds'
 
 type Access = { user: string; state: 'allowed' | 'challenge' | 'error'; lockdown?: AccountLock; risk?: 'email' | 'refresh' }
 
@@ -31,6 +32,7 @@ function workspaceSessionId(token: string | undefined) {
 
 export default function Home() {
   const { t } = useLocale()
+  const callAudio = useCallAudioActivation()
   const [session, setSession] = useState<Session | null>(null)
   const [loaded,setLoaded] = useState(!db)
   const [recovering, setRecovering] = useState(false)
@@ -140,7 +142,7 @@ export default function Home() {
   const requestedWorkspace=workspaceLink(window.location.search)
   return <CommunityRulesGate key={user}>
     <WorkspaceContextProvider user={user} requestedWorkspace={requestedWorkspace}>
-      <Inbox user={user} workspaceSession={workspaceSessionId(token)} openWorkspaces={requestedWorkspace!==null}/>
+      <Inbox user={user} workspaceSession={workspaceSessionId(token)} openWorkspaces={requestedWorkspace!==null} callAudio={callAudio}/>
     </WorkspaceContextProvider>
   </CommunityRulesGate>
 }

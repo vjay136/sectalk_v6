@@ -186,6 +186,7 @@ Database RPC and RLS policies continue to enforce record scope. Pending roles an
 | `POST /api/operational-reports/drain` | Signed service | — | Private report worker bearer. `notificationDrainAuthorized` `rpc:st_v6_claim_operational_reports` |
 | `GET /api/operational-reports/export` | Account | `soc.report.export` | `operationalReportViewer` `rpc:st_v6_operational_report_export` |
 | `POST /api/preferences/language` | Public | — | Browser-local language cookie. The app request origin policy applies. |
+| `POST /api/push/call` | Account | `call.media.join` | `authenticatePush` `rpc:st_v6_claim_incoming_call_push` |
 | `POST /api/push/dispatch` | Signed service | — | Private Web Push worker bearer. `dispatchAuthorized` `rpc:st_v6_claim_web_push` |
 | `DELETE /api/push/subscription` | Account | `account.notification.manage` | `authenticatePush` `rpc:st_v6_push_subscription` |
 | `GET /api/push/subscription` | Account | `account.notification.manage` | `authenticatePush` `rpc:st_v6_push_subscription` |
@@ -242,8 +243,11 @@ To refresh after an intentional schema change, apply the complete migration set 
 | Signature | Execute roles | SQL security | Authorization | Evidence |
 | --- | --- | --- | --- | --- |
 | `graphql_public.graphql(text, text, jsonb, jsonb)` | `anon`, `authenticated`, `service_role` | invoker | Public exception | `GraphQL gateway. Table grants and row-level security apply to the caller.` |
+| `public.st_be_safe_lookup(text, text[], text)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active` |
 | `public.st_call_status(uuid, boolean)` | `authenticated`, `service_role` | definer | Database scope | `sectalk_private.st_v6_call_action`, `auth.jwt`, `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_case(uuid)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
+| `public.st_direct_message_advisories(uuid, uuid[])` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.member` |
+| `public.st_forward_summary(text, uuid, uuid[])` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.member`, `sectalk_private.st_v6_room_role` |
 | `public.st_group_chat(text, uuid, jsonb)` | `authenticated` | definer | Database scope | `sectalk_private.st_group_chat`, `auth.jwt`, `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_group_search_metadata(uuid)` | `authenticated` | definer | Database scope | `sectalk_private.st_group_search_metadata`, `auth.jwt`, `auth.uid`, `sectalk_private.st_v2_active` |
 | `public.st_moderate(uuid, text, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
@@ -251,11 +255,14 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_queue(integer)` | `authenticated`, `service_role` | definer | Database scope | `public.st_staff_status`, `auth.jwt`, `auth.uid` |
 | `public.st_report(uuid, uuid, text, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_report_group_message(uuid, uuid, text, boolean, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active` |
+| `public.st_report_propagation(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_can_review_report_lineage` |
+| `public.st_report_propagation_members(uuid, integer)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_can_review_report_lineage` |
 | `public.st_request(text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_respond(uuid, boolean)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_save_profile(text, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_send(uuid, uuid, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_set_block(uuid, boolean)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
+| `public.st_set_report_advisory(uuid, text, text, text)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_can_review_report_lineage` |
 | `public.st_signal(uuid, text, jsonb)` | `authenticated`, `service_role` | definer | Database scope | `sectalk_private.st_v6_call_signal`, `auth.uid`, `sectalk_private.call_access`, `sectalk_private.limit_action` |
 | `public.st_staff_status()` | `authenticated`, `service_role` | definer | Database scope | `auth.jwt`, `auth.uid` |
 | `public.st_v2_add_item(uuid, text, text, text, timestamp with time zone)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
@@ -291,7 +298,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v3_set_presence(text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active` |
 | `public.st_v4_task_change(uuid, text, uuid, uuid, text, boolean)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
 | `public.st_v5_case(uuid)` | `authenticated`, `service_role` | definer | Database scope | `public.st_case`, `auth.uid`, `sectalk_private.limit_action` |
-| `public.st_v5_find_friends(text, text, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active` |
+| `public.st_v5_find_friends(text, text, text)` | `authenticated`, `service_role` | definer | Database scope | `sectalk_private.st_v6_discovery_results`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active` |
 | `public.st_v5_last_seen(uuid)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.st_v3_presence_visible` |
 | `public.st_v5_message_action(uuid, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.member` |
 | `public.st_v5_moderate(uuid, text, text)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
@@ -338,6 +345,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v6_checkout_plan_price(text, text, text, integer, text)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_claim_attachment_purge(integer)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_claim_export_cleanup()` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v6_claim_incoming_call_push(uuid, uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_claim_notification_email()` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_claim_notification_email(uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_claim_operational_reports(uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
@@ -367,6 +375,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v6_feature_available(text, uuid)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.st_v6_feature_allowed` |
 | `public.st_v6_file_access_history(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.st_v2_active` |
 | `public.st_v6_file_can_read(uuid)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.member`, `sectalk_private.st_v2_active` |
+| `public.st_v6_find_friends(text, text, text, boolean, integer)` | `authenticated`, `service_role` | definer | Database scope | `sectalk_private.st_v6_discovery_results`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active` |
 | `public.st_v6_finish_attachment_purge(uuid, uuid, boolean)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_finish_export_cleanup(uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_finish_export_object(uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
@@ -382,6 +391,8 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v6_forward_room_destinations(uuid)` | `authenticated`, `service_role` | definer | Database scope | `sectalk_private.st_v6_room_can_forward` |
 | `public.st_v6_get_export_object(uuid, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_group_call(text, uuid, uuid, uuid[], uuid, text, jsonb, bigint, integer, boolean)` | `authenticated`, `service_role` | definer | Database scope | `auth.jwt`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active`, `sectalk_private.st_v6_group_member` |
+| `public.st_v6_group_call_ice(uuid, uuid)` | `authenticated` | definer | Database scope | `sectalk_private.limit_action` |
+| `public.st_v6_group_promotion_failed(uuid, uuid, integer)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.st_v2_active` |
 | `public.st_v6_impersonation_watch_list(uuid)` | `authenticated` | invoker | Delegated scope | `sectalk_private.st_v6_impersonation_watch_list`, `auth.uid`, `sectalk_private.st_v2_active`, `sectalk_private.st_v2_role` |
 | `public.st_v6_incident_access()` | `authenticated`, `service_role` | definer | Database scope | `auth.uid` |
 | `public.st_v6_incident_dashboard(uuid)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `public.st_v6_incident_access`, `sectalk_private.st_v2_active` |
@@ -483,6 +494,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v6_room_thread_summary_command(uuid, uuid, uuid, text, boolean)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v6_room_typing(uuid, uuid, boolean)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_room_can_type` |
 | `public.st_v6_room_typing_status(uuid, uuid)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.st_v6_room_can_type`, `sectalk_private.st_v6_room_role` |
+| `public.st_v6_save_discovery(text, text[], boolean, boolean, boolean)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.st_v2_active` |
 | `public.st_v6_save_draft(uuid, text, uuid, uuid, bigint, text)` | `authenticated` | invoker | Delegated scope | `sectalk_private.st_v6_save_draft`, `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v6_draft_access` |
 | `public.st_v6_save_flag_rule(text, text, uuid, boolean, integer, boolean, boolean)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `public.st_v6_can_manage_flags`, `sectalk_private.limit_action` |
 | `public.st_v6_schedule_message(uuid, uuid, text, timestamp with time zone)` | `authenticated`, `service_role` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
@@ -810,6 +822,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v8_invoice_adjustment_command(uuid, uuid, text, uuid, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v8_invoice_adjustment_scope(uuid)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_billing_admin_allowed`, `sectalk_private.st_v7_billing_admin_session` |
 | `public.st_v8_invoice_adjustment_sync(text, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v8_link_safety_summary(text)` | `authenticated` | definer | Database scope | `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.limit_action`, `sectalk_private.st_v2_active` |
 | `public.st_v8_livekit_bind_member(uuid, text)` | `authenticated` | definer | Database scope | `auth.jwt`, `auth.uid`, `public.st_v7_current_session_valid`, `public.st_v8_workspace_member_media_allowed`, `sectalk_private.st_v8_livekit_member_binding` |
 | `public.st_v8_livekit_bound_admission(text, uuid, uuid, integer, uuid)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
 | `public.st_v8_livekit_signal_admission(text, uuid, uuid, integer)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
@@ -883,6 +896,7 @@ To refresh after an intentional schema change, apply the complete migration set 
 | `public.st_v8_olm_pair_directory(uuid)` | `authenticated` | definer | Database scope | `auth.uid` |
 | `public.st_v8_olm_pair_state(uuid, boolean)` | `authenticated` | definer | Database scope | `auth.uid`, `sectalk_private.limit_action` |
 | `public.st_v8_olm_register_device(uuid, uuid, uuid, jsonb, text, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |
+| `public.st_v8_operator_overview()` | `authenticated` | definer | Database scope | `auth.jwt` |
 | `public.st_v8_personal_data_export(uuid, timestamp with time zone, uuid)` | `authenticated` | definer | Database scope | `public.st_v7_personal_data_export`, `auth.jwt`, `sectalk_private.limit_action`, `sectalk_private.st_v6_room_role`, `sectalk_private.st_v7_personal_data_verified` |
 | `public.st_v8_personal_deletion_status(uuid)` | `authenticated` | definer | Database scope | `public.st_v7_personal_deletion`, `auth.uid`, `public.st_v7_current_session_valid`, `sectalk_private.limit_action`, `sectalk_private.st_v7_personal_data_verified` |
 | `public.st_v8_razorpay_checkout(uuid, text, jsonb)` | `service_role` | definer | Service credential | `Effective service_role execute grant` |

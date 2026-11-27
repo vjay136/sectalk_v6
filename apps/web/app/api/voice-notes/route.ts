@@ -1,6 +1,9 @@
 import { createCipheriv,createDecipheriv,randomBytes } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { maxVoiceBytes,voiceSampleRate,voiceWave,voiceWaveform } from '../../../lib/voice-note-format'
+import { supabaseApiFetch } from '../../../lib/supabase-api-fetch.mjs'
+import { speechWorkerConfig } from '../../../lib/speech-worker-config.mjs'
+import { readBoundedText } from '../../../lib/request-body'
 
 export const runtime='nodejs'
 const headers={'Cache-Control':'private, no-store',Vary:'Authorization'}
@@ -11,12 +14,9 @@ type Note={audio:string;speech:string|null;canTranscribe:boolean;expiresAt:strin
 
 function config() {
   const {NEXT_PUBLIC_SUPABASE_URL:url,NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:key,VOICE_NOTE_SERVICE_KEY:service,
-    VOICE_NOTE_ENCRYPTION_KEY:encryption,MEETING_CAPTIONS_WORKER_URL:worker,MEETING_CAPTIONS_WORKER_TOKEN:secret}=process.env
+    VOICE_NOTE_ENCRYPTION_KEY:encryption}=process.env
   if (!url || !key || !service || !encryption || !/^[\da-f]{64}$/i.test(encryption)) return null
-  const endpoint=worker ? URL.parse(worker) : null
-  const speech=endpoint?.protocol==='http:' && endpoint.hostname==='127.0.0.1' && endpoint.port &&
-    endpoint.pathname==='/transcribe' && !endpoint.search && !endpoint.hash && !endpoint.username &&
-    !endpoint.password && secret && secret.length>=24 ? {endpoint,secret} : null
+  const speech=speechWorkerConfig()
   return {url,key,service,encryption:Buffer.from(encryption,'hex'),speech}
 }
 
@@ -48,7 +48,7 @@ async function context(request:Request) {
   const client=createClient(settings.url,settings.key,{auth})
   const {data,error}=await client.auth.getUser(jwt)
   if (error || !data.user) return fail(401)
-  const db=createClient(settings.url,settings.service,{auth})
+  const db=createClient(settings.url,settings.service,{auth,global:{fetch:supabaseApiFetch(settings.service)}})
   const scope='sectalk-voice-note/v1/'+chat+'/'+message
   async function command(action:string,values:Record<string,unknown>={}) {
     const result=await db.rpc('st_v6_voice_note_command',{p_action:action,p_actor:data.user!.id,p_chat:chat,p_message:message,...values})
@@ -97,7 +97,9 @@ export async function POST(request:Request) {
         const response=await fetch(speech.endpoint,{method:'POST',redirect:'error',signal:deadline,
           headers:{Authorization:'Bearer '+speech.secret,'X-Source-Language':'en'},body:chunk})
         if (!response.ok) return fail(503)
-        const result=await response.json()
+        const payload=await readBoundedText(response,4096)
+        if (!payload) return fail(503)
+        const result=JSON.parse(payload)
         if (typeof result?.text!=='string' || result.text.length>500) return fail(503)
         if (result.text.trim()) parts.push(result.text.trim())
       }

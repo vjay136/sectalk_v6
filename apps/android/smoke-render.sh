@@ -39,6 +39,13 @@ capture() {
 trap capture EXIT
 
 sha256sum "$apk" | tee "$output/apk.sha256"
+"$ANDROID_HOME/build-tools/35.0.0/aapt2" dump xmltree "$apk" --file AndroidManifest.xml > "$output/apk-manifest.txt"
+for declaration in android.permission.POST_NOTIFICATIONS \
+  com.google.androidbrowserhelper.trusted.NotificationPermissionRequestActivity \
+  com.google.androidbrowserhelper.trusted.DelegationService \
+  android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE; do
+  grep -Fq "$declaration" "$output/apk-manifest.txt"
+done
 adb shell pm path "$chrome"
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard

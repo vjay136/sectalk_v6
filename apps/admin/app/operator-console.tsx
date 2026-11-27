@@ -4,20 +4,39 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { AuditSearch, type AuditWorkspace } from '../../web/components/audit-search'
 import { AccountAdministration, type AccountOperatorAccess } from '../../web/components/account-administration'
 import { DisclosureQueue } from '../../web/components/disclosure-queue'
+import { BeSafe } from '../../web/components/be-safe'
+import { DetectionRules } from '../../web/components/detection-rules'
+import { GlobalAbuseBlocklists } from '../../web/components/global-abuse-blocklists'
 import { ModerationQueue } from '../../web/components/moderation-queue'
 import { QueueOperations } from '../../web/components/queue-operations'
 import { SectionTabs } from '../../web/components/section-tabs'
+import { SecurityIncidents } from '../../web/components/security-incidents'
 import { SocResponseActions } from '../../web/components/soc-response-actions'
+import { StaffMfa } from '../../web/components/staff-mfa'
 import { ThreatTriage, type ThreatTriageAccess } from '../../web/components/threat-triage'
 import { db } from '../../web/lib/data'
 import { WorkspaceReports } from './workspace-reports'
+import { OperatorOverview } from './operator-overview'
+import type { FeatureCoverage } from '../lib/feature-coverage'
 
 type Access = 'loading' | 'signed_out' | 'denied' | 'mfa' | 'verified' | 'unavailable'
-type Area = 'moderation' | 'workspaceReports' | 'queue' | 'disclosures' | 'accounts' | 'triage' | 'responses' | 'audit'
+type Area = 'overview' | 'moderation' | 'workspaceReports' | 'beSafe' | 'queue' | 'disclosures' | 'accounts' | 'triage' |
+  'responses' | 'audit' | 'blocklists' | 'detection' | 'incidents'
 type Assignment = 'none' | 'mfa' | 'verified'
 const idleLimit = 15 * 60 * 1000
+const operatorGroups: { label: string; sections: [Area, string][] }[] = [
+  {label: 'Activity', sections: [['overview', 'Overview'], ['audit', 'Audit logs'], ['queue', 'Queue operations']]},
+  {label: 'Reports and cases', sections: [['moderation', 'Moderation'], ['workspaceReports', 'Workspace reports'],
+    ['triage', 'Threat triage'], ['incidents', 'Incidents'], ['disclosures', 'Vulnerability disclosures']]},
+  {label: 'Safety controls', sections: [['accounts', 'Account administration'], ['responses', 'Response actions'],
+    ['blocklists', 'Abuse blocklists'], ['detection', 'Detection rules'], ['beSafe', 'Be Safe preview']]},
+]
 
-export function OperatorConsole() {
+function assignment(value: unknown): Assignment {
+  return value === 'verified' || value === 'mfa' ? value : 'none'
+}
+
+export function OperatorConsole({features}: {features: FeatureCoverage[]}) {
   const [access, setAccess] = useState<Access>('loading')
   const [staffModeration, setStaffModeration] = useState(false)
   const [queueAccess, setQueueAccess] = useState<Assignment>('none')
@@ -26,8 +45,12 @@ export function OperatorConsole() {
   const [accountAccess, setAccountAccess] = useState<AccountOperatorAccess>('none')
   const [triageAccess, setTriageAccess] = useState<ThreatTriageAccess>({status:'none'})
   const [responseAccess, setResponseAccess] = useState(false)
+  const [blocklistAccess, setBlocklistAccess] = useState<Assignment>('none')
+  const [detectionAccess, setDetectionAccess] = useState<Assignment>('none')
+  const [incidentAccess, setIncidentAccess] = useState(false)
+  const [incidentReport, setIncidentReport] = useState<string | null>(null)
   const [auditWorkspaces, setAuditWorkspaces] = useState<AuditWorkspace[]>([])
-  const [area, setArea] = useState<Area>('moderation')
+  const [area, setArea] = useState<Area>('overview')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const request = useRef(0)
@@ -37,6 +60,7 @@ export function OperatorConsole() {
     ++request.current
     setAccess('signed_out')
     setAuditWorkspaces([])
+    setIncidentReport(null)
     lastActivity.current = 0
     const result = await db?.auth.signOut({scope: 'local'})
     if (result?.error) setNotice('Could not end your session. Close this browser window.')
@@ -57,15 +81,18 @@ export function OperatorConsole() {
     try {
       const result = await fetch('/api/operator/access', {
         cache: 'no-store', headers: {Authorization: 'Bearer ' + data.session.access_token},
+        signal: AbortSignal.timeout(10000),
       })
       const value = await result.json()
       if (version !== request.current) return
       const accounts = value.accounts === 'operator' || value.accounts === 'reviewer' || value.accounts === 'mfa' ? value.accounts : 'none'
       const triage = value.triage?.status === 'verified' || value.triage?.status === 'mfa' ? value.triage : {status:'none'}
       const responses = value.responses === true
+      const blocklists = assignment(value.blocklists)
+      const detection = assignment(value.detection)
       if (result.ok && (value.access === 'mfa' || (value.access === 'verified' &&
         (value.moderation === true || value.workspaceReports === 'verified' || accounts === 'operator' || accounts === 'reviewer' ||
-          triage.status === 'verified' || responses)))) {
+          triage.status === 'verified' || responses || blocklists === 'verified' || detection === 'verified')))) {
         setStaffModeration(value.moderation === true)
         setQueueAccess(value.queue === 'verified' || value.queue === 'mfa' ? value.queue : 'none')
         setDisclosureAccess(value.disclosures === 'verified' || value.disclosures === 'mfa' ? value.disclosures : 'none')
@@ -73,12 +100,16 @@ export function OperatorConsole() {
         setAccountAccess(accounts)
         setTriageAccess(triage)
         setResponseAccess(responses)
-        if (value.access === 'verified') {
-          const spaces = await db.rpc('st_v6_audit_workspaces')
-          if (version !== request.current) return
-          setAuditWorkspaces(!spaces.error && Array.isArray(spaces.data) ? spaces.data : [])
-        } else setAuditWorkspaces([])
+        setBlocklistAccess(blocklists)
+        setDetectionAccess(detection)
+        setIncidentAccess(value.incidents === true)
+        if (value.incidents !== true) setIncidentReport(null)
         setAccess(value.access)
+        if (value.access === 'verified') {
+          void db.rpc('st_v6_audit_workspaces').abortSignal(AbortSignal.timeout(6000)).then(spaces => {
+            if (version === request.current) setAuditWorkspaces(!spaces.error && Array.isArray(spaces.data) ? spaces.data : [])
+          })
+        } else setAuditWorkspaces([])
       }
       else {setAuditWorkspaces([]); setAccess([401,403,423].includes(result.status) ? 'denied' : 'unavailable')}
     } catch {
@@ -125,53 +156,34 @@ export function OperatorConsole() {
     setNotice('')
     try {
       const response = await fetch('/api/auth/sign-in', {method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email: values.get('email'), password: values.get('password')})})
+        body: JSON.stringify({email: values.get('email'), password: values.get('password')}),
+        signal: AbortSignal.timeout(16000)})
       if (response.status === 429) {setNotice('Too many attempts. Wait before trying again.'); return}
+      if (response.status >= 500) {setNotice('SecTalk could not complete sign-in. Check your connection and try again.'); return}
       if (!response.ok) throw new Error('Sign-in failed')
       const credentials = await response.json()
       const result = await db.auth.setSession(credentials)
       if (result.error) throw result.error
       lastActivity.current = Date.now()
-      await refresh()
     } catch {
       setNotice('Could not sign in. Check your email and password and try again.')
     } finally {setBusy(false)}
   }
 
-  async function verify(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (busy || !db) return
-    const form = event.currentTarget
-    const code = String(new FormData(form).get('code') ?? '')
-    setBusy(true)
-    setNotice('')
-    try {
-      const factors = await db.auth.mfa.listFactors()
-      if (factors.error) throw factors.error
-      const factor = factors.data.totp[0]
-      if (!factor) {setNotice('An enrolled authenticator is required. Contact your security administrator.'); return}
-      const result = await db.auth.mfa.challengeAndVerify({factorId: factor.id, code})
-      if (result.error) throw result.error
-      form.reset()
-      await refresh()
-    } catch {
-      setNotice('Could not verify that authenticator code. Try a new code.')
-    } finally {setBusy(false)}
+  const available: Record<Area, boolean> = {
+    overview: staffModeration, audit: !!auditWorkspaces.length, queue: queueAccess !== 'none', moderation: staffModeration,
+    workspaceReports: staffModeration || workspaceAccess !== 'none', triage: triageAccess.status !== 'none',
+    disclosures: disclosureAccess !== 'none', accounts: accountAccess !== 'none', responses: responseAccess,
+    blocklists: blocklistAccess !== 'none', detection: detectionAccess !== 'none', beSafe: staffModeration,
+    incidents: incidentAccess,
   }
-
-  const sections: [Area, string][] = []
-  if (staffModeration) sections.push(['moderation', 'Moderation'])
-  if (staffModeration || workspaceAccess !== 'none') sections.push(['workspaceReports', 'Workspace reports'])
-  if (queueAccess !== 'none') sections.push(['queue', 'Queue operations'])
-  if (disclosureAccess !== 'none') sections.push(['disclosures', 'Vulnerability disclosures'])
-  if (accountAccess !== 'none') sections.push(['accounts', 'Account administration'])
-  if (triageAccess.status !== 'none') sections.push(['triage', 'Threat triage'])
-  if (responseAccess) sections.push(['responses', 'Response actions'])
-  if (auditWorkspaces.length) sections.push(['audit', 'Audit logs'])
-  const selected = sections.some(([id]) => id === area) ? area : sections[0]?.[0]
+  const groups = operatorGroups.map(group => ({...group, sections: group.sections.filter(([id]) => available[id])}))
+  const selected = available[area] ? area : groups.flatMap(group => group.sections)[0]?.[0]
   const needsAuthenticator = access === 'mfa' || (access === 'verified' && (
     (selected === 'queue' && queueAccess === 'mfa') || (selected === 'disclosures' && disclosureAccess === 'mfa') ||
-    (selected === 'accounts' && accountAccess === 'mfa') || (selected === 'triage' && triageAccess.status === 'mfa')))
+    (selected === 'accounts' && accountAccess === 'mfa') || (selected === 'triage' && triageAccess.status === 'mfa') ||
+    (selected === 'workspaceReports' && !staffModeration && workspaceAccess === 'mfa') ||
+    (selected === 'blocklists' && blocklistAccess === 'mfa') || (selected === 'detection' && detectionAccess === 'mfa')))
 
   return <main className="operator-shell">
     <header className="operator-header">
@@ -181,9 +193,21 @@ export function OperatorConsole() {
     </header>
     {notice && <p role="alert">{notice}</p>}
     {access === 'verified' && selected && <>
-      <SectionTabs label="Operator sections" value={selected} onChange={setArea} options={sections}/>
-      {selected === 'moderation' && <ModerationQueue/>}
-      {selected === 'workspaceReports' && <WorkspaceReports platform={staffModeration} workspace={workspaceAccess === 'verified'}/>}
+      <nav className="operator-nav" aria-label="Operator navigation"><div role="group" aria-label="Operator sections">
+        {groups.map(group => group.sections.length > 0 && <div className="operator-group" key={group.label}>
+          <h2>{group.label}</h2>
+          <SectionTabs label={group.label} value={selected} onChange={setArea} options={group.sections} inline/>
+        </div>)}
+      </div></nav>
+      {selected === 'overview' && <OperatorOverview features={features} openModeration={() => setArea('moderation')}
+        openAccounts={available.accounts ? () => setArea('accounts') : undefined}
+        openBeSafe={() => setArea('beSafe')} openResponses={available.responses ? () => setArea('responses') : undefined}/>}
+      {selected === 'moderation' && <ModerationQueue linkIncident={incidentAccess ? report => {
+        setIncidentReport(report)
+        setArea('incidents')
+      } : undefined}/>}
+      {selected === 'workspaceReports' && !needsAuthenticator &&
+        <WorkspaceReports platform={staffModeration} workspace={workspaceAccess === 'verified'}/>}
       {selected === 'queue' && queueAccess === 'verified' && <QueueOperations onAccessChanged={refresh}/>}
       {selected === 'disclosures' && disclosureAccess === 'verified' && <DisclosureQueue access="verified" refresh={refresh}/>}
       {selected === 'accounts' && (accountAccess === 'operator' || accountAccess === 'reviewer') &&
@@ -191,10 +215,20 @@ export function OperatorConsole() {
       {selected === 'triage' && triageAccess.status === 'verified' &&
         <ThreatTriage access={triageAccess} refresh={refresh} showResponseActions={false}/>}
       {selected === 'responses' && responseAccess && <SocResponseActions/>}
+      {selected === 'incidents' && incidentAccess && <SecurityIncidents report={incidentReport} onLinked={() => setIncidentReport(null)}/>}
+      {selected === 'blocklists' && blocklistAccess === 'verified' && <GlobalAbuseBlocklists access={blocklistAccess} refresh={refresh}/>}
+      {selected === 'detection' && detectionAccess === 'verified' && <DetectionRules access={detectionAccess} refresh={refresh}/>}
+      {selected === 'beSafe' && staffModeration && <div className="panel operator-preview">
+        <p>Preview the safety records a signed-in SecTalk account can check. Case notes and identities stay in the report queue.</p>
+        <BeSafe/>
+      </div>}
       {selected === 'audit' && auditWorkspaces.length > 0 &&
         <AuditSearch key={auditWorkspaces.map(space => space.id).join(',')} workspaces={auditWorkspaces}/>}
     </>}
-    {(access !== 'verified' || needsAuthenticator) && <section className="panel operator-card" aria-label="Console access">
+    {needsAuthenticator ? <section className="operator-card" aria-label="Console authenticator">
+      <StaffMfa refresh={refresh} heading="Verify your authenticator" verifyLabel="Verify code"
+        explanation="Use the six-digit code for SecTalk from your authenticator app. If this is your first sign-in, set up an authenticator to get a QR code."/>
+    </section> : access !== 'verified' && <section className="panel operator-card" aria-label="Console access">
       {access === 'loading' && <p role="status">Checking console access…</p>}
       {access === 'denied' && <><h2>Access unavailable</h2><p>This account does not currently have access to the operator console.</p></>}
       {access === 'unavailable' && <><h2>Could not check console access</h2>
@@ -204,11 +238,6 @@ export function OperatorConsole() {
         <label>Password<input name="password" type="password" autoComplete="current-password" maxLength={256} required/></label>
         <button type="submit" disabled={busy}>Sign in</button>
       </form></>}
-      {needsAuthenticator && <><h2>Verify your authenticator</h2><p>Enter the six-digit code from your enrolled app.</p>
-        <form onSubmit={verify}>
-          <label>Authenticator code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required/></label>
-          <button type="submit" disabled={busy}>Verify code</button>
-        </form></>}
     </section>}
   </main>
 }

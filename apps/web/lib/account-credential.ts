@@ -4,6 +4,7 @@ import { enrollCurrentDevice } from './device-identity'
 export async function signInWithAppPassword(email:string,password:string) {
   const signed=await fetch('/api/auth/sign-in',{
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password}),cache:'no-store',
+    signal:AbortSignal.timeout(16000),
   })
   if (!signed.ok) throw Object.assign(new Error('Sign-in failed'),{status:signed.status})
   const {access_token,refresh_token}=await signed.json()

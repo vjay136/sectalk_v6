@@ -304,7 +304,7 @@ function TaskDetail({task,user,people,links,moderator,reload,close}:{
   </section>
 }
 
-export function TaskNotices({user}: {user:string}){
+export function TaskNotices({user,onRead}: {user:string;onRead:()=>void}){
   const [items,setItems]=useState<TaskNotice[]|null>(null)
   const [filter,setFilter]=useState<'all'|'unread'>('all')
   const [error,setError]=useState('')
@@ -335,7 +335,7 @@ export function TaskNotices({user}: {user:string}){
       <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time>
       {item.due_at&&<span>Due <time dateTime={item.due_at}>{new Date(item.due_at).toLocaleString()}</time></span>}
       {!item.read_at&&<button type="button" className="secondary" onClick={async()=>{
-        try{await rpc('st_v6_task_notice_read',{p_notice:item.id});await load()}
+        try{await rpc('st_v6_task_notice_read',{p_notice:item.id});onRead();await load()}
         catch{setError('Could not mark the update as read.')}
       }}>Mark read</button>}
     </div>)}

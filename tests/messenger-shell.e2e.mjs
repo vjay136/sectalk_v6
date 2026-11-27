@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
@@ -12,6 +13,7 @@ const auth = { persistSession: false, autoRefreshToken: false }
 const admin = createClient(database.origin, process.env.SECTALK_STORAGE_TEST_SERVICE_KEY, { auth })
 const password = randomUUID() + '!Qa9'
 const users = []
+const screenshots = process.env.SECTALK_SHELL_SCREENSHOTS
 
 function data(result) {
   if (result.error) throw new Error(result.error.message)
@@ -45,16 +47,35 @@ async function assertFocused(locator) {
 
 try {
   const sender = await account('Shell Sender')
-  const peer = await account('Shell Recipient')
+  const peer = await account('Shell Recipient Long Display Name')
+  const requester = await account('Shell Contact Request')
   const chat = data(await sender.client.rpc('st_request', { p_handle: peer.handle }))
   data(await peer.client.rpc('st_respond', { p_chat: chat, p_accept: true }))
+  const workspace = data(await peer.client.rpc('st_v2_create_workspace', {p_name:'Navigation badge test'}))
+  data(await peer.client.rpc('st_v2_invite', {p_workspace:workspace,p_handle:sender.handle}))
+  const invites = data(await sender.client.from('st_v2_invites').select('id').eq('workspace_id',workspace))
+  data(await sender.client.rpc('st_v2_reply_invite', {p_invite:invites[0].id,p_accept:true}))
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const mobileNav = await signIn(mobile, sender)
   const more = mobileNav.getByRole('button', { name: 'More', exact: true })
   const notifications = mobileNav.getByRole('button', { name: 'Notifications', exact: true })
+  const inboxBadge = mobileNav.getByRole('button',{name:'Inbox',exact:true}).locator('.tab-count')
+  const friendsBadge = mobileNav.getByRole('button',{name:'Friends',exact:true}).locator('.tab-count')
+  const moreBadge = more.locator('.tab-count')
+  data(await peer.client.rpc('st_send',{p_chat:chat,p_id:randomUUID(),p_body:'Unread badge test'}))
+  await inboxBadge.getByText('1',{exact:true}).waitFor()
+  const incoming = data(await requester.client.rpc('st_request',{p_handle:sender.handle}))
+  await friendsBadge.getByText('1',{exact:true}).waitFor()
+  data(await sender.client.rpc('st_respond',{p_chat:incoming,p_accept:false}))
+  await friendsBadge.waitFor({state:'hidden'})
+  data(await peer.client.rpc('st_v3_schedule',{p_workspace:workspace,p_id:randomUUID(),
+    p_title:'Badge test meeting',p_agenda:'',p_start:new Date(Date.now()+1800000).toISOString(),
+    p_end:new Date(Date.now()+3600000).toISOString()}))
+  await moreBadge.getByText('1',{exact:true}).waitFor()
   await notifications.waitFor({ state: 'hidden' })
   await more.press('Enter')
   assert.equal(await more.getAttribute('aria-expanded'), 'true')
+  if (screenshots) await mobile.screenshot({path: join(screenshots, 'sectalk-more.png')})
   const groupChats = mobileNav.getByRole('button', { name: 'Group chats', exact: true })
   await mobile.keyboard.press('Tab')
   await assertFocused(groupChats)
@@ -62,17 +83,74 @@ try {
   await notifications.waitFor({ state: 'hidden' })
   await assertFocused(more)
   await more.press('Enter')
+  await notifications.locator('.tab-count').getByText('1',{exact:true}).waitFor()
   await notifications.press('Enter')
   await notifications.waitFor({ state: 'hidden' })
+  assert.equal(await more.getAttribute('aria-expanded'), 'false')
+  assert.ok((await more.getAttribute('class')).split(' ').includes('active'))
   await assertFocused(more)
   await mobile.getByRole('heading', { name: 'Notifications', exact: true }).waitFor()
+  await mobile.getByRole('group',{name:'Notification categories'}).getByRole('button',{name:'Meetings',exact:true})
+    .locator('.tab-count').getByText('1',{exact:true}).waitFor()
+  await mobile.getByRole('button',{name:'Mark all read',exact:true}).click()
+  await moreBadge.waitFor({state:'hidden'})
   for (const label of ['Calls', 'Inbox']) {
     const tab = mobileNav.getByRole('button', { name: label, exact: true })
     await tab.press('Enter')
     assert.equal(await tab.getAttribute('aria-current'), 'page')
+    assert.ok(!(await more.getAttribute('class')).split(' ').includes('active'))
   }
+  for (const [label, panel] of [['Calls', '.calls-page'], ['Safety', '.safety-page']]) {
+    await mobileNav.getByRole('button', { name: label, exact: true }).click()
+    const section = mobile.locator(panel)
+    await section.waitFor()
+    for (const width of [320, 360, 390]) {
+      await mobile.setViewportSize({width, height: 844})
+      assert.ok(await section.evaluate(element => element.scrollWidth <= element.clientWidth), label + ' overflow at ' + width + 'px')
+      if (label === 'Calls') {
+        const filters = section.getByRole('group', {name:'Call history'})
+        assert.ok(await filters.evaluate(element => element.scrollWidth <= element.clientWidth), 'Call filters overflow at ' + width + 'px')
+      }
+    }
+    if (screenshots) await mobile.screenshot({path: join(screenshots, 'sectalk-' + label.toLowerCase() + '.png')})
+  }
+  await mobileNav.getByRole('button', { name: 'Inbox', exact: true }).press('Enter')
+  await mobile.getByRole('button', { name: 'Search across SecTalk', exact: true }).click()
+  await mobile.getByRole('heading', { name: 'Search', exact: true }).waitFor()
+  await mobileNav.getByRole('button', { name: 'Inbox', exact: true }).click()
   const conversation = mobile.getByRole('button', { name: /Shell Recipient/ })
   await conversation.click()
+  await inboxBadge.waitFor({state:'hidden'})
+  const availability = mobile.getByLabel('Contact availability', {exact:true})
+  data(await peer.client.rpc('st_v3_ping'))
+  await availability.getByText('Online',{exact:true}).waitFor()
+  data(await peer.client.rpc('st_v3_set_presence',{p_state:'away'}))
+  await availability.getByText('Away',{exact:true}).waitFor()
+  data(await peer.client.rpc('st_v3_set_presence',{p_state:'invisible'}))
+  await availability.getByText('Offline',{exact:true}).waitFor()
+  const tools = mobile.getByRole('button', { name: 'Conversation tools', exact: true })
+  const preferences = mobile.getByRole('button', { name: 'Chat settings', exact: true })
+  await tools.waitFor()
+  for (const width of [320, 360, 390]) {
+    await mobile.setViewportSize({width, height: 844})
+    const header = mobile.locator('.conversation-header')
+    const bounds = await header.boundingBox()
+    assert.ok(bounds && bounds.height < 80, 'The chat header stays compact at ' + width + 'px')
+    assert.ok(await header.evaluate(element => element.scrollWidth <= element.clientWidth), 'Chat header overflow at ' + width + 'px')
+    assert.ok(await mobile.getByRole('button', { name: 'Start audio call', exact: true }).isVisible())
+    assert.ok(await mobile.getByRole('button', { name: 'Start video call', exact: true }).isVisible())
+    assert.equal(await mobile.getByRole('button', { name: 'Report contact', exact: true }).isVisible(), false)
+    assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+  }
+  await tools.click()
+  await mobile.getByRole('button', { name: 'Report contact', exact: true }).waitFor()
+  if (screenshots) await mobile.screenshot({path: join(screenshots, 'sectalk-chat-tools.png')})
+  await tools.press('Escape')
+  await mobile.getByRole('button', { name: 'Report contact', exact: true }).waitFor({state:'hidden'})
+  await preferences.click()
+  await mobile.getByRole('button', { name: 'Chat quiet hours', exact: true }).waitFor()
+  await preferences.click()
+  await mobile.getByRole('button', { name: 'Chat quiet hours', exact: true }).waitFor({state:'hidden'})
   const composer = mobile.getByRole('textbox', { name: 'Write a message' })
   const message = 'Messenger shell QA ' + randomUUID().slice(0, 8)
   await composer.fill(message)
@@ -89,9 +167,14 @@ try {
   await desktop.getByRole('heading', { name: 'Notifications', exact: true }).waitFor()
   await desktopNav.getByRole('button', { name: 'Inbox', exact: true }).click()
   await desktop.getByRole('button', { name: /Shell Recipient/ }).click()
+  const protectedCalls=desktop.getByLabel('Protected call options', {exact:true})
+  await protectedCalls.click()
+  await desktop.getByRole('button',{name:'Start protected audio call',exact:true}).waitFor()
+  await protectedCalls.press('Escape')
+  await desktop.getByRole('button',{name:'Start protected audio call',exact:true}).waitFor({state:'hidden'})
   await desktop.getByText(message, { exact: true }).waitFor()
   await desktop.getByRole('textbox', { name: 'Write a message' }).waitFor()
-  console.log('Verified mobile More keyboard navigation, primary tabs, sending a message, and desktop inbox persistence.')
+  console.log('Verified mobile navigation, compact chat controls at 320, 360 and 390 px, sending a message, and desktop inbox persistence.')
 } finally {
   await browser.close()
   await Promise.allSettled(users.map(id => admin.auth.admin.deleteUser(id)))

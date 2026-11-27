@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import test from 'node:test'
 import ts from 'typescript'
+import { supabaseApiFetch } from '../apps/web/lib/supabase-api-fetch.mjs'
 
 const requireModule = createRequire(import.meta.url)
 
@@ -33,6 +34,7 @@ test('Stripe reconciliation works without the web project webhook secret', async
   const ledgerCalls = []
   const stripeModule = loadSource('lib/stripe-server.ts',env,{
     billing:{paidPlans:[]},
+    'supabase-api-fetch.mjs':{supabaseApiFetch},
     'supabase-js':{createClient:()=>({rpc:async name=>{
       ledgerCalls.push(name)
       return {data:[],error:null}

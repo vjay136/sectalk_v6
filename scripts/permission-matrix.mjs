@@ -178,6 +178,7 @@ publicly('operational-reports/drain','GET','Report delivery capability boolean o
 signed('operational-reports/drain','POST','Private report worker bearer.','notificationDrainAuthorized','rpc:st_v6_claim_operational_reports')
 account('operational-reports/export','GET','soc.report.export','operationalReportViewer','rpc:st_v6_operational_report_export')
 publicly('preferences/language','POST','Browser-local language cookie. The app request origin policy applies.')
+account('push/call','POST','call.media.join','authenticatePush','rpc:st_v6_claim_incoming_call_push')
 signed('push/dispatch','POST','Private Web Push worker bearer.','dispatchAuthorized','rpc:st_v6_claim_web_push')
 account('push/subscription','GET,POST,DELETE','account.notification.manage','authenticatePush','rpc:st_v6_push_subscription')
 publicly('ready','GET','Read-only deployment schema readiness.')

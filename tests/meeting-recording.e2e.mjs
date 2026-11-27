@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createClient } from '@supabase/supabase-js'
 import { AccessToken, EgressClient, EgressStatus, RoomServiceClient, TokenVerifier, TrackSource } from 'livekit-server-sdk'
+import { meetingBindingAttribute, parseMeetingMediaIdentity } from '../apps/web/lib/meeting-media-identity.ts'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
@@ -83,7 +84,13 @@ const fixture = createServer(async (request,response) => {
       assert.ok(audio.routes.every(route=>route.trackId.startsWith('TR_') && Object.hasOwn(route,'trackId')))
       assert.equal(new Set(audio.routes.map(route=>route.trackId)).size,audio.routes.length)
       const active = await meetings.listParticipants(body.roomName)
-      assert.deepEqual(active.map(person=>person.identity).sort(),[host.id,guest.id].sort())
+      const members = active.map(person => {
+        const identity = parseMeetingMediaIdentity(person.identity)
+        assert.ok(identity?.binding, 'Recording attendees must have an app-issued media binding')
+        assert.equal(person.attributes[meetingBindingAttribute], identity.binding)
+        return identity.actor
+      })
+      assert.deepEqual(members.sort(),[host.id,guest.id].sort())
       assert.deepEqual(audio.routes.map(route=>route.trackId).sort(),active.flatMap(person=>person.tracks
         .filter(track=>track.source===TrackSource.MICROPHONE).map(track=>track.sid)).sort())
       data(await admin.storage.from('recordings').upload(key,audioBytes,{ contentType:'audio/ogg' }))
@@ -140,7 +147,7 @@ try {
     page.on('console',event=>{ if (event.type()==='error') diagnostics.push(event.text()) })
     const url = new URL(app)
     url.searchParams.set('meeting',meeting)
-    await page.goto(url.href)
+    await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:60000})
     await page.getByLabel('Email address',{ exact:true }).fill(user.email)
     await page.getByLabel('Password',{ exact:true }).fill(password)
     await page.locator('button.submit-auth').click()

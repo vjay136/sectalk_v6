@@ -5,6 +5,7 @@ const config: NextConfig = {
   agentRules: false,
   poweredByHeader: false,
   outputFileTracingRoot: resolve(__dirname, '../..'),
+  outputFileTracingIncludes: { '/': ['../../docs/FEATURE_MATRIX.md'] },
   async headers() {
     return [{
       source: '/:path*',

@@ -16,6 +16,7 @@ declare
   casey constant uuid:='7b000000-0000-4000-8000-000000000003';
   origin_msg uuid:=gen_random_uuid();
   copy_msg uuid:=gen_random_uuid();
+  chain_msg uuid:=gen_random_uuid();
   following_msg uuid:=gen_random_uuid();
   hidden_msg uuid:=gen_random_uuid();
   revoked_msg uuid:=gen_random_uuid();
@@ -39,6 +40,8 @@ begin
   if has_function_privilege('anon','public.st_v6_forward_direct(uuid,uuid,uuid,uuid)','EXECUTE')
     or has_function_privilege('anon','public.st_v6_forward_room(uuid,uuid,uuid,uuid)','EXECUTE')
     or has_function_privilege('authenticated','sectalk_private.st_v6_write_room_post(uuid,uuid,text,text,uuid,boolean)','EXECUTE')
+    or has_function_privilege('anon','public.st_forward_summary(text,uuid,uuid[])','EXECUTE')
+    or has_table_privilege('authenticated','sectalk_private.st_forward_lineage','SELECT')
     or has_column_privilege('authenticated','public.st_messages','forwarded','UPDATE')
     then raise exception 'Unexpected forwarding permission'; end if;
 
@@ -101,6 +104,24 @@ begin
     or exists(select 1 from public.st_messages where id=origin_msg) then
     raise exception 'Wrong direct copy, recipient visibility, or message sequence';
   end if;
+  if not exists(select from public.st_forward_summary('direct',dest_chat,array[copy_msg])
+      where forwards=1 and forwarders=1 and original_sender is null)
+    or exists(select from public.st_forward_summary('direct',origin_chat,array[origin_msg])) then
+    raise exception 'Destination disclosed the source or miscounted an idempotent retry';
+  end if;
+  perform public.st_v6_forward_direct(dest_chat,copy_msg,outside_chat,chain_msg);
+  perform set_config('request.jwt.claim.sub',alex::text,true);
+  if not exists(select from public.st_forward_summary('direct',origin_chat,array[origin_msg])
+      where forwards=2 and forwarders=2 and original_sender='Forward Billie')
+    or exists(select from public.st_forward_summary('direct',outside_chat,array[chain_msg])) then
+    raise exception 'Forward-of-forward count or source authorization failed';
+  end if;
+  perform set_config('request.jwt.claim.sub',billie::text,true);
+  perform public.st_v2_edit_message(origin_msg,'New revision');
+  if exists(select from public.st_forward_summary('direct',origin_chat,array[origin_msg])) then
+    raise exception 'Edited revision inherited old forward counts';
+  end if;
+  perform set_config('request.jwt.claim.sub',casey::text,true);
   perform public.st_set_block(dest_chat,true);
   perform set_config('request.jwt.claim.sub',alex::text,true);
   begin
@@ -141,6 +162,11 @@ begin
     or exists(select 1 from public.st_v6_room_posts where room_id=source_room and id=room_msg)
     or exists(select 1 from public.st_v3_notifications where room_post_id=room_copy) then
     raise exception 'Wrong room copy, recipient visibility, or mention alert';
+  end if;
+  if not exists(select from public.st_forward_summary('room',dest_room,array[room_copy])
+      where forwards=1 and forwarders=1 and original_sender is null)
+    or exists(select from public.st_forward_summary('room',source_room,array[room_msg])) then
+    raise exception 'Room lineage did not preserve source visibility and count';
   end if;
   begin
     perform public.st_v6_set_room_forwarding(dest_room,false);

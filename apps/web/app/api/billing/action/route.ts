@@ -7,8 +7,10 @@ import { couponCodePattern, matchesCoupon, type CouponQuote } from '../../../../
 import { isBillingCurrency, isPaidPlan } from '../../../../lib/billing'
 import { razorpayCheckout } from '../../../../lib/razorpay-billing'
 import { billingTaxAction,billingTaxConfigured,taxCheckoutBinding,taxCustomer } from '../../../../lib/stripe-billing-tax'
+import { billingMode, billingPausedResponse } from '../../../../lib/billing-mode'
 
 async function handlePost(request: Request) {
+  if (billingMode() === 'free') return billingPausedResponse()
   const identity = await billingIdentity(request)
   if (!identity) return Response.json({ error: 'Sign in first.' }, { status: 401 })
   const { user, client } = identity

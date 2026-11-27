@@ -6,7 +6,11 @@ import { createClient } from '@supabase/supabase-js'
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
 assert.equal(app.hostname, '127.0.0.1')
-assert.equal(supabase.origin, 'http://127.0.0.1:55321')
+const databaseContainer = new Map([
+  ['http://127.0.0.1:55321', 'supabase_db_v4-auth-qa'],
+  ['http://127.0.0.1:57101', 'supabase_db_v6-preview-atomic-qa'],
+]).get(supabase.origin)
+assert.ok(databaseContainer, 'Use an isolated Supabase test database')
 const options = { auth: { persistSession: false, autoRefreshToken: false } }
 const admin = createClient(supabase.origin, process.env.SECTALK_STORAGE_TEST_SERVICE_KEY, options)
 const { chromium } = await import(process.env.SECTALK_PLAYWRIGHT_MODULE || 'playwright')
@@ -24,7 +28,7 @@ function data(result) {
 }
 
 function sql(statement) {
-  execFileSync('docker', ['exec', '-i', 'supabase_db_v4-auth-qa', 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
+  execFileSync('docker', ['exec', '-i', databaseContainer, 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
     '-U', 'postgres', '-d', 'postgres'], { input: statement, windowsHide: true })
 }
 
@@ -119,7 +123,10 @@ try {
   await picker.setInputFiles({ name: 'outside.txt', mimeType: 'text/plain', buffer: Buffer.alloc(25, 'a') })
   await page.getByRole('status').getByText('Your limit is 24 B per attachment.', { exact: true }).waitFor()
   await picker.setInputFiles({ name: 'browser-quota.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') })
-  const submitted = page.waitForResponse(response => new URL(response.url()).pathname === '/api/files/upload')
+  const submitted = page.waitForResponse(response => {
+    const target = new URL(response.url())
+    return target.pathname === '/api/files/resumable' && target.searchParams.get('action') === 'assemble'
+  })
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   const browserUpload = await submitted
   objects.push(new URL(browserUpload.url()).searchParams.get('file'))

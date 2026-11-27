@@ -182,10 +182,10 @@ try {
   await requestPanel.getByLabel('URL path to block',{exact:true}).fill(exactUrl.replace('/Specific','/%53pecific')+'?case=synthetic')
   await send(requestPanel)
   const policy = async url => (await post('/api/safety/url-inspection',reporter.headers,{url,policyOnly:true})).json()
-  assert.equal((await policy(exactUrl)).allowed,true)
+  assert.deepEqual(await policy(exactUrl),{allowed:true,recordedRisk:false})
   await approve(responsePanel(approvalPage),liveId('block_url'))
-  assert.equal((await policy(exactUrl+'?different=1')).allowed,false)
-  assert.equal((await policy(exactUrl+'/neighbor')).allowed,true)
+  assert.deepEqual(await policy(exactUrl+'?different=1'),{allowed:false,recordedRisk:true})
+  assert.deepEqual(await policy(exactUrl+'/neighbor'),{allowed:true,recordedRisk:false})
   assert.equal((await policy(exactUrl.replace('Specific','specific'))).allowed,true)
   assert.equal((await (await post('/api/safety/url-inspection',reporter.headers,{url:exactUrl})).json()).outcome,'blocked')
 
@@ -196,7 +196,7 @@ try {
   await nav(authorPage).getByRole('button',{name:'Rooms',exact:true}).click()
   await authorPage.getByRole('button',{name:/Response test room/}).click()
   await authorPage.getByRole('button',{name:/Blocked page/}).click()
-  await authorPage.getByText('This link is blocked by Safety policy.',{exact:true}).waitFor()
+  await authorPage.getByText('Recorded risk. SecTalk Safety blocked this exact address.',{exact:true}).waitFor()
   const popup = authorPage.waitForEvent('popup')
   await authorPage.getByRole('button',{name:/Neighboring page/}).click()
   const allowedPopup = await popup

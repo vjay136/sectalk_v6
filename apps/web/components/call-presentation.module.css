@@ -1,0 +1,96 @@
+.surface:global(.call-panel)[data-expanded="true"] {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: clamp(8px, 2dvh, 24px);
+  width: 100%;
+  height: 100dvh;
+  max-height: none;
+  min-height: 0;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  border: 0;
+  border-radius: 0;
+  background: radial-gradient(ellipse at 50% 30%, #192d46, #0b1321 70%);
+  overflow: auto;
+}
+
+.surface[data-expanded="true"] > header,
+.verification,
+.actions {
+  width: min(100%, 920px);
+  margin-inline: auto;
+}
+
+.stage {
+  grid-row: 3;
+  display: grid;
+  place-items: stretch;
+  width: min(100%, 1280px);
+  min-height: 0;
+  margin-inline: auto;
+}
+
+.stage > div { min-height: 0; }
+
+.minimize {
+  display: grid;
+  min-height: 44px;
+  min-width: 44px;
+  place-items: center;
+  padding: 0;
+}
+
+.surface[data-expanded="true"] .stage [data-playback="video"] video {
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
+}
+
+.stage [data-playback="audio"] { position: absolute; inset: auto 0 0; }
+.stage [data-playback="audio"] video { inset-block-end: 0; }
+
+.surface[data-expanded="true"] .stage[data-remote-video="true"] video[aria-label="Your camera preview"],
+.surface[data-expanded="true"] .stage[data-remote-video="true"] video[aria-label="Your shared screen"] {
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.contact {
+  display: grid;
+  place-items: center;
+}
+
+.heroAvatar:global(.avatar) {
+  width: clamp(76px, 19dvmin, 160px);
+  height: clamp(76px, 19dvmin, 160px);
+  font-size: clamp(1.7rem, 5dvmin, 3.4rem);
+  box-shadow: 0 0 0 12px #6bd5ff15, 0 0 0 24px #6bd5ff08;
+}
+
+.actions {
+  grid-row: 4;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.surface[data-expanded="false"] .stage {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.surface[data-expanded="false"] .actions,
+.surface[data-expanded="false"] .verification { display: none; }
+
+@media (max-height: 440px) {
+  .surface:global(.call-panel)[data-expanded="true"] { grid-template-rows: auto auto minmax(95px, 1fr) auto; }
+}

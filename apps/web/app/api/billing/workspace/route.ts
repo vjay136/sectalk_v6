@@ -2,6 +2,7 @@ import {billingIdentity, billingWriter, stripe} from '../../../../lib/stripe-ser
 import {stripeBillingUuid} from '../../../../lib/stripe-reconciliation'
 import {workspaceSeatAction} from '../../../../lib/stripe-workspace-seats'
 import {invoiceAdjustmentAction} from '../../../../lib/stripe-invoice-adjustments'
+import { billingMode, billingPausedResponse } from '../../../../lib/billing-mode'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -15,6 +16,7 @@ function providerId(value: StripeReference) {
 }
 
 export async function POST(request: Request) {
+  if (billingMode() === 'free') return billingPausedResponse()
   const identity = await billingIdentity(request)
   if (!identity) return reply(401, 'Sign in to manage workspace billing.')
   if (new URL(request.url).searchParams.get('section')==='adjustments') return invoiceAdjustmentAction(request,identity)

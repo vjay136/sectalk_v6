@@ -2,6 +2,7 @@ import { isIP } from 'node:net'
 import { createClient } from '@supabase/supabase-js'
 import { sessionRiskGateway } from '../../../../lib/session-risk-server'
 import { readBoundedText } from '../../../../lib/request-body'
+import { supabaseApiFetch } from '../../../../lib/supabase-api-fetch.mjs'
 
 export const runtime='nodejs'
 const headers={'Cache-Control':'no-store'}
@@ -14,7 +15,8 @@ export async function POST(request:Request) {
   }
   const url=process.env.SECTALK_AUTH_PASSWORD_UPSTREAM||process.env.NEXT_PUBLIC_SUPABASE_URL
   const key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-  if (!url||!key) return unavailable()
+  const temporary=()=>Response.json({error:'sign_in_unavailable'},{status:503,headers})
+  if (!url||!key) return temporary()
   try {
     const raw=await readBoundedText(request,2048)
     if (!raw) return unavailable()
@@ -32,7 +34,9 @@ export async function POST(request:Request) {
     const ip=process.env.VERCEL==='1'?request.headers.get('x-vercel-forwarded-for'):null
     if (ip&&isIP(ip)) forwarded['X-Forwarded-For']=ip
     const auth=createClient(url,key,{
-      auth:{persistSession:false,autoRefreshToken:false},global:{headers:forwarded},
+      auth:{persistSession:false,autoRefreshToken:false},global:{headers:forwarded,fetch:
+        supabaseApiFetch(key,(input: RequestInfo|URL, options?: RequestInit)=>
+          fetch(input,{...options,signal:AbortSignal.any([request.signal,AbortSignal.timeout(7000)])}))},
     })
     const risk=sessionRiskGateway(url,email)
     const retryAfter=await risk?.admit(ip&&isIP(ip)?ip:null)
@@ -41,11 +45,15 @@ export async function POST(request:Request) {
     }
     const signed=await auth.auth.signInWithPassword({email,password:values.password})
     if (signed.error||!signed.data.session||!signed.data.user) {
+      if (signed.error?.status===429) {
+        return Response.json({error:'try_again_later'},{status:429,headers})
+      }
+      if (signed.error && (!signed.error.status || signed.error.status>=500)) return temporary()
       if (signed.error?.code==='invalid_credentials') await risk?.failure()
       return unavailable()
     }
     const {access_token,refresh_token}=signed.data.session
     await risk?.assess(signed.data.user.id,access_token)
     return Response.json({access_token,refresh_token},{headers})
-  } catch {return unavailable()}
+  } catch (error) {return error instanceof SyntaxError ? unavailable() : temporary()}
 }

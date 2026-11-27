@@ -50,7 +50,7 @@ export function MessageFormatting({ account, mode }: { account: string; mode: 'm
 }
 
 type Link = NonNullable<ReturnType<typeof safeRichLink>>
-type Preview = { host: string; status: number } | 'unavailable'
+type Preview = { host: string; status: number } | 'unavailable' | 'recorded-risk'
 
 function ManagedLinkPreview({ account, link }: { account: string; link: Link }) {
   const [busy, setBusy] = useState(false)
@@ -71,6 +71,10 @@ function ManagedLinkPreview({ account, link }: { account: string; link: Link }) 
       })
       if (!response.ok) throw new Error('Preview unavailable')
       const result = await response.json()
+      if (result.recordedRisk === true) {
+        setPreview('recorded-risk')
+        return
+      }
       const final = Array.isArray(result.hops) ? result.hops.at(-1) : null
       const destination = safeRichLink(final?.url)
       if (result.outcome !== 'checked' || !destination || !Number.isInteger(final.status) || final.status < 100 || final.status > 599) {
@@ -89,6 +93,7 @@ function ManagedLinkPreview({ account, link }: { account: string; link: Link }) 
       {busy ? 'Checking link preview…' : 'Check link preview'}
     </button>
     {preview && <span role="status">{preview === 'unavailable' ? 'Link preview unavailable.' :
+      preview === 'recorded-risk' ? 'Recorded risk. SecTalk Safety blocked this exact address.' :
       <>Destination <bdi>{preview.host}</bdi> · HTTP {preview.status}. Site safety is unverified.</>}</span>}
   </span>
 }
@@ -110,9 +115,11 @@ function ManagedLink({ link, text, account }: { link: Link; text: string; accoun
         body:JSON.stringify({url:link.inspect,policyOnly:true}),
       })
       if (!response.ok) throw new Error()
-      if ((await response.json()).allowed!==true) {
+      const result = await response.json()
+      if (result.allowed!==true) {
         tab?.close()
-        setStatus('This link is blocked by Safety policy.')
+        setStatus(result.recordedRisk === true ? 'Recorded risk. SecTalk Safety blocked this exact address.' :
+          'This link is blocked by Safety policy.')
       } else if (tab) {
         const referrer = tab.document.createElement('meta')
         referrer.name = 'referrer'

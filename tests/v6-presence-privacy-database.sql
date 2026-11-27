@@ -47,7 +47,7 @@ begin
   begin
     perform public.st_v6_set_workspace_presence_policy(workspace_id,true);
     raise exception 'Member changed policy' using errcode='22023';
-  exception when raise_exception then null;
+  exception when insufficient_privilege then null;
   end;
 
   perform set_config('request.jwt.claims',json_build_object('sub',owner_id,'role','authenticated')::text,true);
@@ -96,12 +96,12 @@ begin
   begin
     perform public.st_v6_workspace_presence_policy(workspace_id);
     raise exception 'Outsider read workspace policy' using errcode='22023';
-  exception when raise_exception then null;
+  exception when insufficient_privilege then null;
   end;
   begin
     perform public.st_v6_set_workspace_presence_policy(workspace_id,false);
     raise exception 'Outsider changed policy' using errcode='22023';
-  exception when raise_exception then null;
+  exception when insufficient_privilege then null;
   end;
 
   perform set_config('request.jwt.claims',json_build_object('sub',owner_id,'role','authenticated')::text,true);

@@ -5,6 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     id: '/',
     name: 'SecTalk by Eagle Security',
     short_name: 'SecTalk',
+    description: 'SecTalk is a messaging and calling app by Eagle Security.',
     start_url: '/',
     scope: '/',
     display: 'standalone',

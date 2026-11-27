@@ -16,8 +16,15 @@ export async function groupCommand(device:string,action:string,call?:string,extr
 
 export async function groupConfig(action:'ice'|'sfu',call:string,device:string,signal?:AbortSignal) {
   const {data}=await db!.auth.getSession()
-  const response=await fetch('/api/group-calls',{method:'POST',signal,headers:{'Content-Type':'application/json',
+  const timeout=AbortSignal.timeout(8000)
+  const response=await fetch('/api/group-calls',{method:'POST',signal:signal?AbortSignal.any([signal,timeout]):timeout,headers:{'Content-Type':'application/json',
     Authorization:'Bearer '+data.session?.access_token},body:JSON.stringify({action,call,device})})
   if (!response.ok) throw new Error('Group connection unavailable')
   return response.json()
+}
+
+export async function reportGroupPromotionFailure(call:string,device:string,generation:number) {
+  return db!.rpc('st_v6_group_promotion_failed',{
+    p_call:call,p_device:device,p_generation:generation,
+  }).abortSignal(AbortSignal.timeout(4500))
 }

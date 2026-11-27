@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHmac, randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 import { createClient } from '@supabase/supabase-js'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
@@ -18,9 +19,13 @@ const olderTitle = 'Original Pro ' + suffix
 const password = randomUUID() + '1!Q'
 const fixtureSecret = process.env.SECTALK_BILLING_TEST_WEBHOOK_SECRET
 assert.ok(fixtureSecret?.startsWith('whsec_local_fixture_'))
+const stripeFixture = new URL(process.env.SECTALK_TEST_STRIPE_ORIGIN)
+assert.equal(stripeFixture.protocol, 'http:')
+assert.equal(stripeFixture.hostname, '127.0.0.1')
+assert.ok(stripeFixture.port)
 const priceId = 'price_sectalk_catalog_' + suffix
 const users = []
-let previousVersion, currentVersion
+let previousVersion, currentVersion, stripeServer
 
 function data(result) {
   assert.equal(result.error, null, result.error?.message)
@@ -113,21 +118,38 @@ try {
   assert.ok(await pro.getByRole('button', { name: 'Checkout unavailable' }).isDisabled())
 
   const timestamp = Math.floor(Date.now() / 1000)
-  const body = JSON.stringify({ id: 'evt_sectalk_cancel_' + suffix, type: 'customer.subscription.deleted', created: timestamp, data: { object: {
+  const canceledSubscription = {
     id: providerSubscription, customer, metadata: { sectalk_user: subscriber.user.id }, status: 'canceled',
     cancel_at_period_end: false, items: { data: [{ current_period_end: timestamp + 60,
       price: { id: priceId + '_old', currency: 'eur', unit_amount: 975 } }] },
-  } } })
+  }
+  let lookups = 0
+  stripeServer = createServer((request, response) => {
+    if (request.method !== 'GET' || request.url !== '/v1/subscriptions/' + providerSubscription) {
+      response.writeHead(404).end()
+      return
+    }
+    lookups++
+    response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(canceledSubscription))
+  })
+  await new Promise((ok, fail) => stripeServer.once('error', fail).listen(Number(stripeFixture.port), '127.0.0.1', ok))
+  const body = JSON.stringify({ id: 'evt_sectalk_cancel_' + suffix, type: 'customer.subscription.deleted',
+    created: timestamp, data: { object: canceledSubscription } })
   const signature = createHmac('sha256', fixtureSecret).update(timestamp + '.' + body).digest('hex')
   const webhook = value => fetch(api('webhook'), { method: 'POST', headers: { 'Stripe-Signature': 't=' + timestamp + ',v1=' + value }, body })
   assert.equal((await webhook('invalid')).status, 400)
   assert.equal((await webhook(signature)).status, 204)
   assert.equal((await webhook(signature)).status, 204)
+  assert.equal(lookups, 1, 'A duplicate webhook must reuse the completed reconciliation')
   const persisted = data(await subscriber.client.from('st_v2_subscriptions').select('catalog_version,billing_amount,status').single())
   assert.deepEqual(persisted, { catalog_version: previousVersion, billing_amount: 975, status: 'canceled' })
   await paidPage.getByRole('heading', { name: 'Free', exact: true }).waitFor()
   console.log('Passed versioned plan API, currency and cadence controls, grandfathered terms, scope, and signed local webhook.')
 } finally {
+  if (stripeServer?.listening) {
+    stripeServer.closeAllConnections()
+    await new Promise(resolve => stripeServer.close(resolve))
+  }
   await browser.close()
   for (const id of users) {
     const result = await admin.auth.admin.deleteUser(id)
@@ -137,6 +159,9 @@ try {
   if (revisions.length) {
     fixtureSQL(`begin;
       delete from sectalk_private.st_v6_plan_prices where provider_price like '${priceId}%';
+      delete from sectalk_private.st_v7_plan_entitlements e using sectalk_private.st_v6_plan_versions v
+        where (e.plan,e.version)=(v.plan,v.version) and v.plan='professional'
+          and v.version in (${revisions.join(',')}) and v.title in ('${title}','${olderTitle}');
       delete from sectalk_private.st_v6_plan_versions where plan='professional' and version in (${revisions.join(',')})
         and title in ('${title}','${olderTitle}');
       delete from sectalk_private.st_v2_billing_events where event_id in ('evt_sectalk_initial_${suffix}','evt_sectalk_cancel_${suffix}');

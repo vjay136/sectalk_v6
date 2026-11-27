@@ -280,6 +280,7 @@ if(app) {
       await first.getByRole('navigation',{name:'SecTalk features'}).getByRole('button',{name:'Search',exact:true}).click()
       const submitSearch=page=>page.locator('form').getByRole('button',{name:'Search SecTalk',exact:true}).click()
       await first.getByRole('button',{name:'Direct messages',exact:true}).click()
+      await first.locator('details:has(.search-filters) > summary').click()
       await first.getByLabel('Search terms').fill('Library test message')
       await first.getByLabel('Sender handle').fill('@'+sender.handle)
       await first.getByLabel('Has file').check()
@@ -562,6 +563,7 @@ if(app) {
       const roomSearchBody='Room filter fixture @'+sender.handle
       data(await sender.client.rpc('st_v6_room_post',{p_room:searchableRoom.id,p_id:randomUUID(),p_body:roomSearchBody}))
       await first.getByRole('button',{name:'Room posts',exact:true}).click()
+      await first.locator('details:has(.search-filters) > summary').click()
       await first.getByLabel('Room',{exact:true}).selectOption(searchableRoom.id)
       await first.getByLabel('Mentions me').check()
       await submitSearch(first)

@@ -1,5 +1,7 @@
 import { liveKitControlUrl } from './livekit-control-url'
 import { meetingArtifactViewer } from './meeting-artifact-viewer'
+import { meetingBindingAttribute, parseMeetingMediaIdentity } from './meeting-media-identity'
+import { supabaseApiFetch } from './supabase-api-fetch.mjs'
 import { createClient } from '@supabase/supabase-js'
 import {
   AudioCodec, EgressClient, EgressStatus, EncodedFileType, ParticipantInfo_State,
@@ -34,7 +36,8 @@ export function recordingServices() {
   if (!authUrl || !publicKey || !serviceKey || !endpoint || !accessKey || !s3Secret || !webhook || !livekit || !apiKey || !secret) return null
   const storageHeaders = { Authorization: 'Bearer '+serviceKey, apikey: serviceKey }
   const authOptions = { persistSession: false, autoRefreshToken: false }
-  const storage = createClient(authUrl, serviceKey, { auth: authOptions })
+  const storageFetch = supabaseApiFetch(serviceKey)
+  const storage = createClient(authUrl, serviceKey, { auth: authOptions, global: { fetch: storageFetch } })
   const provider = liveKitControlUrl(livekit)
   const rooms = new RoomServiceClient(provider, apiKey, secret, { requestTimeout: 5 })
   const egress = new EgressClient(egressOverride?.trim() || provider, apiKey, secret, { requestTimeout: 8 })
@@ -66,10 +69,13 @@ export function recordingServices() {
     const cameras: string[] = []
     for (const person of members) {
       if (person.state !== ParticipantInfo_State.ACTIVE || person.kind === 2) continue
-      if (!recordingId.test(person.identity) || !person.sid) throw new Error('Unrecognized participant')
-      roster[person.identity] = person.sid
+      const identity = parseMeetingMediaIdentity(person.identity)
+      if (!identity || !person.sid ||
+        (identity.binding && person.attributes[meetingBindingAttribute] !== identity.binding) ||
+        Object.hasOwn(roster, identity.actor)) throw new Error('Unrecognized recording roster')
+      roster[identity.actor] = person.sid
       for (const track of person.tracks) if (track.source === TrackSource.MICROPHONE && track.sid) microphones.push(track.sid)
-      if (person.identity === cameraOwner) {
+      if (identity.actor === cameraOwner) {
         for (const track of person.tracks) {
           if (track.source === TrackSource.CAMERA && track.sid && !track.muted) cameras.push(track.sid)
         }
@@ -161,7 +167,7 @@ export function recordingServices() {
   }
 
   function download(row: RecordRow, signal: AbortSignal) {
-    return fetch(new URL('/storage/v1/object/authenticated/'+bucket+'/'+path(row), authUrl), {
+    return storageFetch(new URL('/storage/v1/object/authenticated/'+bucket+'/'+path(row), authUrl), {
       headers: storageHeaders,
       cache: 'no-store', signal,
     })

@@ -6,7 +6,8 @@ import { createClient } from '@supabase/supabase-js'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
-assert.equal(app.origin, 'http://127.0.0.1:3532')
+assert.equal(app.hostname, '127.0.0.1')
+assert.equal(app.protocol, 'http:')
 assert.equal(supabase.origin, 'http://127.0.0.1:55321')
 const fixtureToken = process.env.SECTALK_URL_INSPECTION_WORKER_TOKEN
 assert.match(fixtureToken, /^[A-Za-z0-9_-]{24,128}$/)
@@ -63,6 +64,10 @@ try {
   const inspector = page.getByRole('region',{ name:'URL inspection', exact:true })
   const address = inspector.getByLabel('Web address',{exact:true})
   await address.fill('https://approved-a.example.invalid/start?opaque=never-send#unknown-fragment')
+  assert.deepEqual(await destinationHits(),[])
+  await inspector.getByRole('button',{name:'Check recorded risk',exact:true}).click()
+  await inspector.getByText('SecTalk checked its safety records.',{exact:true}).waitFor()
+  await inspector.getByText(/No active SecTalk record matched/).waitFor()
   assert.deepEqual(await destinationHits(),[])
   await inspector.getByRole('button',{name:'Inspect URL',exact:true}).click()
   await inspector.getByText(/The worker checked response headers/).waitFor()

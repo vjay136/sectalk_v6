@@ -6,7 +6,7 @@ import {useSensitiveAction} from './sensitive-action'
 
 type TrialPlan='professional'|'business'
 type TrialStatus={state:'active'|'used'|'subscribed'|'pending'|'eligible';plan:TrialPlan|null;
-  expires_at:string|null;reserved_until:string|null;policy:'optional'|'required'|'unavailable'}
+  expires_at:string|null;reserved_until:string|null;policy:'optional'|'required'|'unavailable';billingPaused?:boolean}
 const planNames={professional:'Professional',business:'Business (Team)'}
 
 export function WorkspaceTrial({workspace}:{workspace:string}) {
@@ -63,6 +63,8 @@ export function WorkspaceTrial({workspace}:{workspace:string}) {
     }catch(cause){setError(cause instanceof Error?cause.message:'The trial request could not be completed.')}
     finally{setBusy(false)}
   }
+
+  if(status?.billingPaused)return <p className="release-info">Workspaces are on the Free plan during the v6 pilot.</p>
 
   return <section className="release-section" aria-label="Workspace trial">
     <h2>Workspace trial</h2><p>Try Professional or Business for 14 days. Each workspace can start one trial.</p>

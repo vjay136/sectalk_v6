@@ -2,6 +2,12 @@
 
 This standalone Gradle project launches the existing free SecTalk web app as a Trusted Web Activity (TWA) with [Android Browser Helper 2.8.0](https://github.com/GoogleChrome/android-browser-helper). It uses the web app's account, data, and Supabase backend and ships no separate backend credentials. The only launch origin is `https://sectalk-v6-pilot.vercel.app`. Android handles supported account, invitation, guest, and shared-file links for that origin once verified. Other links continue through the browser. If TWA verification or browser support is unavailable, the app uses a browser Custom Tab or the installed browser. No embedded WebView is configured.
 
+## Incoming call alerts
+
+In SecTalk, open **Notifications → Preferences → Browser push** and allow notifications when prompted. The TWA delegates notifications from its verified browser to the SecTalk package. Android controls alert sound and vibration based on device settings, permissions and Do Not Disturb. Tapping the alert opens SecTalk, where an active call can be answered before it expires.
+
+To verify a signed build with hosted push enabled, sign in as a dummy recipient, grant notifications from that setting, then send the app to the background with Home. From a second signed-in client, place an audio call and then a video call. For each, verify that Android posts the alert under SecTalk, the device plays the permitted notification sound, and tapping the alert opens the ringing call. Repeat with notifications denied to verify Android honors the setting.
+
 ## Build and test
 
 Use JDK 17, Gradle 8.13, Android SDK Platform 36, and Build Tools 35.0.0. Set `ANDROID_HOME` to the SDK path or select the SDK in Android Studio. From `apps/android` run:

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
 import { useCalling } from '../lib/calling'
-import { useCallSounds } from '../lib/call-sounds'
+import { useCallSounds, type CallAudio } from '../lib/call-sounds'
 import { MessageSafetyWarning } from './message-safety-warning'
 import { ProtectedMessageText } from './protected-message-text'
 import { MessageFormatting, RichMessage } from './rich-message'
@@ -23,11 +23,13 @@ import { FilesLibrary } from './files-library'
 import { GlobalSearch, Notifications } from './discover'
 import { InProductHelp } from './in-product-help'
 import { ForwardMessageDialog, type ForwardDestination } from './forward-message'
+import { ForwardProvenance, MessageAdvisory, MessageForwardDetails, MessageSafetyIndicator, useForwardSummaries } from './forward-provenance'
 import { useLocale } from './locale-provider'
 import { meetingFromQuery } from '../lib/meeting-calendar'
 import { useWorkspaceContext } from './workspace-context'
 import { ScopedTasks } from './scoped-tasks'
-import { SectionTabs } from './section-tabs'
+import { CountBadge, SectionTabs } from './section-tabs'
+import { useNotificationCounts } from '../lib/use-notification-counts'
 import { NetworkDiagnostics } from './network-diagnostics'
 import { GroupCalls } from './group-calls'
 import { GroupChat } from './group-chat'
@@ -41,6 +43,8 @@ import { downloadChatFile, extensions, formatChatFileBytes, getChatFileCapacity,
 import { EmojiText } from './emoji-text'
 import { SavedMessages, setSavedMessage } from './saved-messages'
 import { ProfileActivity, ProfileAppearance, useProfileExtras } from './profile-settings'
+import { ProfileRingtones } from './profile-ringtones'
+import { useProfileRingtone } from '../lib/profile-ringtones'
 import { Avatar } from './avatar'
 import { useContactPhotos } from './contact-photos'
 import { AccountMfa } from './account-mfa'
@@ -59,10 +63,21 @@ const Friends=dynamic(()=>import('./friends').then(module=>module.Friends))
 const DiscoverySettings=dynamic(()=>import('./friends').then(module=>module.DiscoverySettings))
 
 type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id: string | null; latest_at: string | null }
-type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'|'invisible'; expires_at:string }
+type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'|'invisible'; expires_at:string; automatic:boolean }
+const automaticAwayWindow = 40000
+const activityIdleLimit = 120000
+
+function visiblePresence(row: Presence | undefined) {
+  if (!row || row.state==='offline' || row.state==='invisible') return null
+  const remaining = Date.parse(row.expires_at) - Date.now()
+  if (remaining <= 0) return null
+  return row.automatic && row.state==='online' && remaining <= automaticAwayWindow ? 'away' : row.state
+}
 type PresenceSettings = { required: boolean; sharing: boolean }
 
-export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string; workspaceSession:string|null; openWorkspaces:boolean }) {
+export function Inbox({ user, workspaceSession, openWorkspaces, callAudio }: {
+  user: string; workspaceSession: string | null; openWorkspaces: boolean; callAudio: CallAudio
+}) {
   const accountAppearance = useAccountAppearance(user)
   const { t } = useLocale()
   const {reload:reloadWorkspaces,select:selectWorkspace}=useWorkspaceContext()
@@ -72,6 +87,8 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   const [blocks, setBlocks] = useState<string[]>([])
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
+  const [conversationTools, setConversationTools] = useState(false)
+  const conversationToolsTrigger = useRef<HTMLButtonElement>(null)
   const [requestedMeeting,setRequestedMeeting] = useState<string|null>(()=>typeof window==='undefined'?null:meetingFromQuery(window.location.search))
   const [requestedRoom,setRequestedRoom] = useState<{workspace:string;id:string}|null>(null)
   const [tab, setTab] = useState<'inbox' | 'group-chats' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
@@ -87,7 +104,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   const [chatTasks,setChatTasks]=useState(false)
   const [secureChat,setSecureChat]=useState<string|null>(null)
   const [sourceTask,setSourceTask]=useState<string|null>(null)
-  const [profileTab, setProfileTab] = useState<'account' | 'security' | 'sessions' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help' | 'appearance' | 'privacy'>('account')
+  const [profileTab, setProfileTab] = useState<'account' | 'security' | 'sessions' | 'availability' | 'discovery' | 'activity' | 'blocked' | 'help' | 'appearance' | 'privacy' | 'ringtones'>('account')
   const [managedBlock,setManagedBlock]=useState<Chat|null>(null)
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
@@ -101,11 +118,15 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   const [working, setWorking] = useState(false)
   const [presence,setPresence] = useState<Record<string,Presence>>({})
   const [presenceSettings,setPresenceSettings] = useState<PresenceSettings | null>(null)
+  const lastActivity = useRef(Date.now())
+  const automaticPresence = presence[user]?.automatic ?? true
   const [inboxStatus, setInboxStatus] = useState<Record<string, InboxStatus>>({})
   const activeChat = useRef<string | null>(null)
   const announced = useRef(new Map<string, string>())
   const readVersion = useRef(0)
   const [hints] = useState(() => new EventTarget())
+  const notificationCounts = useNotificationCounts(user, hints)
+  const unreadNotifications = notificationCounts.meetings + notificationCounts.mentions + notificationCounts.tasks
   const announceAlert = useCallback((message: string, priority: unknown) => {
     if (priority === 'high' || priority === 'critical') {
       setPriorityNotice(current => current?.priority === 'critical' && priority === 'high' ? current : {message, priority})
@@ -136,11 +157,12 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
 
   const refresh = useCallback(async () => {
     const version = ++readVersion.current
+    const deadline = AbortSignal.timeout(12000)
     const [own, related, muted, role] = await Promise.all([
-      db!.from('st_profiles').select('*').eq('id', user).maybeSingle(),
-      db!.from('st_chats').select('*').order('updated_at', { ascending: false }).limit(250),
-      db!.from('st_blocks').select('target'),
-      db!.rpc('st_staff_status'),
+      db!.from('st_profiles').select('*').eq('id', user).abortSignal(deadline).maybeSingle(),
+      db!.from('st_chats').select('*').order('updated_at', { ascending: false }).limit(250).abortSignal(deadline),
+      db!.from('st_blocks').select('target').abortSignal(deadline),
+      db!.rpc('st_staff_status').abortSignal(deadline),
     ])
     if (version !== readVersion.current) return
     if (own.error || related.error || muted.error || role.error) {
@@ -155,13 +177,13 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
     const ids = [...new Set(list.map(row => peerId(row, user)))]
     const [people,state,settings] = await Promise.all([
       ids.length ? db!.from('st_profiles').select('*').in('id', ids) : Promise.resolve({data:[]}),
-      db!.from('st_v3_presence').select('user_id,state,expires_at').in('user_id',[user,...ids]),
+      db!.from('st_v3_presence').select('user_id,state,expires_at,automatic').in('user_id',[user,...ids]),
       db!.rpc('st_v6_presence_settings'),
     ])
     if (version !== readVersion.current) return
     if (people.data) setProfiles(Object.fromEntries(people.data.map(person => [person.id, person])))
-    setPresence(Object.fromEntries(((state.data??[]) as Presence[]).map(row=>[row.user_id,row])))
-    setPresenceSettings(settings.data as PresenceSettings | null)
+    if (state.data) setPresence(Object.fromEntries((state.data as Presence[]).map(row=>[row.user_id,row])))
+    if (!settings.error) setPresenceSettings(settings.data as PresenceSettings | null)
   }, [user])
 
   useEffect(() => {
@@ -268,6 +290,9 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       .on('broadcast', { event: 'chat_activity' }, ({ payload }) => {
         if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('chat_activity', { data: payload.chat_id }))
       })
+      .on('broadcast', { event: 'forward_lineage' }, ({ payload }) => {
+        if (typeof payload?.chat_id === 'string') hints.dispatchEvent(new MessageEvent('forward_lineage', { data: payload.chat_id }))
+      })
       .on('broadcast', { event: 'signal' }, ({ payload }) => {
         if (typeof payload?.call_id === 'string') hints.dispatchEvent(new MessageEvent('signal', { data: payload.call_id }))
       })
@@ -318,22 +343,50 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   },[])
   useEffect(() => {
     if (!profile) return
-    const ping=async()=>{if(document.visibilityState==='visible') await db!.rpc('st_v3_ping')}
-    ping()
+    let running=false
+    let active=true
+    let lastPing=0
+    const ping=async()=>{
+      if(running||document.visibilityState!=='visible'||!navigator.onLine)return
+      const now=Date.now()
+      if(now-lastPing<35000 || (automaticPresence && now-lastActivity.current>=activityIdleLimit)) return
+      lastPing=now
+      running=true
+      try {
+        const result=await db!.rpc('st_v3_ping')
+        if(active&&!result.error)await refresh()
+      } finally {running=false}
+    }
+    const recordActivity=()=>{
+      lastActivity.current=Date.now()
+      void ping()
+    }
+    const visible=()=>{
+      if(document.visibilityState==='visible')recordActivity()
+    }
+    void ping()
     const timer=window.setInterval(ping,45000)
-    const disconnect=onReconnect(ping)
-    return ()=>{disconnect();window.clearInterval(timer)}
-  },[profile?.id])
+    for(const event of ['pointerdown','keydown','scroll']) window.addEventListener(event,recordActivity,{passive:true,capture:true})
+    document.addEventListener('visibilitychange',visible)
+    window.addEventListener('online',ping)
+    return ()=>{
+      active=false
+      window.clearInterval(timer)
+      for(const event of ['pointerdown','keydown','scroll']) window.removeEventListener(event,recordActivity,true)
+      document.removeEventListener('visibilitychange',visible)
+      window.removeEventListener('online',ping)
+    }
+  },[profile?.id,refresh,automaticPresence])
 
   const chat = chats.find(item => item.id === selected)
   const peer = chat ? profiles[peerId(chat, user)] : undefined
   const peerPresence = peer ? presence[peer.id] : undefined
-  const rawPeerState = peerPresence && Date.parse(peerPresence.expires_at)>Date.now()
-    && peerPresence.state!=='offline' && peerPresence.state!=='invisible' ? peerPresence.state : null
-  const ownPresence = presence[user]?.state ?? 'offline'
+  const rawPeerState = visiblePresence(peerPresence)
+  const ownPresence = automaticPresence ? 'auto' : presence[user]?.state ?? 'offline'
   const mustResumeSharing = presenceSettings?.required && (!presenceSettings.sharing || ownPresence==='invisible')
   const peerPresenceId=peerPresence?.user_id
   const peerExpiresAt=peerPresence?.expires_at
+  const peerAutomatic=peerPresence?.automatic
   useEffect(()=>{
     if(!peerPresenceId||!peerExpiresAt)return
     const expiresIn=Date.parse(peerExpiresAt)-Date.now()
@@ -349,6 +402,13 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
     },expiresIn+20)
     return ()=>window.clearTimeout(timer)
   },[peerPresenceId,peerExpiresAt,refresh])
+  useEffect(()=>{
+    if(!peerAutomatic||!peerExpiresAt)return
+    const untilAway=Date.parse(peerExpiresAt)-Date.now()-automaticAwayWindow
+    if(untilAway<=0)return
+    const timer=window.setTimeout(()=>setPresence(previous=>({...previous})),untilAway+20)
+    return ()=>window.clearTimeout(timer)
+  },[peerAutomatic,peerExpiresAt])
   const blocked = chat ? blocks.includes(peerId(chat, user)) : false
   const acceptedChat=chat?.status==='accepted'&&!blocked?chat.id:null
   const myExtras=useProfileExtras(profile?.id)
@@ -358,7 +418,8 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   const incoming=call.call?.status==='ringing' && call.call.callee===user ? call.call : null
   const quietIncoming=useQuietIncoming(incoming,hints)
   const callTone=call.call?.status==='ringing' && !quietIncoming ? (incoming?'ringtone':'ringback') : null
-  const callSounds=useCallSounds(callTone,call.call?.id,call.call?.expires_at)
+  const ringtone=useProfileRingtone(user)
+  const callSounds=useCallSounds(callAudio,callTone,call.call?.id,call.call?.expires_at,ringtone.settings)
   useEffect(()=>{
     if(!acceptedChat) return
     let active=true
@@ -376,6 +437,9 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   const lastSeenLabel=lastSeen&&lastSeen.chat===acceptedChat
     ? 'Last seen '+new Date(lastSeen.at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : ''
   const requests = chats.filter(item => item.status === 'pending' && item.requester !== user && !blocks.includes(peerId(item, user)))
+  const unreadChats = chats.filter(item => item.status === 'accepted' && inboxStatus[item.id]?.unread &&
+    !blocks.includes(peerId(item,user))).length
+  const incomingCall = call.call?.status === 'ringing' && call.call.callee === user ? 1 : 0
   const visible = chats.filter(item => (mode==='chats'?item.status==='accepted':
     item.status==='pending'&&(mode==='sent'?item.requester===user:item.requester!==user&&!blocks.includes(peerId(item,user)))) &&
     (!search || [profiles[peerId(item, user)]?.name, profiles[peerId(item, user)]?.handle]
@@ -420,6 +484,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
 
   function select(id: string | null) {
     setSelected(id)
+    setConversationTools(false)
     setBlockCheck(false)
     setChatTasks(false)
     setSourceTask(null)
@@ -475,6 +540,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   if (!profile) return <main className="center-page"><Brand /><ProfileForm profile={null} onSave={async()=>{setOnboarding(true);await refresh()}}/><button className="text-button" onClick={() => void db!.auth.signOut({ scope: 'local' })}>Sign out</button></main>
   if(onboarding) return <main className="discovery-onboarding"><Brand/><DiscoverySettings user={user} complete={()=>setOnboarding(false)}/></main>
 
+  const inMoreSection = !['inbox','saved','friends','calls','safety'].includes(tab)
   return <main className={'workspace ' + (selected && tab === 'inbox' ? 'thread-open' : '') + (tab !== 'inbox' ? ' full-panel' : '')}>
     <nav className="rail messenger-nav" aria-label={t('features')} onKeyDown={event=>{
       if (event.key === 'Escape' && navigationOpen) {
@@ -483,27 +549,33 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       }
     }}>
       <Brand />
-      <div className="messenger-primary" onClick={() => setNavigationOpen(false)}>
-        <button className={tab === 'inbox' || tab === 'saved' ? 'active' : ''} aria-current={tab === 'inbox' || tab === 'saved' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>{t('inbox')}</span></button>
-        <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>{t('friends')}</span></button>
-        <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>{t('calls')}</span></button>
+      <div className="messenger-primary" onClick={() => {setNavigationOpen(false); setConversationTools(false)}}>
+        <button className={tab === 'inbox' || tab === 'saved' ? 'active' : ''} aria-current={tab === 'inbox' || tab === 'saved' ? 'page' : undefined} aria-description={unreadChats ? `${unreadChats} unread chats` : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>{t('inbox')}</span><CountBadge count={unreadChats}/></button>
+        <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} aria-description={requests.length ? `${requests.length} incoming contact requests` : undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>{t('friends')}</span><CountBadge count={requests.length}/></button>
+        <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} aria-description={incomingCall ? '1 incoming call' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>{t('calls')}</span><CountBadge count={incomingCall}/></button>
         <button className={tab === 'safety' ? 'active' : ''} aria-current={tab === 'safety' ? 'page' : undefined} onClick={() => setTab('safety')}><Shield size={20} /><span>{t('safety')}</span></button>
       </div>
-      <button ref={navigationTrigger} type="button" className="messenger-more" aria-expanded={navigationOpen}
-        aria-controls="messenger-sections" onClick={() => setNavigationOpen(value => !value)}>
-        <MoreHorizontal size={21}/><span>More</span>
+      <button ref={navigationTrigger} type="button" className={inMoreSection ? 'messenger-more active' : 'messenger-more'} aria-expanded={navigationOpen}
+        aria-controls="messenger-sections" aria-description={unreadNotifications ? `${unreadNotifications} unread notifications` : undefined} onClick={() => setNavigationOpen(value => !value)}>
+        <MoreHorizontal size={21}/><span>More</span><CountBadge count={unreadNotifications}/>
       </button>
+      {navigationOpen && <div className="messenger-sheet-scrim" aria-hidden="true" onClick={() => {
+        setNavigationOpen(false)
+        navigationTrigger.current?.focus()
+      }} />}
       <div id="messenger-sections" className="messenger-sections" data-open={navigationOpen}
         onClick={event=>{
           if (event.target instanceof Element && event.target.closest('button')) {
             setNavigationOpen(false)
+            setConversationTools(false)
             if (navigationTrigger.current?.getClientRects().length) navigationTrigger.current.focus()
           }
         }}>
+        <p className="messenger-sheet-title">More tools</p>
         <div className="messenger-nav-group" role="group" aria-label="Communication tools">
         <button className={tab === 'group-chats' ? 'active' : ''} aria-current={tab === 'group-chats' ? 'page' : undefined} onClick={() => setTab('group-chats')}><Users size={19}/><span>Group chats</span></button>
         <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} onClick={()=>showSearch()}><Search size={19}/><span>{t('search')}</span></button>
-        <button className={tab==='notifications'?'active':''} aria-current={tab==='notifications'?'page':undefined} onClick={()=>setTab('notifications')}><Bell size={19}/><span>{t('notifications')}</span></button>
+        <button className={tab==='notifications'?'active':''} aria-current={tab==='notifications'?'page':undefined} aria-description={unreadNotifications ? `${unreadNotifications} unread notifications` : undefined} onClick={()=>setTab('notifications')}><Bell size={19}/><span>{t('notifications')}</span><CountBadge count={unreadNotifications}/></button>
         </div>
         <div className="messenger-nav-group" role="group" aria-label="Workspace tools">
           <p>Workspace</p>
@@ -523,9 +595,12 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
     </nav>
     <aside className="inbox-list">
       <header><div className="inbox-mobile-brand"><Brand /></div><div className="inbox-heading"><h1>{t('inbox')}</h1><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> {t('findFriends')}</button></div>
-        <div className="input-icon search"><Search size={17} /><input aria-label="Search contacts" placeholder="Search conversations" value={search} onChange={e => setSearch(e.target.value)} /></div>
+        <button type="button" className="inbox-global-search" onClick={()=>showSearch()}>
+          <Search size={18} aria-hidden="true" /><span>Search across SecTalk</span>
+        </button>
+        <div className="input-icon search"><Search size={17} /><input aria-label="Search contacts" placeholder="Filter conversations" value={search} onChange={e => setSearch(e.target.value)} /></div>
       </header>
-      <div className="tabs" aria-label="Conversation filters">
+      <div className="tabs portrait-tabs" aria-label="Conversation filters">
         <button aria-pressed={mode === 'chats'} className={mode === 'chats' ? 'active' : ''} onClick={() => setMode('chats')}>Chats</button>
         <button aria-pressed={mode === 'requests'} className={mode === 'requests' ? 'active' : ''} onClick={openRequests}>Incoming {requests.length > 0 && <span>{requests.length}</span>}</button>
         <button aria-pressed={mode==='sent'} className={mode==='sent'?'active':''} onClick={()=>{setMode('sent');select(null)}}>Sent</button>
@@ -547,7 +622,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       <div className="list-footer"><Avatar name={profile.name} photo={myExtras.photo}/><div><strong>{profile.name}</strong><small>@{profile.handle}</small></div><span className={'status-dot ' + (online || broadcastOnline ? '' : 'offline')} title={online || broadcastOnline ? 'Live updates connected' : 'Syncing'} /></div>
     </aside>
     {tab === 'profile' ? <section className="content-page"><h1>{t('profile')}</h1>
-      <SectionTabs label={t('profileSections')} value={profileTab} onChange={setProfileTab} options={ [['account',t('account')],['security',t('accountSecurity')],['sessions','Devices and sessions'],['availability',t('availability')],['discovery',t('discovery')],['activity',t('activityReports')],['blocked',t('blockedContacts')],['appearance','Appearance'],['privacy','Privacy and data'],['help',t('help')]] }/>
+      <SectionTabs label={t('profileSections')} value={profileTab} onChange={setProfileTab} options={ [['account',t('account')],['security',t('accountSecurity')],['sessions','Devices and sessions'],['availability',t('availability')],['discovery',t('discovery')],['activity',t('activityReports')],['blocked',t('blockedContacts')],['appearance','Appearance'],['ringtones','Ringtones'],['privacy','Privacy and data'],['help',t('help')]] }/>
       <nav className="release-flex" aria-label="Related account settings">
         <button className="text-button" type="button" onClick={() => setTab('notifications')}>Open notification settings</button>
         <button className="text-button" type="button" onClick={() => setTab('billing')}>Open billing settings</button>
@@ -558,6 +633,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       }}><Copy size={15} /> Copy handle</button></div>
       <ProfileForm profile={profile} onSave={refresh} /><ProfileAppearance key={user} user={user} name={profile.name} profile={myExtras}/></> :
       profileTab==='appearance'?<AccountAppearance settings={accountAppearance}/>:
+      profileTab==='ringtones'?<ProfileRingtones key={user} audio={callAudio} preference={ringtone}/>:
       profileTab==='privacy'?<AccountData key={user} user={user}/>:
       profileTab==='security'?<AccountMfa hints={hints}/>:
       profileTab==='sessions'?<><DeviceSessions hints={hints}/><DeviceRegistry hints={hints}/><OlmDeviceReadiness key={user} user={user} hints={hints}/></>:
@@ -581,6 +657,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       <div className="panel release-panel"><label>Availability for approved contacts
         <select value={mustResumeSharing?'':ownPresence} disabled={working||!presenceSettings} onChange={event=>void run('st_v3_set_presence',{p_state:event.target.value})}>
           {mustResumeSharing&&<option value="" disabled>Choose an availability state</option>}
+          <option value="auto">Automatic (based on activity)</option>
           <option value="offline">Offline (hidden)</option><option value="online">Online</option><option value="away">Away</option><option value="busy">Busy</option>
           {presenceSettings&&!presenceSettings.required&&<option value="invisible">Invisible</option>}
         </select></label>
@@ -595,7 +672,8 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
         <p>Accepted contacts can see your last activity for up to seven days when both availability and last seen are shared.</p>
         <QuietHoursSettings chat={null} hints={hints}/></div>}
       </section> :
-      tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}/>:
+      tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}
+        openChat={id=>{setMode('chats');select(id)}}/>:
       tab==='saved'?<SavedMessages openChat={select}/>:
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} hints={hints} /> :
       tab==='workspaces'||tab==='rooms'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} requestedRoom={tab==='rooms'?requestedRoom:null} /> :
@@ -611,37 +689,53 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       tab === 'vault' ? <FilesLibrary user={user} openChat={select}/> :
       tab === 'search' ? <GlobalSearch key={paletteSearch.sequence} initialQuery={paletteSearch.query} openChat={select} openMeeting={openMeeting}
         openRoom={openRoom} openPalette={()=>setPaletteOpen(true)}/> :
-      tab === 'notifications' ? <Notifications user={user} hints={hints} openMeeting={openMeeting} openRoom={openRoom} openChat={select}/> :
+      tab === 'notifications' ? <Notifications user={user} hints={hints} counts={notificationCounts} openMeeting={openMeeting} openRoom={openRoom} openChat={select}/> :
       tab === 'group-chats' ? <GroupChat key={user} user={user} hints={hints} openDeviceSettings={() => { setProfileTab('sessions'); setTab('profile') }}
         contacts={chats.filter(chat => chat.status === 'accepted' && !blocks.includes(peerId(chat,user)))
           .map(chat => ({ id: peerId(chat,user), name: profiles[peerId(chat,user)]?.name || 'Contact' }))} /> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} contactPhoto={contactPhoto} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
-        <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={acceptedChat?contactPhoto(peerId(chat,user)):undefined}/>
-          <div><h2>{peer?.name || 'Contact'}</h2><p aria-label="Contact availability">{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : chat.status==='accepted' ? ['Offline',lastSeenLabel].filter(Boolean).join(' · ') : 'Contact request'}</p>
+        <header className="thread-header conversation-header" onKeyDown={event => {
+          if (event.key === 'Escape' && conversationTools && !event.defaultPrevented) {
+            setConversationTools(false)
+            conversationToolsTrigger.current?.focus()
+          }
+        }}><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={acceptedChat?contactPhoto(peerId(chat,user)):undefined}/>
+          <div className="conversation-identity"><h2>{peer?.name || 'Contact'}</h2><p aria-label="Contact availability">{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : chat.status==='accepted' ? ['Offline',lastSeenLabel].filter(Boolean).join(' · ') : 'Contact request'}</p>
             {statusMessage&&<p className="thread-profile-status" title={statusMessage}>{statusMessage}</p>}</div>
           <div className="thread-actions">
             {chat.status === 'accepted' && !blocked && <>
-              <button className="icon" aria-pressed={chatTasks} aria-label="Chat tasks" title="Chat tasks" onClick={()=>{
-                setChatTasks(!chatTasks);setSourceTask(null)
-              }}><ListChecks size={18}/></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start audio call" title="Start audio call" onClick={() => void call.start(chat.id, false)}><Phone size={18} /></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start video call" title="Start video call" onClick={() => void call.start(chat.id, true)}><Video size={20} /></button>
+            </>}
+            <button ref={conversationToolsTrigger} type="button" className="icon conversation-tools-trigger" aria-label="Conversation tools" aria-expanded={conversationTools} aria-controls="conversation-tools"
+              onClick={() => setConversationTools(value => !value)}><MoreHorizontal size={20}/></button>
+            <div id="conversation-tools" className="conversation-tools" data-open={conversationTools}>
+            {chat.status === 'accepted' && !blocked && <>
+              <button className="icon" aria-pressed={chatTasks} aria-label="Chat tasks" title="Chat tasks" onClick={()=>{
+                setChatTasks(!chatTasks);setSourceTask(null);setConversationTools(false)
+              }}><ListChecks size={18}/></button>
               <ContactKeyVerification key={peerId(chat,user)} owner={user} peer={peerId(chat,user)} name={peer?.name || 'your contact'} hints={hints}/>
               <button type="button" className="icon" aria-label="Secure direct messages" aria-pressed={secureChat===chat.id}
-                title="Secure direct messages" onClick={()=>setSecureChat(value=>value===chat.id?null:chat.id)}><LockKeyhole size={18}/></button>
-              <details className="call-menu">
+                title="Secure direct messages" onClick={()=>{setSecureChat(value=>value===chat.id?null:chat.id);setConversationTools(false)}}><LockKeyhole size={18}/></button>
+              <details className="call-menu" onKeyDown={event=>{
+                if (event.key !== 'Escape' || !event.currentTarget.open) return
+                event.preventDefault()
+                event.currentTarget.open=false
+                event.currentTarget.querySelector('summary')?.focus()
+              }}>
                 <summary className="icon" aria-label="Protected call options" title="Protected calls"><ShieldCheck size={18}/></summary>
                 <div className="message-menu-panel" style={{top:'100%',right:0,bottom:'auto'}}>
                   <button type="button" className="text-button" disabled={call.busy || !!call.call}
-                    onClick={()=>void call.start(chat.id,false,true)}>Start protected audio call</button>
+                    onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');setConversationTools(false);void call.start(chat.id,false,true)}}>Start protected audio call</button>
                   <button type="button" className="text-button" disabled={call.busy || !!call.call}
-                    onClick={()=>void call.start(chat.id,true,true)}>Start protected video call</button>
+                    onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');setConversationTools(false);void call.start(chat.id,true,true)}}>Start protected video call</button>
                 </div>
               </details>
             </>}
-            <button className="icon" title="Report contact" aria-label="Report contact" onClick={() => setReport({ chat: chat.id, message: null })}><Flag size={18} /></button>
-            <button className="icon" title={blocked ? 'Unblock contact' : 'Block contact'} aria-label={blocked ? 'Unblock contact' : 'Block contact'} onClick={() => setBlockCheck(true)}><Ban size={18} /></button>
+            <button className="icon" title="Report contact" aria-label="Report contact" onClick={() => {setConversationTools(false);setReport({ chat: chat.id, message: null })}}><Flag size={18} /></button>
+            <button className="icon" title={blocked ? 'Unblock contact' : 'Block contact'} aria-label={blocked ? 'Unblock contact' : 'Block contact'} onClick={() => {setConversationTools(false);setBlockCheck(true)}}><Ban size={18} /></button>
+            </div>
           </div>
         </header>
         {blockCheck && <div className="inline-warning"><span>{blocked ? 'Allow this contact to reach you again?' : 'Block new messages and calls from this contact?'}</span><button className="danger" disabled={working} onClick={() => void run('st_set_block', { p_chat: chat.id, p_block: !blocked }, () => { setBlockCheck(false); setNotice(blocked ? 'Contact unblocked.' : 'Contact blocked.') })}>{blocked ? 'Unblock' : 'Block'}</button><button className="secondary" onClick={() => setBlockCheck(false)}>Cancel</button></div>}
@@ -722,9 +816,9 @@ function Calls({ user, chats, profiles, blocks, state, contactPhoto, openChat, o
   const missed=(row:Call)=>row.end_reason==='missed'||(row.status==='ringing'&&Date.parse(row.expires_at)<=now)
   const visibleCalls = rows?.filter(row=>filter==='all'||(filter==='missed'?row.callee===user&&missed(row):row.video===(filter==='video')))
 
-  return <section className="content-page">
-    <header className="content-title"><div className="card-icon"><Phone size={22} /></div><div><h1>Calls</h1><p>Start a call from an approved conversation or return a recent call.</p></div></header>
-    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['missed','Missed'], ['audio', 'Audio'], ['video', 'Video'], ['groups','Groups'], ['diagnostics', 'Network diagnostics']] }/>
+  return <section className="content-page calls-page">
+    <header className="content-title"><div className="card-icon"><Phone size={22} /></div><div><h1>Calls</h1><p>Recent calls with approved contacts.</p></div></header>
+    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['missed','Missed'], ['audio', 'Audio'], ['video', 'Video'], ['groups','Groups'], ['diagnostics', <>Network<span className="visually-hidden"> diagnostics</span></>]] }/>
     {filter==='diagnostics' ? <NetworkDiagnostics inCall={Boolean(state.call)}/> : filter==='groups' ?
       <GroupCalls user={user} inDirectCall={Boolean(state.call)} contacts={chats.filter(chat=>chat.status==='accepted'&&!blocks.includes(peerId(chat,user)))
         .map(chat=>({id:peerId(chat,user),name:profiles[peerId(chat,user)]?.name || 'Contact'}))}/> : <div className="panel">
@@ -740,7 +834,7 @@ function Calls({ user, chats, profiles, blocks, state, contactPhoto, openChat, o
         const status=missed(row)?(incoming?'Missed':'No answer'):
           row.end_reason==='declined'?'Declined':row.end_reason==='cancelled'?'Cancelled':row.end_reason==='busy'?'Busy':
           row.status==='active'&&Date.parse(row.expires_at)>now?'In progress':row.status==='ringing'?'Ringing':'Ended'
-        return <div className="report-row" key={row.id}>
+        return <div className="report-row call-history-row" key={row.id}>
           <Avatar name={name} photo={reachable?contactPhoto(peer):undefined} />
           <div><strong>{name}</strong><small>{incoming ? 'Incoming' : 'Outgoing'} {row.media_protection===1?'protected ':''}{row.video ? 'video' : 'audio'} · {new Date(row.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</small><span className="call-state">{status}</span></div>
           {reachable && <span className="call-history-controls">
@@ -826,12 +920,17 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const [reactions, setReactions] = useState<Reaction[]>([])
   const [pin, setPin] = useState<Message | null>(null)
   const [showSearch, setShowSearch] = useState(false)
+  const [showThreadPreferences, setShowThreadPreferences] = useState(false)
   const [quietSettings, setQuietSettings] = useState(false)
   const [results, setResults] = useState<DirectMessage[] | null>(null)
+  const forwardSignals = useForwardSummaries('direct', chat.id, (results ?? messages).filter(message => !message.revoked_at), hints)
   const [editing, setEditing] = useState<Message | null>(null)
   const [forwarding, setForwarding] = useState<string | null>(null)
+  const [inspecting, setInspecting] = useState<string | null>(null)
   const [removing,setRemoving]=useState<{message:Message;action:'hide'|'revoke'}|null>(null)
   const [hidden,setHidden]=useState<string[]>([])
+  const inspected = (results ?? messages).find(message=>message.id===inspecting && !message.revoked_at && !hidden.includes(message.id) &&
+    (!message.expires_at || Date.parse(message.expires_at)>Date.now()))
   const [files,setFiles]=useState<Record<string,ChatFile>>({})
   const [attachment,setAttachment]=useState<{file:File;id:string}|null>(null)
   const [fileCapacity, setFileCapacity] = useState<ChatFileCapacity | null>(null)
@@ -1269,6 +1368,9 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   return <>
     <div className="thread-toolbar">
       <button type="button" className="secondary" aria-expanded={showSearch} onClick={() => { setShowSearch(!showSearch); setResults(null) }}><Search size={15}/> Search messages</button>
+      <button type="button" className="secondary thread-preferences-toggle" aria-expanded={showThreadPreferences} aria-controls="thread-preferences"
+        onClick={() => setShowThreadPreferences(value => !value)}>Chat settings</button>
+      <div id="thread-preferences" className="thread-preferences" data-open={showThreadPreferences}>
       <button type="button" className="secondary" aria-pressed={Boolean(activity?.muted)} disabled={blocked||!activity}
         onClick={() => void update('st_v6_set_quiet_mute', { p_chat: chat.id, p_muted: !activity?.muted })}>
         {activity?.muted ? <BellOff size={15}/> : <Bell size={15}/>} {activity?.muted ? 'Muted' : 'Mute'}
@@ -1290,6 +1392,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         }}>
         Share my read receipts
       </button>
+      </div>
     </div>
     {quietSettings && !blocked && <Dialog title="Chat quiet hours" close={()=>{setQuietSettings(false);void loadActivity()}}>
       <QuietHoursSettings chat={chat.id} hints={hints}/>
@@ -1328,6 +1431,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         (!message.expires_at||Date.parse(message.expires_at)>expiryClock)).map(message => {
         const own = message.sender === self
         const file=message.revoked_at?undefined:files[message.id]
+        const advisory = forwardSignals?.advisories.get(message.id)
+        const allowLinks = !blocked && advisory?.verdict !== 'warning' && advisory?.verdict !== 'blocked_link'
         const sourceQuote=message.reply_to?quotes[message.reply_to]:null
         const quote=message.reply_to&&!hidden.includes(message.reply_to)&&!revoked.current.has(message.reply_to)
           &&(!sourceQuote?.expires_at||Date.parse(sourceQuote.expires_at)>expiryClock)
@@ -1337,6 +1442,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         const selectedReactions = reactions.filter(reaction => reaction.message_id === message.id)
         return <div className={'message ' + (own ? 'own' : '')} key={message.id} data-sequence={message.sequence}>
           <div className="message-reaction-header"><strong className="message-sender">{own?selfName+' (you)':peerName}</strong>
+            {!message.revoked_at && <MessageSafetyIndicator body={message.body} advisory={advisory}
+              checked={forwardSignals?.checked.has(message.id)} open={() => setInspecting(message.id)} />}
             {!blocked&&!message.revoked_at&&<button className="small-icon add-reaction" type="button" title="Add reaction" aria-label="Add reaction"
               onClick={()=>setReacting(message.id)}><Smile size={16}/></button>}
           </div>
@@ -1357,17 +1464,18 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
           <div className={'bubble'+(message.revoked_at?' revoked-message':'')}>
             {message.voice_note&&!message.revoked_at ?
               <VoiceNotePlayer chat={chat.id} message={message.id} blocked={blocked} revision={Boolean(message.voice_transcript)}/> :
-              (!file||message.body!=='Attachment: '+file.filename)&&(message.revoked_at ? <EmojiText value={message.body}/> : own ? <RichMessage key={message.edited_at||message.created_at} value={message.body} account={self} mode="managed" allowLinks={!blocked}/> : <ProtectedMessageText key={message.edited_at||message.created_at} value={message.body} account={blocked?undefined:self}/>)}
+              (!file||message.body!=='Attachment: '+file.filename)&&(message.revoked_at ? <EmojiText value={message.body}/> : own ? <RichMessage key={message.edited_at||message.created_at} value={message.body} account={self} mode="managed" allowLinks={allowLinks}/> : <ProtectedMessageText key={message.edited_at||message.created_at} value={message.body} account={allowLinks?self:undefined}/>)}
             {file&&<button className="attachment-file" type="button" onClick={()=>void download(file)}>
               <Download size={16}/><span>{file.filename}<small>{Math.ceil(file.size_bytes/1024)} KiB</small></span>
             </button>}
           </div>
+          {!message.revoked_at && <MessageAdvisory advisory={advisory}/>}
           {!own&&!message.revoked_at&&<MessageSafetyWarning key={message.id+':'+(message.edited_at||message.created_at)}
             account={self} message={message.id} revision={message.edited_at||message.created_at} body={message.body} sender={message.sender}
             onReport={()=>onReport(message,file)}/>}
           <div className="message-meta"><time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
             {message.expires_at&&!message.revoked_at&&<span>Disappears at {formatTime(message.expires_at)}</span>}
-            {message.forwarded&&!message.revoked_at&&<span>Forwarded</span>}
+            {!message.revoked_at && <ForwardProvenance forwarded={!!message.forwarded} summary={forwardSignals?.summaries.get(message.id)}/>}
             {message.edited_at&&!message.revoked_at && (!blocked&&(own||activity?.share_peer_edit_history)?
               <button type="button" className="text-button" aria-label="View edit history" onClick={async () => {
               const { data, error } = await db!.from('st_v2_message_edits').select('id,body,created_at').eq('message_id', message.id).order('id', { ascending: false }).limit(25)
@@ -1391,6 +1499,8 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
                 {!file&&!message.voice_note&&!message.expires_at&&<button type="button" className="text-button" onClick={()=>setForwarding(message.id)}>Forward message</button>}
                 {own&&!file&&!message.voice_note&&!message.expires_at&&Date.now()-Date.parse(message.created_at)<86400000&&<button type="button" className="text-button" onClick={()=>setEditing(message)}>Edit message</button>}</>}
                 {file&&<button type="button" className="text-button" onClick={()=>void download(file)}>Download attachment</button>}
+                {!message.revoked_at&&!message.expires_at&&<button type="button" className="text-button"
+                  onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');setInspecting(message.id)}}>Message details</button>}
                 {!message.revoked_at&&!message.expires_at&&<button type="button" className="text-button" onClick={async()=>{
                   const result=await setSavedMessage(message.id,true)
                   inform(result.error?'Could not save this message.':'Message saved. Find it in Inbox → Saved messages.')
@@ -1429,6 +1539,11 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     {forwarding&&<ForwardMessageDialog key={forwarding}
       source={{kind:'direct',conversation:chat.id,message:forwarding,destinations:forwardDestinations}}
       close={()=>setForwarding(null)} onSent={()=>inform('Message forwarded.')}/>}
+    {inspected&&<Dialog title="Message details" close={()=>setInspecting(null)}>
+      <MessageForwardDetails sender={inspected.sender===self?selfName:peerName} sentAt={inspected.created_at}
+        forwarded={Boolean(inspected.forwarded)} summary={forwardSignals?.summaries.get(inspected.id)}
+        advisory={forwardSignals?.advisories.get(inspected.id)} body={inspected.body} checked={forwardSignals?.checked.has(inspected.id)}/>
+    </Dialog>}
     {removing&&<Dialog title={removing.action==='hide'?'Delete for me?':'Revoke for everyone?'} close={()=>setRemoving(null)}>
       <p>{removing.action==='hide'?'This message will be hidden in your SecTalk chat.':'SecTalk will replace this message with a removal notice. Copies already saved and evidence already reported can remain.'}</p>
       <button type="button" className="danger" disabled={busy} onClick={async()=>{
@@ -1479,6 +1594,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       <ScheduledMessages chat={chat.id} draft={draft.trim()} schedule={schedule} canSchedule={!blocked&&Boolean(draft.trim())&&!replying&&!attachment&&!expireAfter}/>
     </Dialog>}
     <DraftStatus draft={syncedDraft}/>
+    <div className="thread-writing-tools">
     {!blocked && fileCapacity && <p id="attachment-capacity" className="attachment-capacity muted">
       {formatChatFileBytes(fileCapacity.max_file_bytes)} per attachment · {formatChatFileBytes(Math.max(0,
         fileCapacity.max_storage_bytes - fileCapacity.stored_bytes - fileCapacity.reserved_bytes))} storage available
@@ -1491,6 +1607,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     <VoiceNoteRecorder key={chat.id} chat={chat.id} blocked={blocked} timer={expireAfter}
       disabled={busy||Boolean(attachment)||Boolean(replying)} onSent={()=>void load()}/>
     {!blocked&&<MessageFormatting account={self} mode='managed'/>}
+    </div>
     <form className="composer" onSubmit={send}>
       <input ref={filePicker} hidden type="file" accept={extensions} onChange={event=>{
         const file=event.target.files?.[0]

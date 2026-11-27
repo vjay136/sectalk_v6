@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { ParticipantInfo_State, RoomServiceClient, TrackSource } from 'livekit-server-sdk'
 import { meetingMediaIdentity } from '../../../../lib/meeting-media-identity'
+import { supabaseApiFetch } from '../../../../lib/supabase-api-fetch.mjs'
+import { speechWorkerConfig } from '../../../../lib/speech-worker-config.mjs'
+import { readBoundedText } from '../../../../lib/request-body'
 
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control':'private, no-store', Vary:'Authorization' }
@@ -14,13 +17,10 @@ const fail = (status: number) => Response.json({ error:status===401 ? 'Sign in r
 
 function config() {
   const { NEXT_PUBLIC_SUPABASE_URL:url, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:key, MEETING_CAPTIONS_SERVICE_KEY:service,
-    MEETING_CAPTIONS_WORKER_URL:worker, MEETING_CAPTIONS_WORKER_TOKEN:secret,
     LIVEKIT_URL:livekit, LIVEKIT_API_KEY:roomKey, LIVEKIT_API_SECRET:roomSecret } = process.env
-  if (!url || !key || !service || !worker || !secret || secret.length<24 || !livekit || !roomKey || !roomSecret) return null
-  const endpoint = URL.parse(worker)
-  if (!endpoint || endpoint.protocol!=='http:' || endpoint.hostname!=='127.0.0.1' || !endpoint.port ||
-      endpoint.username || endpoint.password || endpoint.pathname!=='/transcribe' || endpoint.search || endpoint.hash) return null
-  return { url,key,service,endpoint,secret,rooms:new RoomServiceClient(liveKitControlUrl(livekit),roomKey,roomSecret,{requestTimeout:5}) }
+  const worker = speechWorkerConfig()
+  if (!url || !key || !service || !worker || !livekit || !roomKey || !roomSecret) return null
+  return { url,key,service,...worker,rooms:new RoomServiceClient(liveKitControlUrl(livekit),roomKey,roomSecret,{requestTimeout:5}) }
 }
 
 async function session(request: Request) {
@@ -34,7 +34,7 @@ async function session(request: Request) {
   const actor = data.user.id
   const { rooms } = services
   const memberSession = createClient(services.url,services.key,{auth,global:{headers:{Authorization:'Bearer '+token}}})
-  const db = createClient(services.url,services.service,{auth})
+  const db = createClient(services.url,services.service,{auth,global:{fetch:supabaseApiFetch(services.service)}})
   async function participant(meeting: string) {
     const binding = await memberSession.rpc('st_v8_livekit_bind_member',{p_meeting:meeting,p_kind:'managed'})
     if (binding.error) throw new Error('Meeting access unavailable')
@@ -124,7 +124,9 @@ export async function PUT(request: Request) {
       signal:AbortSignal.any([request.signal,AbortSignal.timeout(12000)]),
       headers:{Authorization:'Bearer '+context.services.secret,'X-Source-Language':current.language} })
     if (!provider.ok) return fail(503)
-    const result = await provider.json()
+    const payload = await readBoundedText(provider, 4096)
+    if (!payload) return fail(503)
+    const result = JSON.parse(payload)
     if (typeof result?.text!=='string' || result.text.length>500) return fail(503)
     if (await currentMicrophone(meeting)!==sid) return fail(403)
     const stored = await context.publish(meeting,sid,lease,result.text,body.byteLength / 2)

@@ -8,4 +8,6 @@ Set `CAPTION_MODEL_PATH` to the model directory and set `MEETING_CAPTIONS_WORKER
 
 Configure the app with the same worker token, `MEETING_CAPTIONS_WORKER_URL=http://127.0.0.1:3495/transcribe`, and its server-side `MEETING_CAPTIONS_SERVICE_KEY`. The worker needs no Supabase or LiveKit credentials. The app uses LiveKit to confirm the sender's active participant and published microphone before and after inference.
 
+A separate Web deployment can reach a dedicated worker over HTTPS. Keep the Python process on loopback behind a TLS reverse proxy that forwards only `POST /transcribe` and limits requests to 192,000 bytes. Disable body and authorization-header logging at the proxy. Set `SECTALK_SPEECH_WORKER_HTTPS_ORIGIN` to the worker's exact origin, and set `MEETING_CAPTIONS_WORKER_URL` to that origin followed by `/transcribe`. Both captions and optional voice-note transcription use the same server-side bearer credential and reject redirects. Use a host operated for SecTalk that processes audio only in memory.
+
 The browser test in `tests/meeting-captions.e2e.mjs` runs against the configured local app. Provide distinct synthetic 16 kHz, mono, 16-bit WAV files in `SECTALK_CAPTION_HOST_WAV` and `SECTALK_CAPTION_GUEST_WAV`. The host fixture includes “Welcome everyone to this meeting.” The guest fixture includes “I will prepare the report by Friday.”

@@ -1,6 +1,7 @@
 import { createECDH, timingSafeEqual } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { sendNotification } from 'web-push'
+import { supabaseApiFetch } from './supabase-api-fetch.mjs'
 
 export const pushHeaders = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }
 const clientOptions = { auth: { persistSession: false, autoRefreshToken: false } }
@@ -25,14 +26,19 @@ export function pushConfiguration() {
     ecdh.setPrivateKey(Buffer.from(privateKey, 'base64url'))
     if (ecdh.getPublicKey().toString('base64url') !== publicKey) return null
   } catch { return null }
-  return { url, browserKey, vapid: { subject, publicKey, privateKey }, dispatchSecret, service: createClient(url, serviceKey, clientOptions) }
+  return {
+    url, browserKey, vapid: { subject, publicKey, privateKey }, dispatchSecret,
+    service: createClient(url, serviceKey, { ...clientOptions, global: { fetch: supabaseApiFetch(serviceKey) } }),
+  }
 }
 type PushConfiguration = NonNullable<ReturnType<typeof pushConfiguration>>
 
 export async function authenticatePush(request: Request, configuration: PushConfiguration, removing = false) {
   const token = request.headers.get('Authorization')?.match(/^Bearer (\S+)$/i)?.[1]
   if (!token) return null
-  const client = createClient(configuration.url, configuration.browserKey, clientOptions)
+  const client = createClient(configuration.url, configuration.browserKey, {
+    ...clientOptions, global: { fetch: supabaseApiFetch(configuration.browserKey) },
+  })
   const [verified, user] = await Promise.all([client.auth.getClaims(token), client.auth.getUser(token)])
   const claims = verified.data?.claims
   if (verified.error || user.error || !claims || user.data.user?.id !== claims.sub
@@ -101,12 +107,19 @@ export function dispatchAuthorized(request: Request, secret: string) {
 type Result = 'sent' | 'gone' | 'retry' | 'rejected' | 'discard'
 export async function sendWebPush(
   input: Parameters<typeof pushSubscription>[0], ttl: number, vapid: PushConfiguration['vapid'],
+  incomingCall = false,
 ): Promise<Result> {
   const subscription = pushSubscription(input)
   if (!subscription || ttl <= 0) return 'discard'
+  const duration = incomingCall ? Math.min(30, ttl) : ttl
+  const payload = incomingCall
+    ? JSON.stringify({ v: 2, kind: 'incoming-call', expiresAt: Date.now() + duration * 1000 })
+    : pushPayload
   try {
-    await sendNotification(subscription, pushPayload, {
-      vapidDetails: vapid, contentEncoding: 'aes128gcm', TTL: ttl, timeout: 5000, topic: 'sectalk-update',
+    await sendNotification(subscription, payload, {
+      vapidDetails: vapid, contentEncoding: 'aes128gcm', TTL: duration, timeout: 5000,
+      topic: incomingCall ? 'sectalk-call' : 'sectalk-update',
+      urgency: incomingCall ? 'high' : 'normal',
     })
     return 'sent'
   } catch (error) {

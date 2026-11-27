@@ -5,8 +5,14 @@ const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 export const passkeysEnabled=process.env.NEXT_PUBLIC_SECTALK_PASSKEYS_ENABLED==='true'
 export const db = url && key ? createClient(url, key, {auth:{experimental:{passkey:passkeysEnabled}}}) : null
 
-export function transientAuthClient() {
+export function transientAuthClient(timeout?: number) {
   return url && key ? createClient(url, key, {
+    ...(timeout === undefined ? {} : {global:{
+      fetch: (input: RequestInfo | URL, options?: RequestInit) => {
+        const deadline = AbortSignal.timeout(timeout)
+        return fetch(input, {...options, signal: options?.signal ? AbortSignal.any([options.signal, deadline]) : deadline})
+      },
+    }}),
     auth: {
       persistSession: false,
       autoRefreshToken: false,

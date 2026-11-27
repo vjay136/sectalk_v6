@@ -168,7 +168,7 @@ function RoomReportHistory({id}:{id:string}) {
   </details>
 }
 
-export function MyRoomReports({hints,ticketQuery=''}:{hints:EventTarget;ticketQuery?:string}) {
+export function MyRoomReports({hints,ticketQuery='',showRefresh=true}:{hints:EventTarget;ticketQuery?:string;showRefresh?:boolean}) {
   const {rows, error, load} = useRoomReports('mine')
   useEffect(()=>{
     hints.addEventListener('personal_reports_refresh',load)
@@ -177,7 +177,7 @@ export function MyRoomReports({hints,ticketQuery=''}:{hints:EventTarget;ticketQu
   const matching=rows?.filter(row=>row.id.includes(ticketQuery))
   return <section className="release-section" aria-label="My room reports">
     <div className="release-row"><h3>My room reports</h3>
-      <button type="button" className="secondary" onClick={() => void load()}>Refresh room reports</button>
+      {showRefresh && <button type="button" className="secondary" onClick={() => void load()}>Refresh room reports</button>}
     </div>
     {error && <p role="alert" className="error">{error}</p>}
     {matching?.length === 0 && <p>{ticketQuery ? 'No matching room reports.' : 'No room reports yet.'}</p>}

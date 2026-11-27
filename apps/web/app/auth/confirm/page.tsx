@@ -21,6 +21,7 @@ export default function ConfirmEmailPage() {
   const [state, setState] = useState<State>('loading')
   const [signInUrl, setSignInUrl] = useState('')
   const started = useRef(false)
+  const verifying = useRef(false)
   const credential = useRef<Confirmation | null>(null)
 
   useEffect(() => {
@@ -40,9 +41,10 @@ export default function ConfirmEmailPage() {
 
   async function verify() {
     const proof = credential.current
-    if (!proof || state === 'verifying') return
-    const client = transientAuthClient()
+    if (!proof || verifying.current) return
+    const client = transientAuthClient(10000)
     if (!client) { setState('unavailable'); return }
+    verifying.current = true
     setState('verifying')
     try {
       const { data, error } = 'tokenHash' in proof
@@ -59,6 +61,8 @@ export default function ConfirmEmailPage() {
       setState(data.user?.email_confirmed_at ? 'verified' : 'invalid')
     } catch {
       setState('unavailable')
+    } finally {
+      verifying.current = false
     }
   }
 

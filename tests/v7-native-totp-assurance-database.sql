@@ -49,12 +49,34 @@ begin
     jsonb_build_object('role','authenticated','sub',owner_id,'session_id',native_session,'aal','aal1')::text,true);
   if public.st_v7_login_risk_status()<>'authenticator' then raise exception 'Original pre-proof JWT was accepted'; end if;
 
+  -- The later moderation signal uses its own staff and native-factor policy.
+  if to_regclass('public.st_v8_moderation_queue_signal') is not null then
+    insert into public.st_profiles(id,handle,name) values(owner_id,'totp_moderation_fixture','TOTP moderation fixture');
+    insert into sectalk_private.staff(user_id) values(owner_id);
+    set local role authenticated;
+    if exists(select 1 from public.st_v8_moderation_queue_signal) then
+      raise exception 'Pre-proof staff session could watch moderation';
+    end if;
+    perform set_config('request.jwt.claims',
+      jsonb_build_object('role','authenticated','sub',owner_id,'session_id',native_session,'aal','aal2')::text,true);
+    if not exists(select 1 from public.st_v8_moderation_queue_signal) then
+      raise exception 'Verified staff session could not watch moderation';
+    end if;
+    reset role;
+    delete from sectalk_private.staff where user_id=owner_id;
+    set local role authenticated;
+    if exists(select 1 from public.st_v8_moderation_queue_signal) then
+      raise exception 'Removed staff could still watch moderation';
+    end if;
+    reset role;
+  end if;
+
   if exists(select 1 from pg_publication_tables p
     join pg_namespace n on n.nspname=p.schemaname
     join pg_class c on c.relnamespace=n.oid and c.relname=p.tablename
     where p.pubname='supabase_realtime' and p.schemaname='public' and (
-      not c.relrowsecurity or not exists(select 1 from pg_policy pl where pl.polrelid=c.oid
-        and not pl.polpermissive and pl.polcmd='r' and pg_get_expr(pl.polqual,pl.polrelid) like '%st_v7_step_up_pending%'))) then
+      not c.relrowsecurity or (p.tablename <> 'st_v8_moderation_queue_signal' and not exists(select 1 from pg_policy pl where pl.polrelid=c.oid
+        and not pl.polpermissive and pl.polcmd='r' and pg_get_expr(pl.polqual,pl.polrelid) like '%st_v7_step_up_pending%')))) then
     raise exception 'A published application table lacks the SELECT assurance gate'; end if;
 
   insert into auth.sessions(id,user_id,aal,created_at) values(recovery_session,owner_id,'aal1',now());

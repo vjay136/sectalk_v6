@@ -1,5 +1,6 @@
 import { OperatorConsole } from './operator-console'
+import { freeFeatureCoverage } from '../lib/feature-coverage'
 
-export default function Page() {
-  return <OperatorConsole/>
+export default async function Page() {
+  return <OperatorConsole features={await freeFeatureCoverage()}/>
 }

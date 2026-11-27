@@ -19,6 +19,9 @@ export async function POST(request:Request) {
   const configuration=signupConfiguration(request.url)
   if (!configuration) return failure(503)
   const {project,upstream,key,serviceKey,redirect}=configuration
+  const boundedFetch=(input:RequestInfo|URL, options?:RequestInit)=>fetch(input,{
+    ...options,signal:AbortSignal.any([request.signal,options?.signal??AbortSignal.timeout(7000)]),
+  })
   try {
     const raw=await readBoundedText(request,4096)
     if (!raw) return failure()
@@ -42,7 +45,7 @@ export async function POST(request:Request) {
     const ip=process.env.VERCEL==='1'?request.headers.get('x-vercel-forwarded-for'):null
     const nativeHeaders:Record<string,string>={}
     if (ip&&isIP(ip)) nativeHeaders['X-Forwarded-For']=ip
-    const admission=createClient(project,serviceKey,{auth,global:{fetch:supabaseApiFetch(serviceKey)}})
+    const admission=createClient(project,serviceKey,{auth,global:{fetch:supabaseApiFetch(serviceKey,boundedFetch)}})
     const result=await admission.rpc('st_v7_signup_admission',{
       p_email:email,p_ip:ip&&isIP(ip)?ip:null,p_invite:input.invite??null,
       p_challenge:input.challenge??null,p_solution:input.solution??null,p_resend:resend,
@@ -65,25 +68,25 @@ export async function POST(request:Request) {
       } catch {
         return Response.json({error:'password_check_unavailable'}, {status:503,headers:{...headers,'Retry-After':'30'}})
       }
-      const consumed=await admission.rpc('st_v8_consume_password_signup_permit',{
+      const [consumed,passwordHash]=await Promise.all([admission.rpc('st_v8_consume_password_signup_permit',{
         p_email:email,p_token:permit,
-      }).abortSignal(AbortSignal.timeout(2000))
+      }).abortSignal(AbortSignal.timeout(2000)),signupPasswordHash(input.password)])
       if (consumed.error || consumed.data!==true) return failure(503)
 
       const created=await admission.auth.admin.createUser({email,email_confirm:false,
         ...(displayName?{user_metadata:{signup_display_name:displayName}}:{}),
-        password_hash:await signupPasswordHash(input.password)})
+        password_hash:passwordHash})
       if (created.error) {
         if (created.error.code&&duplicateAccountCodes.has(created.error.code)) return sent()
         return failure(created.error.status===429?429:503)
       }
     }
-    const client=createClient(upstream,key,{auth,global:{headers:nativeHeaders,fetch:supabaseApiFetch(key)}})
+    const client=createClient(upstream,key,{auth,global:{headers:nativeHeaders,fetch:supabaseApiFetch(key,boundedFetch)}})
     const delivery=await client.auth.resend({type:'signup',email,options:{emailRedirectTo:redirect}})
     if (delivery.error) {
       const status=delivery.error.status===429?429:503
       return resend ? failure(status) : Response.json({error:'confirmation_delivery_failed'},{status,headers})
     }
     return sent()
-  } catch {return failure()}
+  } catch (error) {return failure(error instanceof SyntaxError?400:503)}
 }

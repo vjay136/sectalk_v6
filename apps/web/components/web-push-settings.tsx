@@ -93,7 +93,7 @@ export function WebPushSettings() {
 
   return <section className="panel release-panel" aria-label="Browser push">
     <h2>Browser push</h2>
-    <p>Get generic SecTalk alerts on this browser while your account stays signed in.</p>
+    <p>Get SecTalk alerts and incoming call notifications while you stay signed in, even when the app is in the background. Your device controls notification sound and vibration.</p>
     {available ? configuration
       ? <button type="button" className="secondary" disabled={busy} onClick={() => void toggle()}>
         {configuration.enabled ? 'Turn off browser push' : 'Turn on browser push'}

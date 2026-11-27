@@ -36,12 +36,17 @@ export async function POST(request: Request) {
     const input = JSON.parse(body)
     const original = normalizeInspectionUrl(input?.url)
     if (!original) return reply(400, { error: 'Enter a web URL with a domain name and no embedded credentials.' })
-    const offline = { normalized: original.url.href, stripped: original.stripped, outcome: 'unavailable',
+    const policy = await session.rpc('st_v8_link_safety_summary', { p_url: original.url.href })
+    if (policy.error?.code === 'PT429') return reply(429, { error: 'Too many URL checks. Try again in a minute.' })
+    const { allowed, recordedRisk } = policy.data ?? {}
+    if (policy.error || typeof allowed !== 'boolean' || typeof recordedRisk !== 'boolean') {
+      return reply(503, { error: 'Link policy is unavailable.' })
+    }
+    if (input?.policyOnly === true) return reply(200, { allowed, recordedRisk })
+    const offline = { normalized: original.url.href, stripped: original.stripped, allowed, recordedRisk, outcome: 'unavailable',
       hops: [], domains: [{ ...inspectionDomainSignals(original.url), reputation: { status: 'unavailable' } }] }
-    const allowed = await session.rpc('st_v7_link_policy_allows', { p_url: original.url.href })
-    if (allowed.error || typeof allowed.data !== 'boolean') return reply(503, { error: 'Link policy is unavailable.' })
-    if (input?.policyOnly === true) return reply(200, { allowed: allowed.data })
-    if (!allowed.data) return reply(200, { ...offline, outcome: 'blocked' })
+    if (input?.databaseOnly === true) return reply(200, { ...offline, outcome: 'database-only', domains: [] })
+    if (!allowed) return reply(200, { ...offline, outcome: 'blocked' })
     const service = worker()
     if (!service) return reply(200, offline)
     try {
@@ -57,7 +62,7 @@ export async function POST(request: Request) {
           !Array.isArray(inspected.hops) || inspected.hops.length > 4 || !Array.isArray(inspected.domains) || inspected.domains.length > 4) {
         return reply(200, offline)
       }
-      return reply(200, { ...inspected, stripped: original.stripped })
+      return reply(200, { ...inspected, allowed, recordedRisk, stripped: original.stripped })
     } catch { return reply(200, offline) }
   } catch { return reply(400, { error: 'Enter a web URL with a domain name.' }) }
 }

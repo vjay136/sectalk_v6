@@ -1,0 +1,265 @@
+.panel:global(.call-panel) {
+  width: min(420px, calc(100% - 24px));
+  border-radius: 22px;
+  padding: 12px;
+  align-items: stretch;
+  gap: 12px;
+  color: var(--ink);
+  background: linear-gradient(155deg, #182b42, #111a2a 63%);
+  border-color: #395879;
+  box-shadow: 0 22px 60px #050912a8;
+}
+
+.header,
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar:global(.avatar) {
+  flex: none;
+  width: 45px;
+  height: 45px;
+}
+
+.panel[data-ringing="true"] .avatar {
+  box-shadow: 0 0 0 3px #68d4fa25;
+}
+
+.identity {
+  flex: 1;
+  min-width: 0;
+}
+
+.identity h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.identity p {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px 0 0;
+  font-size: .8rem;
+  line-height: 1.35;
+  color: #c2d5e9;
+}
+
+.identity svg {
+  flex: none;
+}
+
+.headerActions > svg {
+  color: #73dcfb;
+}
+
+.menu {
+  position: relative;
+}
+
+.menu summary {
+  display: grid;
+  width: 44px;
+  min-height: 44px;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.options {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  top: calc(100% + 6px);
+  display: grid;
+  gap: 2px;
+  width: 215px;
+  max-width: calc(100vw - 54px);
+  padding: 6px;
+  border: 1px solid #435e7e;
+  border-radius: 12px;
+  background: #162538;
+  box-shadow: 0 14px 30px #0009;
+}
+
+.panel:has(.menu[open]) {
+  min-height: min(292px, calc(100dvh - 100px));
+}
+
+.options button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  border-radius: 7px;
+  padding: 6px 8px;
+  text-align: start;
+}
+
+.options button:hover:enabled {
+  background: #22374e;
+}
+
+.options svg {
+  flex: none;
+}
+
+.noise button span {
+  margin-inline-start: auto;
+  color: #b1dded;
+}
+
+.noise p {
+  padding: 4px 8px;
+  font-size: .78rem;
+  color: #c2d5e9;
+}
+
+.effects summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.effects summary::-webkit-details-marker {
+  display: none;
+}
+
+.effectChoices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-block-start: 8px;
+}
+
+.effectChoices select { min-width: 0; min-height: 44px; width: 100%; }
+.effectChoices button { grid-column: 1 / -1; justify-self: start; }
+.effectsError { margin: 0; color: #ffc9bd; font-size: .85rem; }
+
+.verification {
+  padding: 10px;
+  border: 1px solid #395879;
+  border-radius: 12px;
+  font-size: .85rem;
+}
+
+.verification output {
+  font-weight: 700;
+  color: #86dfff;
+}
+
+.stage {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  border-radius: 13px;
+}
+
+.video video {
+  display: block;
+  width: 100%;
+  max-height: min(42dvh, 280px);
+  aspect-ratio: 16 / 10;
+  border-radius: 13px;
+  object-fit: contain;
+  background: #080e19;
+}
+
+.video .resume {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 8px;
+  inset-inline-start: 8px;
+}
+
+.audio .resume {
+  margin-block: 3px;
+}
+
+.audio video {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preview {
+  position: relative;
+}
+
+.preview[data-camera="false"] video {
+  opacity: .38;
+}
+
+.preview span {
+  position: absolute;
+  z-index: 1;
+  inset-inline-start: 6px;
+  inset-block-end: 6px;
+  border-radius: 5px;
+  background: #080e19e6;
+  color: #ecf7ff;
+  font-size: .66rem;
+  line-height: 1.15;
+  padding: 3px 5px;
+  pointer-events: none;
+}
+
+.stage[data-remote-video="true"] .preview {
+  position: absolute;
+  inset-inline-end: 7px;
+  inset-block-end: 7px;
+  width: 28%;
+  max-width: 116px;
+  border: 1px solid #5a7294;
+  border-radius: 8px;
+  box-shadow: 0 6px 14px #0008;
+}
+
+.stage[data-remote-video="true"] .preview video {
+  border-radius: 7px;
+}
+
+.enableSound {
+  align-self: flex-start;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.controls > button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 7px 10px;
+}
+
+.controls > button[aria-pressed="true"] {
+  background: #2a4460;
+  border-color: #6594be;
+}
+
+.panel button:focus-visible,
+.menu summary:focus-visible {
+  outline: 2px solid #8de3ff;
+  outline-offset: 2px;
+}

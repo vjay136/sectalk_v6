@@ -1,4 +1,4 @@
-// Five local Edge sessions, synthetic microphones, local Supabase and LiveKit.
+// Loopback Edge sessions with synthetic microphones and an isolated Supabase.
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
 import {createClient} from '@supabase/supabase-js'
@@ -9,8 +9,13 @@ const mode=video?'video':'audio'
 const app=new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase=new URL(process.env.SECTALK_STORAGE_TEST_URL)
 const gated=process.env.SECTALK_TEST_LIVEKIT_SIGNAL==='1'
-assert.equal(app.href,gated?'http://127.0.0.1:3581/':'http://127.0.0.1:3503/')
-assert.equal(supabase.hostname,'127.0.0.1')
+const meshOnly=process.env.SECTALK_GROUP_MESH_ONLY==='1'
+const checkRollback=process.env.SECTALK_GROUP_SFU_SUCCESS_ONLY!=='1'
+for (const fixture of [app,supabase]) {
+  assert.equal(fixture.hostname,'127.0.0.1')
+  assert.equal(fixture.protocol,'http:')
+  assert.equal(fixture.pathname,'/')
+}
 const {SECTALK_STORAGE_TEST_PUBLIC_KEY:key,SECTALK_STORAGE_TEST_SERVICE_KEY:serviceKey}=process.env
 assert.ok(key && serviceKey)
 const auth={persistSession:false,autoRefreshToken:false}
@@ -48,7 +53,9 @@ try {
   browser=await chromium.launch({executablePath:process.env.SECTALK_TEST_BROWSER,
     args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']})
   async function open(person) {
-    const page=await browser.newPage({locale:'en-US',permissions:['microphone','camera']})
+    const mobile=meshOnly && person===guests[2]
+    const page=await browser.newPage({locale:'en-US',permissions:['microphone','camera'],
+      ...(mobile?{viewport:{width:390,height:844},isMobile:true,hasTouch:true}:{})})
     await page.addInitScript(cameraDenied=>{
       const Native=window.RTCPeerConnection
       window.groupTestPeers=[]
@@ -61,7 +68,7 @@ try {
           ? Promise.reject(new DOMException('Fixture denied camera','NotAllowedError')) : capture(constraints)
       }
     },video && person===guests[3])
-    await page.goto(app.href)
+    await page.goto(app.href,{waitUntil:'domcontentloaded',timeout:60000})
     await page.getByLabel('Email address',{exact:true}).fill(person.email)
     await page.getByLabel('Password',{exact:true}).fill(password)
     await page.locator('button.submit-auth').click()
@@ -69,10 +76,20 @@ try {
     await page.getByRole('group',{name:'Call history'}).getByRole('button',{name:'Groups',exact:true}).click()
     return page
   }
-  const pages=await Promise.all([host,...guests].map(open))
+  const pages=[]
+  for (const person of [host,...(meshOnly?guests.slice(0,3):guests)]) pages.push(await open(person))
   const panel=page=>page.getByRole('region',{name:'Group calls',exact:true})
   const button=(page,name)=>panel(page).getByRole('button',{name,exact:true})
-  for (const person of guests) await panel(pages[0]).getByRole('checkbox',{name:person.name,exact:true}).check()
+  let rejectedInitialIce=false
+  if (meshOnly) await pages[0].route('**/api/group-calls',route=>{
+    if (!rejectedInitialIce && route.request().postDataJSON()?.action==='ice') {
+      rejectedInitialIce=true
+      return route.fulfill({status:503,contentType:'application/json',body:'{}'})
+    }
+    return route.continue()
+  })
+  await panel(pages[0]).getByText('Up to '+(meshOnly?'4':'8')+' people per call, including you.',{exact:true}).waitFor()
+  for (const person of meshOnly?guests.slice(0,2):guests) await panel(pages[0]).getByRole('checkbox',{name:person.name,exact:true}).check()
   const created=pages[0].waitForResponse(response=>response.url().endsWith('/rpc/st_v6_group_call')&&
     response.request().postDataJSON()?.p_action==='create')
   await button(pages[0],'Start group '+mode).click()
@@ -84,7 +101,7 @@ try {
     'Content-Type':'application/json',Authorization:'Bearer '+outsider.token,
   },body:JSON.stringify({call,device:randomUUID(),action:'ice'})})
   assert.equal(denied.status,403)
-  for (const page of pages.slice(1,4)) await button(page,'Join group '+mode).click()
+  for (const page of pages.slice(1,meshOnly?3:4)) await button(page,'Join group '+mode).click()
 
   async function hear(page,route,count,cameras=video?count:0) {
     await page.waitForFunction(async({route,count,cameras})=>{
@@ -102,59 +119,118 @@ try {
           cameraIds.has(item.trackIdentifier)).map(item=>item.trackIdentifier)).size===cameras
     },{route,count,cameras},{timeout:35000})
   }
-  await Promise.all(pages.slice(0,4).map(page=>hear(page,'mesh',3)))
-  await pages[0].waitForFunction(()=>window.groupTestPeers.filter(peer=>peer.connectionState==='connected').length===3)
-  if (video) {
-    await button(pages[0],'Turn group camera off').click()
-    await button(pages[0],'Turn group camera on').click()
+  const filter=()=>panel(pages[0]).getByLabel('Color filter',{exact:true})
+  async function checkCameraColor(page,route,colored) {
+    await page.waitForFunction(({route,label,colored})=>{
+      const video=[...document.querySelectorAll(`[data-group-route="${route}"] video`)].find(item=>item.getAttribute('aria-label')===label)
+      if (!video?.videoWidth || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false
+      const canvas=document.createElement('canvas')
+      canvas.width=32
+      canvas.height=24
+      const context=canvas.getContext('2d')
+      context.drawImage(video,0,0,32,24)
+      const frame=context.getImageData(0,0,32,24).data
+      let vivid=0, visible=0
+      for (let offset=0;offset<frame.length;offset+=4) {
+        const [r,g,b]=frame.subarray(offset,offset+3)
+        if (Math.max(r,g,b)-Math.min(r,g,b)>24) vivid++
+        if (Math.max(r,g,b)>24) visible++
+      }
+      return visible>100 && (colored?vivid>=12:vivid===0)
+    },{route,label:'Group camera from '+host.name,colored})
   }
+  async function applyMonochrome() {
+    await checkCameraColor(pages[1],'mesh',true)
+    await panel(pages[0]).locator('summary').filter({hasText:'Video effects'}).click()
+    await filter().selectOption('mono')
+    await checkCameraColor(pages[1],'mesh',false)
+  }
+  if (meshOnly) {
+    await Promise.all(pages.slice(0,3).map(page=>hear(page,'mesh',2)))
+    if (video) await applyMonochrome()
+    assert.equal(rejectedInitialIce,true)
+    await panel(pages[0]).getByRole('checkbox',{name:guests[2].name,exact:true}).check()
+    assert.equal(await panel(pages[0]).getByRole('checkbox',{name:guests[3].name,exact:true}).isDisabled(),true)
+    await button(pages[0],'Send group invitations').click()
+    await button(pages[3],'Join group '+mode).click()
+    await Promise.all(pages.map(page=>hear(page,'mesh',3)))
+    assert.equal(await panel(pages[3]).evaluate(element=>element.scrollWidth<=element.clientWidth),true)
+    assert.equal(await panel(pages[0]).getByRole('checkbox',{name:guests[3].name,exact:true}).isDisabled(),true)
+    await button(pages[0],'End group '+mode).click()
+    await Promise.all(pages.slice(1).map(page=>button(page,'Leave group '+mode).waitFor({state:'hidden'})))
+    console.log('Group '+mode+' passed up to four participants with no SFU, plus capacity and outsider controls.')
+  } else {
+    await Promise.all(pages.slice(0,4).map(page=>hear(page,'mesh',3)))
+    await pages[0].waitForFunction(()=>window.groupTestPeers.filter(peer=>peer.connectionState==='connected').length===3)
+    if (video) {
+      await button(pages[0],'Turn group camera off').click()
+      await button(pages[0],'Turn group camera on').click()
+      await applyMonochrome()
+    }
 
-  const fifth=pages[4]
-  const block=route=>route.request().postDataJSON()?.action==='sfu'
-    ? route.fulfill({status:503,contentType:'application/json',body:'{}'}) : route.continue()
-  await fifth.route('**/api/group-calls',block)
-  await button(fifth,'Join group '+mode).click()
-  if (video) {
-    await panel(fifth).getByText(/Camera unavailable/).waitFor()
-    assert.equal(await button(fifth,'Turn group camera off').count(),0)
-  }
-  await panel(pages[0]).getByText('Connecting shared group media',{exact:true}).waitFor()
-  await hear(pages[0],'mesh',3)
-  await panel(pages[0]).getByText('Group '+mode+' on direct peers',{exact:true}).waitFor({timeout:26000})
-  await button(fifth,'Join group '+mode).waitFor()
-  await hear(pages[0],'mesh',3)
-  await fifth.unroute('**/api/group-calls',block)
+    const fifth=pages[4]
+    if (checkRollback) {
+      const block=route=>route.request().postDataJSON()?.action==='sfu'
+        ? route.fulfill({status:503,contentType:'application/json',body:'{}'}) : route.continue()
+      await fifth.route('**/api/group-calls',block)
+      const failedPromotion=fifth.waitForResponse(response=>response.url().endsWith('/rpc/st_v6_group_promotion_failed'))
+      await button(fifth,'Join group '+mode).click()
+      if (video) {
+        await panel(fifth).getByText(/Camera unavailable/).waitFor()
+        assert.equal(await button(fifth,'Turn group camera off').count(),0)
+      }
+      const rollback=await failedPromotion
+      assert.equal(rollback.status(),200)
+      assert.equal(await rollback.json(),true)
+      await panel(pages[0]).getByText('Group '+mode+' on direct peers',{exact:true}).waitFor({timeout:26000})
+      await button(fifth,'Join group '+mode).waitFor()
+      await Promise.all(pages.slice(0,4).map(page=>hear(page,'mesh',3)))
+      if (video) await checkCameraColor(pages[1],'mesh',false)
+      await fifth.unroute('**/api/group-calls',block)
+    }
 
-  await button(fifth,'Join group '+mode).click()
-  await Promise.all(pages.map(page=>panel(page).getByText('Group '+mode+' on shared media',{exact:true}).waitFor({timeout:32000})))
-  await Promise.all(pages.map(page=>hear(page,'sfu',4,video?(page===fifth?4:3):0)))
-  assert.equal(await pages[0].locator('[data-group-route="mesh"]').count(),0)
-  const live=await provider.listParticipants('sectalk-group-'+call+'-2')
-  assert.equal(live.length,5)
-  assert.ok(live.every(person=>person.tracks.length===(video && person.identity!==guests[3].id?2:1)))
-  const blockReverse=route=>route.request().postDataJSON()?.action==='ice'
-    ? route.fulfill({status:503,contentType:'application/json',body:'{}'}) : route.continue()
-  await pages[3].route('**/api/group-calls',blockReverse)
-  await button(fifth,'Leave group '+mode).click()
-  await panel(pages[0]).getByText('Connecting direct group peers',{exact:true}).waitFor()
-  await Promise.all(pages.slice(0,4).map(page=>hear(page,'sfu',3)))
-  await panel(pages[0]).getByText('Group '+mode+' on shared media',{exact:true}).waitFor({timeout:26000})
-  await pages[3].unroute('**/api/group-calls',blockReverse)
-  await Promise.all(pages.slice(0,4).map(page=>panel(page).getByText('Group '+mode+' on direct peers',{exact:true}).waitFor({timeout:32000})))
-  await Promise.all(pages.slice(0,4).map(page=>hear(page,'mesh',3)))
-  assert.equal(await pages[0].locator('[data-group-route="sfu"]').count(),0)
-  await button(pages[0],'End group '+mode).click()
-  await Promise.all(pages.slice(1).map(page=>button(page,'Leave group '+mode).waitFor({state:'hidden'})))
-  if (video) {
-    await panel(pages[0]).getByRole('checkbox',{name:guests[3].name,exact:true}).check()
-    await button(pages[0],'Start group video').click()
-    await button(fifth,'Join group video').click()
-    await panel(fifth).getByText(/Camera unavailable/).waitFor()
-    await Promise.all([hear(pages[0],'mesh',1,0),hear(fifth,'mesh',1,1)])
-    await button(pages[0],'End group video').click()
-    await button(fifth,'Leave group video').waitFor({state:'hidden'})
+    await button(fifth,'Join group '+mode).click()
+    await Promise.all(pages.map(page=>panel(page).getByText('Group '+mode+' on shared media',{exact:true}).waitFor({timeout:32000})))
+    await Promise.all(pages.map(page=>hear(page,'sfu',4,video?(page===fifth?4:3):0)))
+    if (video) {
+      await checkCameraColor(pages[1],'sfu',false)
+      if (!(await filter().isVisible())) await panel(pages[0]).locator('summary').filter({hasText:'Video effects'}).click()
+      await filter().selectOption('vivid')
+      await checkCameraColor(pages[1],'sfu',true)
+    }
+    assert.equal(await pages[0].locator('[data-group-route="mesh"]').count(),0)
+    const live=await provider.listParticipants('sectalk-group-'+call+'-'+(checkRollback?'2':'1'))
+    assert.equal(live.length,5)
+    assert.ok(live.every(person=>person.tracks.length===(video && person.identity!==guests[3].id?2:1)))
+    if (checkRollback) {
+      const blockReverse=route=>route.request().postDataJSON()?.action==='ice'
+        ? route.fulfill({status:503,contentType:'application/json',body:'{}'}) : route.continue()
+      await pages[3].route('**/api/group-calls',blockReverse)
+      await button(fifth,'Leave group '+mode).click()
+      await panel(pages[0]).getByText('Connecting direct group peers',{exact:true}).waitFor()
+      await Promise.all(pages.slice(0,4).map(page=>hear(page,'sfu',3)))
+      await panel(pages[0]).getByText('Group '+mode+' on shared media',{exact:true}).waitFor({timeout:26000})
+      await pages[3].unroute('**/api/group-calls',blockReverse)
+      await Promise.all(pages.slice(0,4).map(page=>panel(page).getByText('Group '+mode+' on direct peers',{exact:true}).waitFor({timeout:32000})))
+      await Promise.all(pages.slice(0,4).map(page=>hear(page,'mesh',3)))
+      if (video) await checkCameraColor(pages[1],'mesh',true)
+      assert.equal(await pages[0].locator('[data-group-route="sfu"]').count(),0)
+    }
+    await button(pages[0],'End group '+mode).click()
+    await Promise.all(pages.slice(1).map(page=>button(page,'Leave group '+mode).waitFor({state:'hidden'})))
+    if (video) {
+      await panel(pages[0]).getByRole('checkbox',{name:guests[3].name,exact:true}).check()
+      await button(pages[0],'Start group video').click()
+      await button(fifth,'Join group video').click()
+      await panel(fifth).getByText(/Camera unavailable/).waitFor()
+      await Promise.all([hear(pages[0],'mesh',1,0),hear(fifth,'mesh',1,1)])
+      await button(pages[0],'End group video').click()
+      await button(fifth,'Leave group video').waitFor({state:'hidden'})
+    }
+    console.log('Group '+mode+' passed native mesh and five-way LiveKit handoff.'+
+      (video ? ' Receiver verified the filter before and after promotion and when changing it in LiveKit.' : '')+
+      (checkRollback ? ' Both rollback paths and return to mesh passed.' : ''))
   }
-  console.log('Group '+mode+' passed native mesh, LiveKit handoff, rollback in both directions, and reverse mesh.')
 } finally {
   await browser?.close()
   await Promise.allSettled(people.map(person=>admin.auth.admin.deleteUser(person.id)))

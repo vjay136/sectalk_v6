@@ -6,6 +6,7 @@ import type { ManifestEntry } from '../lib/contact-key-verification'
 import { db } from '../lib/data'
 import { encryptedMessageWarning } from '../lib/encrypted-message-warning'
 import { GroupMessageReport } from './group-message-report'
+import { LocalMessageSafety } from './forward-provenance'
 import { GroupFileDownload } from './group-file-download'
 import { GroupHistoryTransfer } from './group-history-transfer'
 import { MessageFormatting, RichMessage } from './rich-message'
@@ -261,6 +262,8 @@ export function GroupChat({user,contacts,openDeviceSettings,hints}:{user:string;
         const received = message.actor !== user && message.text !== null
         const warning = received && message.text ? encryptedMessageWarning(message.text) : null
         return <li key={message.id}><strong>{nameFor(message.actor)}</strong>
+          <LocalMessageSafety body={message.text ?? ''} quarantined={message.quarantined} details={
+            <p className="muted">Sent by {nameFor(message.actor)} · <time dateTime={message.sent}>{new Date(message.sent).toLocaleString()}</time></p>}/>
           {message.file?<GroupFileDownload actor={user} group={view.group.id} epoch={message.epoch} message={message.id} file={message.file}/>:
             <p>{message.quarantined ? 'Message quarantined by Safety review.' : message.text === null ? 'Encrypted message could not be verified.' :
               <RichMessage value={message.text} account={user} mode='encrypted' allowLinks={!warning}/>}</p>}

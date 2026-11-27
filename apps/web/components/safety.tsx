@@ -2,7 +2,7 @@
 
 import { messageSafetyAction } from '../lib/message-safety-action.mjs'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ArrowRight, Flag, Shield, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Flag, Shield } from 'lucide-react'
 import { categories, db, formatError, type Message } from '../lib/data'
 import { Dialog } from './inbox'
 import { SectionTabs } from './section-tabs'
@@ -29,6 +29,7 @@ import { ChannelReportQueue, MyChannelReports } from './channel-reports'
 import { StaffMfa } from './staff-mfa'
 import { EmergencyNotices } from './emergency-notices'
 import { UrlInspection } from './url-inspection'
+import { BeSafe } from './be-safe'
 import { DisclosureQueue,useDisclosureAccess } from './disclosure-queue'
 import { ModerationQueue, DateLabel, labels, type Report } from './moderation-queue'
 import { isReportTicket, ReportTicket } from './report-ticket'
@@ -36,12 +37,32 @@ import { isReportTicket, ReportTicket } from './report-ticket'
 type TimelineItem = { action:string; at:string; summary:string|null }
 type Notice = { id:number; action:string; until_at:string|null; created_at:string }
 
+const detailedReportReasons = [
+  {id:'phishing', label:'Phishing or credential theft', queue:'scam'},
+  {id:'unsafe_link', label:'Unsafe link or malicious download', queue:'scam'},
+  {id:'account_compromise', label:'Account takeover or hacking attempt', queue:'scam'},
+  {id:'payment_fraud', label:'Payment, investment or job scam', queue:'scam'},
+  {id:'extortion', label:'Blackmail or extortion', queue:'threat'},
+  {id:'doxxing', label:'Sharing private information without consent', queue:'harassment'},
+  {id:'hate', label:'Hate or discriminatory abuse', queue:'harassment'},
+  {id:'unwanted_contact', label:'Repeated unwanted contact', queue:'harassment'},
+  {id:'intimate_abuse', label:'Non-consensual intimate content', queue:'sexual_content'},
+  {id:'child_safety', label:'Child safety concern', queue:'sexual_content'},
+  {id:'gambling', label:'Gambling solicitation', queue:'spam'},
+  {id:'illegal_trade', label:'Suspected illegal trade or service', queue:'other'},
+  {id:'misinformation', label:'False or misleading claim', queue:'other'},
+] as const
+
 export function ReportDialog({ chat, message, file, close, inform }: { chat:string;message:Message|null;file?:ChatFile;close:()=>void;inform:(notice:string)=>void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const eligiblePriority = Boolean(message && !message.expires_at && messageSafetyAction(message.body).priority)
   const [category, setCategory] = useState(eligiblePriority ? 'threat' : 'harassment')
-  const priorityAllowed = eligiblePriority && (category === 'threat' || category === 'sexual_content')
+  const reason = detailedReportReasons.find(item => item.id === category)
+  const queueCategory = reason?.queue ?? category
+  const priorityAllowed = eligiblePriority && (queueCategory === 'threat' || queueCategory === 'sexual_content')
+  const reasonNote = reason ? 'Report reason: '+reason.label+'\n\n' : ''
+  const notesLimit = 1500 - reasonNote.length
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (busy) return
@@ -49,25 +70,45 @@ export function ReportDialog({ chat, message, file, close, inform }: { chat:stri
     setBusy(true)
     setError('')
     const payload = { p_chat: chat, p_message: message?.expires_at ? null : message?.id ?? null,
-      p_category: values.get('category'), p_details: values.get('details'), p_share_file: values.has('share-file') }
+      p_category: queueCategory, p_details: reasonNote + String(values.get('details') ?? '').trim().slice(0,notesLimit),
+      p_share_file: values.has('share-file') }
     const requested = priorityAllowed && values.has('priority-review')
-    const result = requested ? await db!.rpc('st_v7_request_priority_message_review', {
-      ...payload, p_revision: message?.edited_at || message?.created_at,
-    }) : await db!.rpc('st_v5_report', payload)
-    setBusy(false)
-    if (result.error || !isReportTicket(result.data)) { setError(formatError(result.error, 'Could not confirm your report submission.')); return }
-    close()
-    inform(`${requested ? 'Priority review requested.' : 'Report submitted.'} Ticket ${result.data}. Track it in Safety under My reports.`)
+    try {
+      const result = requested ? await db!.rpc('st_v7_request_priority_message_review', {
+        ...payload, p_revision: message?.edited_at || message?.created_at,
+      }) : await db!.rpc('st_v5_report', payload)
+      if (result.error || !isReportTicket(result.data)) {
+        setError(formatError(result.error, 'Could not confirm your report submission.'))
+        return
+      }
+      let blockNotice = ''
+      if (values.has('block-contact')) {
+        try {
+          const block = await db!.rpc('st_set_block', {p_chat:chat,p_block:true})
+          blockNotice = block.error ? ' The contact could not be blocked.' : ' Contact blocked.'
+        } catch { blockNotice = ' The contact could not be blocked.' }
+      }
+      close()
+      inform(`${requested ? 'Priority review requested.' : 'Report submitted.'} Ticket ${result.data}. Track it in Safety under My reports.${blockNotice}`)
+    } catch {
+      setError('Could not confirm your report submission.')
+    } finally {
+      setBusy(false)
+    }
   }
   return <Dialog title={message ? 'Report this message' : 'Report this contact'} close={close}><form onSubmit={submit}>
     <p>{message && !message.expires_at ? 'You’re sharing this message and your notes with SecTalk safety staff.' : 'Your notes will be shared with SecTalk safety staff.'}</p>
     {message && !message.expires_at && <blockquote>{message.body}</blockquote>}
     {file&&<label className="task-check"><input type="checkbox" name="share-file"/> Share the attached file with safety staff</label>}
     <label>Report category<select name="category" aria-label="Report category" required value={category}
-      onChange={event=>setCategory(event.target.value)}>{Object.entries(categories).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
+      onChange={event=>setCategory(event.target.value)}>
+      <optgroup label="Specific reasons">{detailedReportReasons.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>
+      <optgroup label="General categories">{Object.entries(categories).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</optgroup>
+    </select></label>
     {priorityAllowed && <label className="task-check"><input type="checkbox" name="priority-review" />
       Request urgent human review</label>}
-    <label>Details <span className="muted">(optional)</span><textarea name="details" maxLength={1500} rows={4} placeholder="What happened?" /></label>
+    <label>Details <span className="muted">(optional)</span><textarea name="details" maxLength={notesLimit} rows={4} placeholder="What happened?" /></label>
+    <label className="task-check"><input type="checkbox" name="block-contact"/> Also block this contact</label>
     {error && <p className="error" role="alert">{error}</p>}
     <button className="primary" disabled={busy}><Flag size={16}/> Submit report</button>
   </form></Dialog>
@@ -80,7 +121,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
   const normalizedTicketQuery=ticketQuery.trim().toLowerCase().replace(/^ticket\s+/,'')
   const matchingReports=reports.filter(row=>row.id.includes(normalizedTicketQuery))
   const [error, setError] = useState('')
-  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports' | 'account-admin' | 'abuse-blocklists' | 'detection-rules' | 'url-inspection' | 'threat-triage' | 'disclosures'>('mine')
+  const [view, setView] = useState<'mine' | 'queue' | 'notices' | 'latency' | 'usage' | 'release' | 'feedback' | 'tenants' | 'trends' | 'operations' | 'delivery-queue' | 'holds' | 'quarantine' | 'incidents' | 'overview' | 'workspace-reports' | 'account-admin' | 'abuse-blocklists' | 'detection-rules' | 'url-inspection' | 'be-safe' | 'threat-triage' | 'disclosures'>('mine')
   const disclosureAccess=useDisclosureAccess()
   const threatTriage = useThreatTriageAccess()
   const detectionRules = useDetectionRuleAccess()
@@ -206,10 +247,10 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
     ||(view==='disclosures'&&disclosureAccess.access==='none')?'mine':view
 
   return <section className="content-page safety-page">
-    <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
+    <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Track reports, inspect links, and review notices.</p></div></header>
     <SectionTabs label="Safety center sections" value={visibleView} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
       ...(staff==='verified'?[['overview','Security overview'] as const]:[]),
-      ['mine','My reports'],['url-inspection','URL inspection'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
+      ['mine','My reports'],['be-safe','Be Safe'],['url-inspection','URL inspection'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
       ...(roomReviewAccess!=='none'?[['workspace-reports','Workspace report review'] as const]:[]),
       ...(staff==='verified'?[['latency','Delivery metrics'] as const,['usage','Usage metrics'] as const,
         ['feedback','Warning feedback'] as const,['trends','Threat trends'] as const,['operations','Operational metrics'] as const]:[]),
@@ -226,6 +267,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
       ...(disclosureAccess.access!=='none'?[['disclosures','Vulnerability disclosures'] as const]:[]),
     ]}/>
     {visibleView==='disclosures'?<DisclosureQueue {...disclosureAccess}/>:
+      visibleView==='be-safe'?<BeSafe/>:
       visibleView==='url-inspection'?<UrlInspection/>:
       visibleView==='overview'?<SecurityCenterOverview/>:
       visibleView==='latency'?<DeliveryLatency revision={analyticsRevision}/>:visibleView==='usage'?<UsageMetrics revision={analyticsRevision}/>:visibleView==='release'?<ReleaseControls/>:
@@ -272,12 +314,13 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
           {item.summary&&<p><strong>Response from SecTalk Safety</strong> {item.summary}</p>}
         </li>)}</ol>
       </div> :
-      <div className="panel"><div className="panel-header"><h2>My reports</h2><button className="secondary" onClick={()=>{
+      <div className="panel personal-reports-panel"><div className="panel-header"><h2>My reports</h2><button className="secondary" onClick={()=>{
         void load();hints.dispatchEvent(new Event('personal_reports_refresh'))
       }}>Refresh</button></div>
-        <div className="release-section">
+        <div className="release-section report-filters">
           <SectionTabs label="My report scopes" value={reportScope} onChange={setReportScope}
-            options={[["all","All reports"],["chat","Chat reports"],["room","Room reports"],["channel","Channel reports"]]}/>
+            options={([['all','All'],['chat','Chat'],['room','Room'],['channel','Channel']] as const)
+              .map(([id,label])=>[id,<>{label}<span className="visually-hidden"> reports</span></>])}/>
           <label>Filter recent reports by ticket number<input type="search" value={ticketQuery} maxLength={64}
             onChange={event=>setTicketQuery(event.target.value)} placeholder="Enter a ticket number"/></label>
         </div>
@@ -285,8 +328,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
         {(reportScope==='all'||reportScope==='chat')&&<section className="release-section" aria-label="My chat reports">
           <h3>My chat reports</h3>
           {!error && matchingReports.length===0 &&
-            <div className="list-empty"><ShieldCheck size={24}/><strong>{normalizedTicketQuery ? 'No matching chat reports' : 'No chat reports yet'}</strong>
-              {!normalizedTicketQuery&&<p>Use the flag in a conversation to submit a report.</p>}</div>}
+            <p className="report-empty muted">{normalizedTicketQuery ? 'No matching chat reports.' : 'No chat reports yet. Use the flag in a conversation to submit one.'}</p>}
           {matchingReports.map(row =>
             <button type="button" className="report-row" key={row.id} onClick={()=>{setTimeline(null);setTimelineError('');setSelected(row)}}>
               <Flag size={17}/><span style={{flex:1,minWidth:0}}><strong>{categories[row.category]}</strong>
@@ -295,7 +337,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
               <span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/>
             </button>)}
         </section>}
-        {(reportScope==='all'||reportScope==='room')&&<MyRoomReports hints={hints} ticketQuery={normalizedTicketQuery}/>}
+        {(reportScope==='all'||reportScope==='room')&&<MyRoomReports hints={hints} ticketQuery={normalizedTicketQuery} showRefresh={reportScope==='room'}/>}
         {(reportScope==='all'||reportScope==='channel')&&<MyChannelReports hints={hints} ticketQuery={normalizedTicketQuery}/>}
       </div>}
   </section>

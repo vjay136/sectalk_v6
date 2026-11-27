@@ -1,4 +1,5 @@
 import {billingWriter} from '../../../../lib/stripe-server'
+import { billingMode, billingPausedResponse } from '../../../../lib/billing-mode'
 import {emailHeaders,notificationDrainAuthorized,notificationProviderFailure,notificationSMTPConfiguration} from '../../../../lib/notification-email-server'
 
 export const runtime = 'nodejs'
@@ -7,6 +8,7 @@ type Claim = {id:string;lease:string}
 const mailbox = /^[^\s@<>,;:"]+@[a-z0-9.-]+\.[a-z0-9-]+$/i
 
 export async function POST(request: Request) {
+  if (billingMode() === 'free') return billingPausedResponse()
   const secret = process.env.SECTALK_RENEWAL_MAIL_SECRET
   const mail = notificationSMTPConfiguration()
   if (!secret || Buffer.byteLength(secret)<32 || !mail || !billingWriter)

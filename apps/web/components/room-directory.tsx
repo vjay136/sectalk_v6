@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { db, formatError, liveChannel, onReconnect, type Profile } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { ForwardMessageDialog } from './forward-message'
+import { ForwardProvenance, LocalMessageSafety, MessageForwardDetails, useForwardSummaries } from './forward-provenance'
 import { ScopedTasks } from './scoped-tasks'
 import { QuietHoursSettings } from './quiet-hours'
 import { RoomPostReactions, RoomReactionSettings, useRoomReactionCounts, useWorkspaceReactionPolicy, type RoomReactionPolicy } from './room-reactions'
@@ -232,6 +233,7 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
   const [pins,setPins]=useState<Post[]>([])
   const [bans,setBans]=useState<string[]>([])
   const [posts,setPosts]=useState<Post[]>([])
+  const forwardSignals=useForwardSummaries('room',room.id,posts.filter(post=>!post.removed_at))
   const [thread,setThread]=useState<string|null>(null)
   const activeThread=useRef<string|null>(null)
   const [threadStates,setThreadStates]=useState<ThreadState[]>([])
@@ -477,12 +479,13 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
     const canForward=forwardingAvailable&&!post.removed_at&&post.kind==='message'
     const canReport=Boolean(role&&!post.removed_at&&post.sender!==user)
     const readCount=readCounts?.[post.id]||0
-    return <article className="release-board-item" key={post.id} data-room-post={post.id}>
+    return <article className="release-board-item hover-message" key={post.id} data-room-post={post.id}>
       <div className="release-row"><strong>{name(post.sender)}</strong><time dateTime={post.created_at}>{new Date(post.created_at).toLocaleString()}</time>
         {post.kind==='announcement'&&<span className="pill">Announcement</span>}
-        {post.forwarded&&!post.removed_at&&<span className="pill">Forwarded</span>}
+        {!post.removed_at&&<ForwardProvenance forwarded={post.forwarded} summary={forwardSignals?.summaries.get(post.id)}/>}
         {post.edited_at&&!post.removed_at&&<span className="pill">Edited</span>}</div>
       <p className={post.removed_at?'meeting-agenda revoked-message':'meeting-agenda'}>{post.removed_at ? post.body : <RichMessage key={post.edited_at||post.created_at} value={post.body} account={user} mode='managed'/>}</p>
+      {!post.removed_at&&<LocalMessageSafety body={post.body}/>}
       {!post.removed_at&&post.sender===user&&readCount>0&&<span className="pill">Read by {readCount}</span>}
       {!post.removed_at&&<RoomPostReactions room={room.id} post={post.id} policy={reactionPolicy}
         reactions={reactions.items[post.id]} canAdd={Boolean(canPostByRoom&&permissions.state?.react)} canRemove={canModify} onChange={reactions.refresh}/>}
@@ -495,12 +498,14 @@ function RoomPanel({room,user,profiles,refreshDirectory,workspaceAdminIds,reacti
           <button className="primary" disabled={working}>Save edit</button>
           <button className="secondary" type="button" onClick={()=>setEditingPost(null)}>Cancel edit</button>
         </div>
-      </form>:(canEdit||canDelete||canRedact||canForward||canReport)&&<details>
+      </form>:(canEdit||canDelete||canRedact||canForward||canReport||!post.removed_at)&&<details className="hover-message-actions">
         <summary>Room message actions</summary>
         <div className="action-row">
           {canEdit&&<button className="secondary" type="button" onClick={()=>setEditingPost(post.id)}>Edit message</button>}
           {canForward&&<button className="secondary" type="button" onClick={()=>setForwarding(post.id)}>Forward message</button>}
           {canReport&&<button className="secondary" type="button" onClick={()=>setReporting(post.id)}>Report room message</button>}
+          {!post.removed_at&&<details><summary>Message details</summary><MessageForwardDetails sender={name(post.sender)}
+            sentAt={post.created_at} forwarded={post.forwarded} summary={forwardSignals?.summaries.get(post.id)}/></details>}
           {(canDelete||canRedact)&&<button className="danger" type="button" disabled={working} onClick={()=>{
             if(window.confirm('Remove this message? Replies and follows will remain.'))void updatePost(post,canDelete?'delete':'redact')
           }}>{canDelete?'Delete message':'Redact message'}</button>}

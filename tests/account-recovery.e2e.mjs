@@ -111,7 +111,7 @@ try {
   assert.notEqual(original,replacement)
   await button(keyPanel(primary),'I saved my recovery key').click()
   await keyAttempt(requester,original)
-  await requester.getByRole('alert').waitFor()
+  await requester.getByRole('alert').filter({ hasText: 'Could not reset your authenticator' }).waitFor()
   assert.equal(sql("select state from sectalk_private.st_v7_account_security_changes where user_id='"+user.id+"';"),'cancelled')
   await button(keyPanel(primary),'Revoke recovery key').click()
   await credentials(primary,secret)

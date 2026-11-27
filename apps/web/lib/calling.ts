@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { db, formatError, liveChannel, onReconnect, type Call } from './data'
 import { createCallQos } from './call-qos'
+import { createCameraEffect, noCameraEffects, type CameraEffects } from './camera-effects'
 import { protectedCallKeys, protectedCallSupported, protectedDescription, protectedTransports } from './protected-call'
 
 type Signal = {
@@ -14,11 +15,16 @@ async function callConfiguration(callId: string): Promise<{ config: RTCConfigura
   const { data } = await db!.auth.getSession()
   if (!data.session) throw new Error('Sign in to connect to a call.')
   const query = new URLSearchParams({ call: callId })
-  const response = await fetch('/api/ice?' + query, {
+  const request = () => fetch('/api/ice?' + query, {
     headers: { Authorization: 'Bearer ' + data.session.access_token },
     cache: 'no-store',
+    signal: AbortSignal.timeout(8000),
   })
-  if (!response.ok) throw new Error('Unable to initialize call networking.')
+  // Retry once if the server or network was temporarily unavailable. A denial
+  // is authoritative and must not fall back to unscoped ICE credentials.
+  let response = await request().catch(() => null)
+  if (!response || response.status >= 500) response = await request().catch(() => null)
+  if (!response?.ok) throw new Error('Unable to initialize call networking.')
   const { iceServers, iceTransportPolicy, ttlSeconds } = await response.json()
   return { config: { iceServers, iceTransportPolicy }, ttlSeconds }
 }
@@ -39,10 +45,13 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   const [busy, setBusy] = useState(false)
   const [screen, setScreen] = useState<MediaStream | null>(null)
   const [sharingBusy, setSharingBusy] = useState(false)
+  const [effectPreview, setEffectPreview] = useState<MediaStream | null>(null)
   const [protection,setProtection] = useState<{code:string;verified:boolean;ready:boolean}|null>(null)
   const approveCode=useRef<(()=>void)|null>(null)
   const stream = useRef<MediaStream | null>(null)
   const displayStream = useRef<MediaStream | null>(null)
+  const cameraEffect = useRef<{ abort: AbortController; output?: Awaited<ReturnType<typeof createCameraEffect>> } | null>(null)
+  const changingVideo = useRef(false)
   const activePeer = useRef<RTCPeerConnection | null>(null)
   const current = useRef<Call | null>(null)
   const owned = useRef<string | null>(null)
@@ -50,10 +59,15 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   const [device] = useState(() => crypto.randomUUID())
   const stopped = useRef(new Set<string>())
   const lastRead = useRef(0)
+  const refreshSequence = useRef(0)
+  const appliedRefresh = useRef(0)
   const started = useRef(false)
   const mounted = useRef(true)
 
   const cleanupMedia = useCallback(() => {
+    cameraEffect.current?.abort.abort()
+    cameraEffect.current = null
+    setEffectPreview(null)
     displayStream.current?.getTracks().forEach(track => track.stop())
     displayStream.current = null
     setScreen(null)
@@ -69,6 +83,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
 
   const applyCall = useCallback((next: Call | null, fromRefresh = false) => {
     const previous = current.current
+    if (next?.id === previous?.id && previous?.status === 'active' && next?.status === 'ringing') return
     if (next && next.status === 'active' && answering.current === next.id && owned.current !== next.id) return
     const visible = next && next.status !== 'ended' && Date.parse(next.expires_at) > Date.now() &&
       !stopped.current.has(next.id) &&
@@ -98,17 +113,18 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   }, [user, cleanupMedia, notice])
 
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current
     const version = lastRead.current
     const trackedId = current.current?.id ?? owned.current
-    const { data, error } = await db!.from('st_calls').select('*')
-      .or('caller.eq.' + user + ',callee.eq.' + user)
-      .in('status', ['ringing', 'active']).gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false }).limit(1)
-    if (error || lastRead.current !== version || !mounted.current) return
-    if (!data?.length && trackedId) {
-      const last = await db!.from('st_calls').select('*').eq('id', trackedId).maybeSingle()
-      if (!last.error && lastRead.current === version && mounted.current) applyCall(last.data as Call | null, true)
-    } else applyCall((data?.[0] ?? null) as Call | null, true)
+    const query = db!.from('st_calls').select('*')
+    // A call on this tab already has an endpoint. Follow that row instead of
+    // allowing a newer call on another device to replace it during polling.
+    const { data, error } = await (trackedId ? query.eq('id', trackedId).maybeSingle() :
+      query.eq('callee', user).eq('status', 'ringing').gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false }).limit(1).maybeSingle())
+    if (error || lastRead.current !== version || sequence <= appliedRefresh.current || !mounted.current) return
+    appliedRefresh.current = sequence
+    applyCall(data as Call | null, true)
   }, [user, applyCall])
 
   const finish = useCallback(async (reason: 'end'|'busy') => {
@@ -141,7 +157,6 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       setHistoryVersion(value => value + 1)
       const expected = current.current?.id || owned.current
       if (!expected || expected === next.id) {
-        if (current.current?.status === 'active' && next.status === 'ringing') return
         ++lastRead.current
         applyCall(next)
       }
@@ -166,6 +181,8 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       void db!.removeChannel(channel)
       stream.current?.getTracks().forEach(track => track.stop())
       displayStream.current?.getTracks().forEach(track => track.stop())
+      cameraEffect.current?.abort.abort()
+      cameraEffect.current = null
       const id = owned.current
       if (id) void db!.rpc('st_v6_call_action', { p_call: id, p_action: 'end', p_device: device }).then(() => undefined)
     }
@@ -189,6 +206,18 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       owned.current = data
       ++lastRead.current
       setLocal(source)
+      void db!.auth.getSession().then(({ data: auth }) => {
+        if (!auth.session) return
+        return fetch('/api/push/call', {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + auth.session.access_token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ call: data }),
+          keepalive: true,
+        })
+      }).catch(() => {})
       await refresh()
     } catch (error) {
       cleanupMedia()
@@ -260,6 +289,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     let pc: RTCPeerConnection | undefined
     let retry: number | undefined
     let timeout: number | undefined
+    let initialRestart: number | undefined
     let recoveryTimeout: number | undefined
     let restartInFlight = false
     let polling: number | undefined
@@ -334,6 +364,19 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       if (restart && !disposed) qos.iceRestart()
     }
 
+    async function restartIce(peer: RTCPeerConnection) {
+      if (disposed || !isCaller || restartInFlight || peer.connectionState === 'connected' ||
+        peer.signalingState !== 'stable' || !peer.remoteDescription) return
+      restartInFlight = true
+      try {
+        await offer(peer, true)
+      } catch {
+        if (!disposed) await peer.setLocalDescription({ type: 'rollback' }).catch(() => {})
+      } finally {
+        restartInFlight = false
+      }
+    }
+
     function recover(peer: RTCPeerConnection) {
       if (recoveryTimeout === undefined) {
         recoveryTimeout = window.setTimeout(() => fail('The call disconnected.'), 22_000)
@@ -342,15 +385,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       retry = window.setTimeout(async () => {
         retry = undefined
         if (disposed || peer.connectionState === 'connected' || recoveryTimeout === undefined) return
-        if (peer.signalingState === 'stable') {
-          restartInFlight = true
-          try { await offer(peer, true) }
-          catch {
-            if (!disposed) {
-              await peer.setLocalDescription({ type: 'rollback' }).catch(() => {})
-            }
-          } finally { restartInFlight = false }
-        }
+        await restartIce(peer)
         if (!disposed && recoveryTimeout !== undefined) recover(peer)
       }, 2500)
     }
@@ -495,6 +530,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
           setConnection(peer.connectionState)
           if (peer.connectionState === 'connected') {
             window.clearTimeout(timeout)
+            window.clearTimeout(initialRestart)
             window.clearTimeout(recoveryTimeout)
             window.clearTimeout(retry)
             recoveryTimeout = undefined
@@ -525,7 +561,15 @@ export function useCalling(user: string, notice: (message: string) => void, hint
           hints.removeEventListener('ready', catchUp)
         }
         polling = window.setInterval(() => void readSignals(peer), 1200)
-        timeout = window.setTimeout(() => fail('Connection timed out. Try again or switch networks.'), 30000)
+        if (isCaller) initialRestart = window.setTimeout(() => void restartIce(peer), 12_000)
+        timeout = window.setTimeout(() => {
+          if (!peer.remoteDescription) fail('The call did not finish connecting. Check both devices are online and try again.')
+          else if (peer.getConfiguration().iceTransportPolicy === 'relay') {
+            fail('The call relay could not connect. Open Network diagnostics in Calls to check the connection.')
+          } else {
+            fail('No direct route was available between these networks. Try another network or run Network diagnostics in Calls.')
+          }
+        }, 30000)
         if (isCaller) await offer(peer)
         else await readSignals(peer)
       } catch {
@@ -538,6 +582,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       window.clearTimeout(retry)
       window.clearTimeout(recoveryTimeout)
       window.clearTimeout(timeout)
+      window.clearTimeout(initialRestart)
       window.clearInterval(polling)
       window.clearTimeout(iceTimer)
       window.clearTimeout(mosTimer)
@@ -562,7 +607,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     const peer = activePeer.current
     const track = capture.getVideoTracks()[0]
     const sender = peer?.getSenders().find(item => item.track === track)
-    if (sender) await sender.replaceTrack(stream.current?.getVideoTracks()[0] ?? null).catch(() => {
+    if (sender) await sender.replaceTrack(cameraEffect.current?.output?.track ?? stream.current?.getVideoTracks()[0] ?? null).catch(() => {
       notice('Screen sharing stopped. Toggle your camera or reconnect if video does not resume.')
     })
   }
@@ -570,9 +615,11 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   async function shareScreen() {
     const peer = activePeer.current
     const camera = stream.current?.getVideoTracks()[0]
-    const sender = peer?.getSenders().find(item => item.track === camera)
-    if (current.current?.media_protection || sharingBusy || displayStream.current || !peer || peer.connectionState !== 'connected' || !camera || !sender) return
+    const outgoing = cameraEffect.current?.output?.track ?? camera
+    const sender = peer?.getSenders().find(item => item.track === outgoing)
+    if (current.current?.media_protection || changingVideo.current || displayStream.current || !peer || peer.connectionState !== 'connected' || !camera || !sender) return
     if (!navigator.mediaDevices?.getDisplayMedia) { notice('This browser does not support screen sharing.'); return }
+    changingVideo.current = true
     setSharingBusy(true)
     let capture: MediaStream | undefined
     try {
@@ -588,11 +635,104 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       capture?.getTracks().forEach(track => track.stop())
       notice('Screen sharing did not start. Check your browser permissions or try again.')
     } finally {
+      changingVideo.current = false
       setSharingBusy(false)
+    }
+  }
+
+  function setCameraEnabled(enabled: boolean) {
+    const camera = stream.current?.getVideoTracks()[0]
+    if (camera) camera.enabled = enabled
+    const transformed = cameraEffect.current?.output?.track
+    if (transformed) transformed.enabled = enabled
+  }
+
+  async function setCameraEffects(effects: CameraEffects) {
+    const peer = activePeer.current
+    const call = current.current
+    const camera = stream.current?.getVideoTracks()[0]
+    const applied = cameraEffect.current
+    const sender = peer?.getSenders().find(item => item.track === (applied?.output?.track ?? camera))
+    if (!call || call.media_protection || !camera || !peer || peer.connectionState !== 'connected' || !sender ||
+        changingVideo.current || displayStream.current) return false
+    const clear = effects.filter === noCameraEffects.filter && effects.decoration === noCameraEffects.decoration
+    changingVideo.current = true
+    try {
+      if (clear) {
+        if (applied) {
+          await sender.replaceTrack(camera)
+          applied.abort.abort()
+          if (cameraEffect.current === applied) cameraEffect.current = null
+          if (current.current?.id === call.id) setEffectPreview(null)
+        }
+      } else if (applied?.output) {
+        applied.output.update(effects)
+      } else {
+        const pending: NonNullable<typeof cameraEffect.current> = { abort: new AbortController() }
+        cameraEffect.current = pending
+        try {
+          pending.output = await createCameraEffect(camera, effects, pending.abort.signal)
+          if (activePeer.current !== peer || current.current?.id !== call.id) throw new Error('Call ended')
+          pending.output.track.enabled = camera.enabled
+          await sender.replaceTrack(pending.output.track)
+          if (cameraEffect.current !== pending || current.current?.id !== call.id) throw new Error('Call ended')
+          setEffectPreview(pending.output.stream)
+        } catch (error) {
+          pending.abort.abort()
+          if (cameraEffect.current === pending) cameraEffect.current = null
+          throw error
+        }
+      }
+      return true
+    } catch {
+      return false
+    } finally {
+      changingVideo.current = false
+    }
+  }
+
+  async function setNoiseReduction(enabled: boolean) {
+    const source = stream.current
+    const microphone = source?.getAudioTracks()[0]
+    const peer = activePeer.current
+    const sender = peer?.getSenders().find(item => item.track === microphone)
+    if (!source || !microphone || !peer || !sender) return false
+
+    const constraints = { ...microphone.getConstraints(), noiseSuppression: { exact: enabled } }
+    try {
+      await microphone.applyConstraints(constraints)
+      if (microphone.getSettings().noiseSuppression === enabled) return true
+    } catch {
+      // Some browsers can apply this setting only when opening the microphone.
+    }
+
+    let capture: MediaStream | undefined
+    try {
+      const deviceId = microphone.getSettings().deviceId
+      capture = await navigator.mediaDevices.getUserMedia({
+        audio: { ...constraints, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
+      })
+      const replacement = capture.getAudioTracks()[0]
+      if (!replacement || replacement.getSettings().noiseSuppression !== enabled ||
+        activePeer.current !== peer || stream.current !== source || sender.track !== microphone) return false
+
+      replacement.enabled = microphone.enabled
+      await sender.replaceTrack(replacement)
+      if (activePeer.current !== peer || stream.current !== source) return false
+      replacement.enabled = microphone.enabled
+      source.removeTrack(microphone)
+      source.addTrack(replacement)
+      microphone.stop()
+      capture = undefined
+      return true
+    } catch {
+      return false
+    } finally {
+      capture?.getTracks().forEach(track => track.stop())
     }
   }
 
   const confirmProtection=()=>approveCode.current?.()
   return { call, local, remote, connection, busy, start, answer, end, markBusy, historyVersion, screen, sharingBusy, shareScreen, stopSharing,
-    protection,confirmProtection }
+    protection,confirmProtection,setNoiseReduction,effectPreview,setCameraEffects,setCameraEnabled }
 }

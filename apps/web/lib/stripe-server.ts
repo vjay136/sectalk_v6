@@ -1,6 +1,7 @@
 import Stripe from 'stripe'
 import { createClient } from '@supabase/supabase-js'
 import { paidPlans, type BillingCurrency, type Cadence, type PaidPlan, type PlanVersion } from './billing'
+import { supabaseApiFetch } from './supabase-api-fetch.mjs'
 
 export const origin = process.env.SECTALK_APP_URL
 export const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
@@ -20,7 +21,9 @@ function localStripeOptions() {
 export const stripeReconciliationClient = stripeKey && dbUrl && dbSecret && origin
   ? new Stripe(stripeKey, {timeout: 10000, maxNetworkRetries: 1, ...localStripeOptions()}) : null
 export const stripe = webhookSecret ? stripeReconciliationClient : null
-export const billingWriter = dbUrl && dbSecret ? createClient(dbUrl, dbSecret, options) : null
+export const billingWriter = dbUrl && dbSecret ? createClient(dbUrl, dbSecret, {
+  ...options, global: { fetch: supabaseApiFetch(dbSecret) },
+}) : null
 const catalogReader = dbUrl && publishable ? createClient(dbUrl, publishable, options) : null
 const stripePrices = {
   basic: { monthly: process.env.STRIPE_PRICE_BASIC_MONTHLY, annual: process.env.STRIPE_PRICE_BASIC_ANNUAL },
