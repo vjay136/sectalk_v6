@@ -8,6 +8,7 @@ import { ModerationQueue } from '../../web/components/moderation-queue'
 import { QueueOperations } from '../../web/components/queue-operations'
 import { SectionTabs } from '../../web/components/section-tabs'
 import { SocResponseActions } from '../../web/components/soc-response-actions'
+import { StaffMfa } from '../../web/components/staff-mfa'
 import { ThreatTriage, type ThreatTriageAccess } from '../../web/components/threat-triage'
 import { db } from '../../web/lib/data'
 import { WorkspaceReports } from './workspace-reports'
@@ -138,27 +139,6 @@ export function OperatorConsole() {
     } finally {setBusy(false)}
   }
 
-  async function verify(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (busy || !db) return
-    const form = event.currentTarget
-    const code = String(new FormData(form).get('code') ?? '')
-    setBusy(true)
-    setNotice('')
-    try {
-      const factors = await db.auth.mfa.listFactors()
-      if (factors.error) throw factors.error
-      const factor = factors.data.totp[0]
-      if (!factor) {setNotice('An enrolled authenticator is required. Contact your security administrator.'); return}
-      const result = await db.auth.mfa.challengeAndVerify({factorId: factor.id, code})
-      if (result.error) throw result.error
-      form.reset()
-      await refresh()
-    } catch {
-      setNotice('Could not verify that authenticator code. Try a new code.')
-    } finally {setBusy(false)}
-  }
-
   const sections: [Area, string][] = []
   if (staffModeration) sections.push(['moderation', 'Moderation'])
   if (staffModeration || workspaceAccess !== 'none') sections.push(['workspaceReports', 'Workspace reports'])
@@ -194,7 +174,10 @@ export function OperatorConsole() {
       {selected === 'audit' && auditWorkspaces.length > 0 &&
         <AuditSearch key={auditWorkspaces.map(space => space.id).join(',')} workspaces={auditWorkspaces}/>}
     </>}
-    {(access !== 'verified' || needsAuthenticator) && <section className="panel operator-card" aria-label="Console access">
+    {needsAuthenticator ? <section className="operator-card" aria-label="Console authenticator">
+      <StaffMfa refresh={refresh} heading="Verify your authenticator" verifyLabel="Verify code"
+        explanation="Use the six-digit code for SecTalk from your authenticator app. If this is your first sign-in, set up an authenticator to get a QR code."/>
+    </section> : access !== 'verified' && <section className="panel operator-card" aria-label="Console access">
       {access === 'loading' && <p role="status">Checking console access…</p>}
       {access === 'denied' && <><h2>Access unavailable</h2><p>This account does not currently have access to the operator console.</p></>}
       {access === 'unavailable' && <><h2>Could not check console access</h2>
@@ -204,11 +187,6 @@ export function OperatorConsole() {
         <label>Password<input name="password" type="password" autoComplete="current-password" maxLength={256} required/></label>
         <button type="submit" disabled={busy}>Sign in</button>
       </form></>}
-      {needsAuthenticator && <><h2>Verify your authenticator</h2><p>Enter the six-digit code from your enrolled app.</p>
-        <form onSubmit={verify}>
-          <label>Authenticator code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required/></label>
-          <button type="submit" disabled={busy}>Verify code</button>
-        </form></>}
     </section>}
   </main>
 }
