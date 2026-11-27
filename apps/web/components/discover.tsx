@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bell, Check, Search } from 'lucide-react'
+import { Bell, Check, Search, SlidersHorizontal } from 'lucide-react'
 import { db, liveChannel, onReconnect } from '../lib/data'
 import { SectionTabs } from './section-tabs'
 import { TaskNotices } from './scoped-tasks'
@@ -9,13 +9,14 @@ import { AuditSearch, type AuditWorkspace } from './audit-search'
 import { WebPushSettings } from './web-push-settings'
 import { NotificationDelivery } from './notification-delivery'
 import { NotificationEmailSettings } from './notification-email-settings'
+import styles from './global-search.module.css'
 
 type Result = { kind:'direct'|'channel'|'room'|'board'|'task'|'meeting'|'room_name'|'file'|'person'; id:string; scope_id:string; title:string; snippet:string; at:string }
 type SearchKind=Result['kind']|'all'
 type SearchFilters={room?:string;sender?:string;from?:string;until?:string;status?:string;has_file?:boolean;mentions_me?:boolean}
 type SearchRequest={query:string;kind:SearchKind;filters:SearchFilters}
 type SavedSearch=SearchRequest&{id:string}
-type SearchRoom={id:string;name:string;workspace:{name:string}|null}
+type SearchRoom={id:string;name:string;workspace_id:string;workspace:{name:string}|null}
 const searchOptions=[['all','All content'],['direct','Direct messages'],['channel','Channel posts'],['room','Room posts'],
   ['room_name','Rooms'],['file','Files'],['person','People'],['board','Board items'],['task','Tasks'],['meeting','Meetings']] as const
 const statusOptions=[['todo','To do'],['in_progress','In progress'],['blocked','Blocked'],['done','Done'],['cancelled','Cancelled'],['scheduled','Scheduled'],['live','Live'],['ended','Ended']] as const
@@ -24,7 +25,8 @@ const searchParams=({query,kind,filters}:SearchRequest)=>{
   const start=from?new Date(from+'T00:00:00'):null
   const end=until?new Date(until+'T00:00:00'):null
   if(end)end.setDate(end.getDate()+1)
-  return {p_query:query,p_kind:kind==='all'?null:kind,p_filters:{...other,from:start?.toISOString(),until:end?.toISOString()}}
+  return {p_query:kind==='person'?query.replace(/^@/,''):query,p_kind:kind==='all'?null:kind,
+    p_filters:{...other,from:start?.toISOString(),until:end?.toISOString()}}
 }
 type Notification = { id:number; kind:string; meeting_id:string|null; room_id:string|null; workspace_id:string; created_at:string; read_at:string|null }
 const notificationText:Record<string,string>={'meeting.scheduled':'A workspace meeting was scheduled','meeting.started':'A workspace meeting has started','meeting.admitted':'The host admitted you to a meeting','meeting.declined':'A host declined your meeting request'}
@@ -58,6 +60,8 @@ export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initial
   const [editing,setEditing]=useState(false)
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
+  const searchVersion=useRef(0)
+  const inputRef=useRef<HTMLInputElement>(null)
   useEffect(()=>{
     let active=true
     let version=0
@@ -65,7 +69,7 @@ export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initial
       const request=++version
       const [{data,error},roomResult]=await Promise.all([
         db!.rpc('st_v6_audit_workspaces'),
-        db!.from('st_v6_rooms').select('id,name,workspace:st_v2_workspaces(name)').order('name').order('id'),
+        db!.from('st_v6_rooms').select('id,name,workspace_id,workspace:st_v2_workspaces(name)').order('name').order('id'),
       ])
       if(!active||request!==version)return
       const spaces=error?[]:data as AuditWorkspace[]
@@ -84,15 +88,24 @@ export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initial
   },[])
   useEffect(()=>{if(view==='saved')void refreshSaved()},[view,refreshSaved])
   const search=useCallback(async(request:SearchRequest)=>{
-    setLoading(true);setError('');setResults(null)
+    const version=++searchVersion.current
+    setLoading(true);setError('');setNotice('');setResults(null);setMatched(null)
     try {
       const {data,error}=await db!.rpc('st_v6_search',searchParams(request))
+      if(version!==searchVersion.current)return
       if(error) throw error
       setMatched(request);setResults(data as Result[])
-    } catch {setError('Search is unavailable. Try again.')}
-    finally {setLoading(false)}
+    } catch {
+      if(version===searchVersion.current)setError('Search is unavailable. Try again.')
+    } finally {
+      if(version===searchVersion.current)setLoading(false)
+    }
   },[])
-  useEffect(()=>{if(initialQuery)void search({query:initialQuery,kind:'all',filters:{}})},[initialQuery,search])
+  useEffect(()=>{
+    if(initialQuery)void search({query:initialQuery,kind:'all',filters:{}})
+    else if(window.matchMedia('(pointer: fine)').matches)inputRef.current?.focus({preventScroll:true})
+    return ()=>{++searchVersion.current}
+  },[initialQuery,search])
 
   const directIds=results?.filter(row=>row.kind==='direct').map(row=>row.id).sort().join(',')
   const roomPostIds=results?.filter(row=>row.kind==='room').map(row=>row.id).sort().join(',')
@@ -131,10 +144,12 @@ export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initial
   const sender=filters.sender?.trim().replace(/^@/,'').toLowerCase()
   const normalizedFilters={...filters,sender:sender||undefined}
   const terms=query.trim()
+  const searchTerm=kind==='person'?terms.replace(/^@/,''):terms
+  const filterCount=Object.values(normalizedFilters).filter(Boolean).length
   const invalidDates=!!(filters.from&&filters.until&&filters.from>filters.until)
   const invalidSender=!!sender&&!/^[a-z0-9_]{3,24}$/.test(sender)
-  const canSearch=!invalidDates&&!invalidSender&&(terms.length>=2||
-    (!terms&&kind!=='person'&&(kind!=='all'||Object.values(normalizedFilters).some(Boolean))))
+  const canSearch=!invalidDates&&!invalidSender&&(searchTerm.length>=2||
+    (!terms&&kind!=='person'&&(kind!=='all'||filterCount>0)))
 
   function changeFilter<Key extends keyof SearchFilters>(key:Key,value:SearchFilters[Key]){
     setFilters(previous=>({...previous,[key]:value||undefined}))
@@ -150,7 +165,7 @@ export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initial
     }catch{setError('Could not save the search.')}
     finally{setEditing(false)}
   }
-  return <section className="content-page">
+  return <section className={`content-page ${styles.page}`}>
     <header className="content-title"><div className="card-icon"><Search size={22}/></div><div><h1>Search</h1><p>Find messages, rooms, files, people, tasks, and meetings you can access.</p>
       <button className="secondary" type="button" aria-keyshortcuts="Control+K Meta+K" onClick={openPalette}>Open command palette</button>
     </div></header>
@@ -184,13 +199,22 @@ export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initial
         }}>Remove</button>
       </div>)}
     </div>:<>
-    <SectionTabs label="Search categories" value={kind} onChange={next=>{if(!loading){setKind(next);setResults(null);setError('')}}}
-      options={searchOptions}/>
     <form className="panel release-panel release-form" onSubmit={event=>{
       event.preventDefault();if(!loading&&canSearch)void search({query:terms,kind,filters:normalizedFilters})
     }}>
-      <label>Search terms<input name="query" minLength={2} maxLength={120} value={query} onChange={event=>setQuery(event.target.value)}/></label>
-      <fieldset className="release-form search-filters">
+      <div className={styles.lookup}>
+        <label>Search terms<input ref={inputRef} type="search" name="query" maxLength={120} value={query}
+          placeholder="Message, name, @handle, or file" enterKeyHint="search" onChange={event=>setQuery(event.target.value)}/></label>
+        <button className="primary" disabled={loading||!canSearch}><Search size={16}/>Search SecTalk</button>
+      </div>
+      <div className={styles.categories}>
+        <SectionTabs label="Search categories" value={kind} onChange={next=>{
+          if(!loading&&next!==kind){setKind(next);setResults(null);setMatched(null);setError('')}
+        }} options={searchOptions}/>
+      </div>
+      <details className={styles.filters}>
+        <summary><SlidersHorizontal size={16} aria-hidden="true"/>Filters{filterCount>0?` (${filterCount})`:''}</summary>
+        <fieldset className={`release-form search-filters ${styles.filterGrid}`}>
         <legend>Search filters</legend>
         <label>Room<select aria-label="Room" value={filters.room||''} onChange={event=>changeFilter('room',event.target.value)}>
           <option value="">Any room</option>
@@ -206,22 +230,33 @@ export function GlobalSearch({ openChat,openMeeting,openRoom,openPalette,initial
         </select></label>
         <label><input type="checkbox" checked={!!filters.has_file} onChange={event=>changeFilter('has_file',event.target.checked)}/> Has file</label>
         <label><input type="checkbox" checked={!!filters.mentions_me} onChange={event=>changeFilter('mentions_me',event.target.checked)}/> Mentions me</label>
-        <button type="button" className="secondary" onClick={()=>{setFilters({});setKind('all')}}>Clear filters</button>
-      </fieldset>
+        <button type="button" className="secondary" onClick={()=>setFilters({})}>Clear filters</button>
+        </fieldset>
+      </details>
       {invalidSender&&<p role="alert">Enter a handle with 3 to 24 letters, numbers, or underscores.</p>}
       {invalidDates&&<p role="alert">The through date must be on or after the from date.</p>}
-      <button className="primary" disabled={loading||!canSearch}><Search size={16}/>{loading?'Searching…':'Search SecTalk'}</button>
-      <button type="button" className="secondary" disabled={editing||!canSearch} onClick={()=>void saveSearch()}>Save search</button>
+      <button type="button" className="text-button" disabled={editing||!canSearch} onClick={()=>void saveSearch()}>Save search</button>
     </form>
-    {results?.length===0&&<p role="status">No matching items.</p>}
-    {results?.map(item=><article className="panel release-panel" key={item.kind+item.scope_id+item.id}>
-      <div className="release-row"><h2>{highlight(item.title,matched?.query||'')}</h2>{item.kind!=='person'&&
-        <time dateTime={item.at}>{new Date(item.at).toLocaleString()}</time>}</div>
-      {item.snippet&&<p className="meeting-agenda">{highlight(item.snippet,matched?.query||'')}</p>}
-      {item.kind==='meeting'&&<button className="secondary" onClick={()=>openMeeting(item.id)}>View meeting</button>}
-      {(item.kind==='direct'||item.kind==='file')&&<button className="secondary" onClick={()=>openChat(item.scope_id)}>Open conversation</button>}
-      {item.kind==='room_name'&&<button className="secondary" onClick={()=>openRoom(item.scope_id,item.id)}>Open room</button>}
-    </article>)}
+    <section aria-label="Search results" aria-busy={loading} className={styles.results}>
+      {loading?<p role="status">Searching SecTalk…</p>:results===null?null:results.length===0?
+        <p role="status">No matching items.</p>:<p role="status">{results.length===40?'Showing 40 matches. Refine your search for more specific results.':
+          `${results.length} ${results.length===1?'match':'matches'}`}</p>}
+      {results?.map(item=>{
+        const room=rooms.find(candidate=>item.kind==='room'&&candidate.id===item.scope_id)
+        return <article className={`panel release-panel ${styles.result}`} key={item.kind+item.scope_id+item.id}>
+          <div className={styles.resultMeta}>
+            <span>{searchOptions.find(([category])=>category===item.kind)?.[1]}</span>
+            {item.kind!=='person'&&<time dateTime={item.at}>{new Date(item.at).toLocaleString()}</time>}
+          </div>
+          <h2>{highlight(item.title,matched?.query||'')}</h2>
+          {item.snippet&&<p className="meeting-agenda">{highlight(item.snippet,matched?.query||'')}</p>}
+          {item.kind==='meeting'&&<button className="secondary" onClick={()=>openMeeting(item.id)}>View meeting</button>}
+          {(item.kind==='direct'||item.kind==='file')&&<button className="secondary" onClick={()=>openChat(item.scope_id)}>Open conversation</button>}
+          {item.kind==='room_name'&&<button className="secondary" onClick={()=>openRoom(item.scope_id,item.id)}>Open room</button>}
+          {room&&<button className="secondary" onClick={()=>openRoom(room.workspace_id,room.id)}>Open room</button>}
+        </article>
+      })}
+    </section>
     </>}
   </section>
 }

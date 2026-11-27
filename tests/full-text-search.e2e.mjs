@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js'
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
 const supabase = new URL(process.env.SECTALK_STORAGE_TEST_URL)
 assert.equal(app.hostname, '127.0.0.1')
-assert.equal(supabase.origin, 'http://127.0.0.1:55321')
+assert.equal(supabase.hostname, '127.0.0.1')
 const options = { auth: { persistSession: false, autoRefreshToken: false } }
 const admin = createClient(supabase.origin, process.env.SECTALK_STORAGE_TEST_SERVICE_KEY, options)
 const publicKey = process.env.SECTALK_STORAGE_TEST_PUBLIC_KEY
@@ -37,6 +37,8 @@ const roomName = keyword + ' discussion'
 data(await host.client.rpc('st_v6_room_create', {
   p_id: room, p_workspace: workspace, p_name: roomName, p_kind: 'private', p_template: 'blank',
 }))
+const roomPost = keyword + ' scoped room post'
+data(await host.client.rpc('st_v6_room_post', { p_room: room, p_id: randomUUID(), p_body: roomPost }))
 const chat = data(await host.client.rpc('st_request', { p_handle: peer.handle }))
 data(await peer.client.rpc('st_respond', { p_chat: chat, p_accept: true }))
 data(await host.client.rpc('st_send', { p_chat: chat, p_id: randomUUID(), p_body: keyword + ' private, conversation' }))
@@ -74,6 +76,11 @@ try {
   }
 
   const [hostPage, peerPage, outsiderPage] = await Promise.all([openSearch(host), openSearch(peer), openSearch(outsider)])
+  await search(hostPage, 'Room posts', keyword)
+  await hostPage.getByRole('region', { name: 'Search results' }).getByText(roomPost, { exact: true }).waitFor()
+  await hostPage.getByRole('button', { name: 'Open room', exact: true }).click()
+  await hostPage.getByRole('region', { name: 'Room directory' }).getByRole('button', { name: new RegExp(roomName) }).waitFor()
+  await hostPage.getByRole('navigation', { name: 'SecTalk features' }).getByRole('button', { name: 'Search', exact: true }).click()
   await search(hostPage, 'Rooms', keyword.slice(2))
   await hostPage.getByRole('heading', { name: roomName, exact: true }).waitFor()
   await hostPage.getByRole('button', { name: 'Open room', exact: true }).click()
@@ -84,9 +91,16 @@ try {
   await peerPage.getByRole('heading', { name: filename, exact: true }).waitFor()
   await search(peerPage, 'People', host.name)
   await peerPage.getByRole('article').getByText('@' + host.handle, { exact: true }).waitFor()
+  await search(peerPage, 'People', '@' + host.handle)
+  await peerPage.getByRole('heading', { name: host.name, exact: true }).waitFor()
+  await peerPage.setViewportSize({ width: 320, height: 780 })
+  const filters = peerPage.getByText('Filters', { exact: true })
+  await filters.click()
+  await peerPage.getByRole('combobox', { name: 'Room' }).waitFor()
+  assert(await peerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
   await search(outsiderPage, 'All content', keyword)
   await outsiderPage.getByText('No matching items.', { exact: true }).waitFor()
-  console.log('Passed token and fragment search, categorized room/file/person results, navigation and outsider denial.')
+  console.log('Passed token, fragment and @handle search, room navigation, mobile filters and outsider denial.')
 } finally {
   await browser.close()
 }

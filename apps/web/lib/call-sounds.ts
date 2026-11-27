@@ -27,10 +27,13 @@ function callSoundBuffer(context: AudioContext, tone: CallTone) {
   return buffer
 }
 
-export function useCallSounds(tone: CallTone | null, callId?: string, expiresAt?: string) {
+export type CallAudio = { context: AudioContext | null; enable: () => void }
+
+// Keep the same Web Audio context across sign-in, onboarding and the inbox.
+// Browsers may block incoming sounds until the first trusted interaction.
+export function useCallAudioActivation(): CallAudio {
   const audio = useRef<AudioContext | null>(null)
   const [context, setContext] = useState<AudioContext | null>(null)
-  const [playing, setPlaying] = useState(false)
 
   const enable = useCallback(() => {
     if (typeof window.AudioContext !== 'function') return
@@ -59,6 +62,12 @@ export function useCallSounds(tone: CallTone | null, callId?: string, expiresAt?
       if (previous && previous.state !== 'closed') void previous.close().catch(() => undefined)
     }
   }, [enable])
+
+  return { context, enable }
+}
+
+export function useCallSounds({ context, enable }: CallAudio, tone: CallTone | null, callId?: string, expiresAt?: string) {
+  const [playing, setPlaying] = useState(false)
 
   useEffect(() => {
     if (tone && !context) enable()

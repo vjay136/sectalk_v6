@@ -2,7 +2,7 @@
 
 import { messageSafetyAction } from '../lib/message-safety-action.mjs'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ArrowRight, Flag, Shield, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Flag, Shield } from 'lucide-react'
 import { categories, db, formatError, type Message } from '../lib/data'
 import { Dialog } from './inbox'
 import { SectionTabs } from './section-tabs'
@@ -206,7 +206,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
     ||(view==='disclosures'&&disclosureAccess.access==='none')?'mine':view
 
   return <section className="content-page safety-page">
-    <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Review your reports and manage safety concerns.</p></div></header>
+    <header className="content-title"><div className="card-icon"><Shield size={23}/></div><div><h1>Safety center</h1><p>Track reports, inspect links, and review notices.</p></div></header>
     <SectionTabs label="Safety center sections" value={visibleView} onChange={next=>{setView(next);setSelected(null);setError('')}} options={[
       ...(staff==='verified'?[['overview','Security overview'] as const]:[]),
       ['mine','My reports'],['url-inspection','URL inspection'],['notices','Account notices'],...(staffAccess?[['queue','Staff console'] as const]:[]),
@@ -272,12 +272,13 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
           {item.summary&&<p><strong>Response from SecTalk Safety</strong> {item.summary}</p>}
         </li>)}</ol>
       </div> :
-      <div className="panel"><div className="panel-header"><h2>My reports</h2><button className="secondary" onClick={()=>{
+      <div className="panel personal-reports-panel"><div className="panel-header"><h2>My reports</h2><button className="secondary" onClick={()=>{
         void load();hints.dispatchEvent(new Event('personal_reports_refresh'))
       }}>Refresh</button></div>
-        <div className="release-section">
+        <div className="release-section report-filters">
           <SectionTabs label="My report scopes" value={reportScope} onChange={setReportScope}
-            options={[["all","All reports"],["chat","Chat reports"],["room","Room reports"],["channel","Channel reports"]]}/>
+            options={([['all','All'],['chat','Chat'],['room','Room'],['channel','Channel']] as const)
+              .map(([id,label])=>[id,<>{label}<span className="visually-hidden"> reports</span></>])}/>
           <label>Filter recent reports by ticket number<input type="search" value={ticketQuery} maxLength={64}
             onChange={event=>setTicketQuery(event.target.value)} placeholder="Enter a ticket number"/></label>
         </div>
@@ -285,8 +286,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
         {(reportScope==='all'||reportScope==='chat')&&<section className="release-section" aria-label="My chat reports">
           <h3>My chat reports</h3>
           {!error && matchingReports.length===0 &&
-            <div className="list-empty"><ShieldCheck size={24}/><strong>{normalizedTicketQuery ? 'No matching chat reports' : 'No chat reports yet'}</strong>
-              {!normalizedTicketQuery&&<p>Use the flag in a conversation to submit a report.</p>}</div>}
+            <p className="report-empty muted">{normalizedTicketQuery ? 'No matching chat reports.' : 'No chat reports yet. Use the flag in a conversation to submit one.'}</p>}
           {matchingReports.map(row =>
             <button type="button" className="report-row" key={row.id} onClick={()=>{setTimeline(null);setTimelineError('');setSelected(row)}}>
               <Flag size={17}/><span style={{flex:1,minWidth:0}}><strong>{categories[row.category]}</strong>
@@ -295,7 +295,7 @@ export function Safety({ staff, refresh, hints }: { staff: string; refresh: () =
               <span className={'pill state-' + row.status}>{labels[row.status]}</span><ArrowRight size={15}/>
             </button>)}
         </section>}
-        {(reportScope==='all'||reportScope==='room')&&<MyRoomReports hints={hints} ticketQuery={normalizedTicketQuery}/>}
+        {(reportScope==='all'||reportScope==='room')&&<MyRoomReports hints={hints} ticketQuery={normalizedTicketQuery} showRefresh={reportScope==='room'}/>}
         {(reportScope==='all'||reportScope==='channel')&&<MyChannelReports hints={hints} ticketQuery={normalizedTicketQuery}/>}
       </div>}
   </section>

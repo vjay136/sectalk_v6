@@ -43,13 +43,14 @@ try {
     if(user.publish){
       await page.getByLabel('Appear in Find Friends',{exact:true}).check()
       await page.getByLabel('I am 18 or older',{exact:true}).check()
+      if(index===1)await page.getByLabel('Show me in Online now',{exact:true}).check()
     }
     await page.getByRole('button',{name:'Save and continue',exact:true}).click()
     await page.getByRole('button',{name:'Find Friends',exact:true}).first().click()
     await page.getByRole('heading',{name:'Find Friends',exact:true}).waitFor()
     return page
   }))
-  const [finder, , privateUser] = pages
+  const [finder, onlinePeer, privateUser] = pages
   await privateUser.getByRole('heading',{name:'Discovery is off',exact:true}).waitFor()
   await privateUser.getByRole('group',{name:'Find Friends sections'}).getByRole('button',{name:'Use a handle',exact:true}).click()
   await privateUser.getByLabel('SecTalk handle',{exact:true}).waitFor()
@@ -80,6 +81,17 @@ try {
   await categoryToggle.press('Enter')
   await finder.getByRole('button',{name:'Cybersecurity',exact:true}).press('Enter')
   await visible.waitFor()
+  const onlineToggle = finder.getByRole('button',{name:'Online now',exact:true})
+  await onlineToggle.click()
+  const onlineCard = finder.getByRole('listitem').filter({has:visible})
+  await onlineCard.getByText('Online',{exact:true}).waitFor()
+  assert.equal(await privateProfile.count(),0)
+  await onlinePeer.getByRole('button',{name:'Profile',exact:true}).click()
+  await onlinePeer.getByRole('button',{name:'Availability',exact:true}).click()
+  await onlinePeer.getByRole('combobox',{name:'Availability for approved contacts'}).selectOption('offline')
+  await visible.waitFor({state:'hidden',timeout:22000})
+  await onlineToggle.click()
+  await visible.waitFor()
   if(process.env.SECTALK_DISCOVERY_TEST_SCREENSHOT)await finder.screenshot({path:process.env.SECTALK_DISCOVERY_TEST_SCREENSHOT})
   assert.equal(await finder.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
   await finder.setViewportSize({width:320,height:740})
@@ -93,7 +105,7 @@ try {
   await finder.getByRole('button',{name:'Find Friends',exact:true}).first().click()
   await finder.getByLabel('Search people',{exact:true}).fill('@'+users[1].handle)
   await finder.getByRole('heading',{name:'No new people found',exact:true}).waitFor()
-  console.log('Passed three-account browser discovery, name/handle/category search, privacy, stage filter, mobile layout, and sending a request.')
+  console.log('Passed three-account discovery, single letters, category-based online search, privacy, mobile fit and contact requests.')
 } finally {
   await browser.close()
 }

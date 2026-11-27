@@ -14,11 +14,16 @@ async function callConfiguration(callId: string): Promise<{ config: RTCConfigura
   const { data } = await db!.auth.getSession()
   if (!data.session) throw new Error('Sign in to connect to a call.')
   const query = new URLSearchParams({ call: callId })
-  const response = await fetch('/api/ice?' + query, {
+  const request = () => fetch('/api/ice?' + query, {
     headers: { Authorization: 'Bearer ' + data.session.access_token },
     cache: 'no-store',
+    signal: AbortSignal.timeout(8000),
   })
-  if (!response.ok) throw new Error('Unable to initialize call networking.')
+  // Retry once if the server or network was temporarily unavailable. A denial
+  // is authoritative and must not fall back to unscoped ICE credentials.
+  let response = await request().catch(() => null)
+  if (!response || response.status >= 500) response = await request().catch(() => null)
+  if (!response?.ok) throw new Error('Unable to initialize call networking.')
   const { iceServers, iceTransportPolicy, ttlSeconds } = await response.json()
   return { config: { iceServers, iceTransportPolicy }, ttlSeconds }
 }
@@ -50,6 +55,8 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   const [device] = useState(() => crypto.randomUUID())
   const stopped = useRef(new Set<string>())
   const lastRead = useRef(0)
+  const refreshSequence = useRef(0)
+  const appliedRefresh = useRef(0)
   const started = useRef(false)
   const mounted = useRef(true)
 
@@ -69,6 +76,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
 
   const applyCall = useCallback((next: Call | null, fromRefresh = false) => {
     const previous = current.current
+    if (next?.id === previous?.id && previous?.status === 'active' && next?.status === 'ringing') return
     if (next && next.status === 'active' && answering.current === next.id && owned.current !== next.id) return
     const visible = next && next.status !== 'ended' && Date.parse(next.expires_at) > Date.now() &&
       !stopped.current.has(next.id) &&
@@ -98,17 +106,18 @@ export function useCalling(user: string, notice: (message: string) => void, hint
   }, [user, cleanupMedia, notice])
 
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current
     const version = lastRead.current
     const trackedId = current.current?.id ?? owned.current
-    const { data, error } = await db!.from('st_calls').select('*')
-      .or('caller.eq.' + user + ',callee.eq.' + user)
-      .in('status', ['ringing', 'active']).gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false }).limit(1)
-    if (error || lastRead.current !== version || !mounted.current) return
-    if (!data?.length && trackedId) {
-      const last = await db!.from('st_calls').select('*').eq('id', trackedId).maybeSingle()
-      if (!last.error && lastRead.current === version && mounted.current) applyCall(last.data as Call | null, true)
-    } else applyCall((data?.[0] ?? null) as Call | null, true)
+    const query = db!.from('st_calls').select('*')
+    // A call on this tab already has an endpoint. Follow that row instead of
+    // allowing a newer call on another device to replace it during polling.
+    const { data, error } = await (trackedId ? query.eq('id', trackedId).maybeSingle() :
+      query.eq('callee', user).eq('status', 'ringing').gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false }).limit(1).maybeSingle())
+    if (error || lastRead.current !== version || sequence <= appliedRefresh.current || !mounted.current) return
+    appliedRefresh.current = sequence
+    applyCall(data as Call | null, true)
   }, [user, applyCall])
 
   const finish = useCallback(async (reason: 'end'|'busy') => {
@@ -141,7 +150,6 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       setHistoryVersion(value => value + 1)
       const expected = current.current?.id || owned.current
       if (!expected || expected === next.id) {
-        if (current.current?.status === 'active' && next.status === 'ringing') return
         ++lastRead.current
         applyCall(next)
       }
@@ -260,6 +268,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     let pc: RTCPeerConnection | undefined
     let retry: number | undefined
     let timeout: number | undefined
+    let initialRestart: number | undefined
     let recoveryTimeout: number | undefined
     let restartInFlight = false
     let polling: number | undefined
@@ -334,6 +343,19 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       if (restart && !disposed) qos.iceRestart()
     }
 
+    async function restartIce(peer: RTCPeerConnection) {
+      if (disposed || !isCaller || restartInFlight || peer.connectionState === 'connected' ||
+        peer.signalingState !== 'stable' || !peer.remoteDescription) return
+      restartInFlight = true
+      try {
+        await offer(peer, true)
+      } catch {
+        if (!disposed) await peer.setLocalDescription({ type: 'rollback' }).catch(() => {})
+      } finally {
+        restartInFlight = false
+      }
+    }
+
     function recover(peer: RTCPeerConnection) {
       if (recoveryTimeout === undefined) {
         recoveryTimeout = window.setTimeout(() => fail('The call disconnected.'), 22_000)
@@ -342,15 +364,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       retry = window.setTimeout(async () => {
         retry = undefined
         if (disposed || peer.connectionState === 'connected' || recoveryTimeout === undefined) return
-        if (peer.signalingState === 'stable') {
-          restartInFlight = true
-          try { await offer(peer, true) }
-          catch {
-            if (!disposed) {
-              await peer.setLocalDescription({ type: 'rollback' }).catch(() => {})
-            }
-          } finally { restartInFlight = false }
-        }
+        await restartIce(peer)
         if (!disposed && recoveryTimeout !== undefined) recover(peer)
       }, 2500)
     }
@@ -495,6 +509,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
           setConnection(peer.connectionState)
           if (peer.connectionState === 'connected') {
             window.clearTimeout(timeout)
+            window.clearTimeout(initialRestart)
             window.clearTimeout(recoveryTimeout)
             window.clearTimeout(retry)
             recoveryTimeout = undefined
@@ -525,7 +540,15 @@ export function useCalling(user: string, notice: (message: string) => void, hint
           hints.removeEventListener('ready', catchUp)
         }
         polling = window.setInterval(() => void readSignals(peer), 1200)
-        timeout = window.setTimeout(() => fail('Connection timed out. Try again or switch networks.'), 30000)
+        if (isCaller) initialRestart = window.setTimeout(() => void restartIce(peer), 12_000)
+        timeout = window.setTimeout(() => {
+          if (!peer.remoteDescription) fail('The call did not finish connecting. Check both devices are online and try again.')
+          else if (peer.getConfiguration().iceTransportPolicy === 'relay') {
+            fail('The call relay could not connect. Open Network diagnostics in Calls to check the connection.')
+          } else {
+            fail('No direct route was available between these networks. Try another network or run Network diagnostics in Calls.')
+          }
+        }, 30000)
         if (isCaller) await offer(peer)
         else await readSignals(peer)
       } catch {
@@ -538,6 +561,7 @@ export function useCalling(user: string, notice: (message: string) => void, hint
       window.clearTimeout(retry)
       window.clearTimeout(recoveryTimeout)
       window.clearTimeout(timeout)
+      window.clearTimeout(initialRestart)
       window.clearInterval(polling)
       window.clearTimeout(iceTimer)
       window.clearTimeout(mosTimer)
@@ -592,7 +616,48 @@ export function useCalling(user: string, notice: (message: string) => void, hint
     }
   }
 
+  async function setNoiseReduction(enabled: boolean) {
+    const source = stream.current
+    const microphone = source?.getAudioTracks()[0]
+    const peer = activePeer.current
+    const sender = peer?.getSenders().find(item => item.track === microphone)
+    if (!source || !microphone || !peer || !sender) return false
+
+    const constraints = { ...microphone.getConstraints(), noiseSuppression: { exact: enabled } }
+    try {
+      await microphone.applyConstraints(constraints)
+      if (microphone.getSettings().noiseSuppression === enabled) return true
+    } catch {
+      // Some browsers can apply this setting only when opening the microphone.
+    }
+
+    let capture: MediaStream | undefined
+    try {
+      const deviceId = microphone.getSettings().deviceId
+      capture = await navigator.mediaDevices.getUserMedia({
+        audio: { ...constraints, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
+      })
+      const replacement = capture.getAudioTracks()[0]
+      if (!replacement || replacement.getSettings().noiseSuppression !== enabled ||
+        activePeer.current !== peer || stream.current !== source || sender.track !== microphone) return false
+
+      replacement.enabled = microphone.enabled
+      await sender.replaceTrack(replacement)
+      if (activePeer.current !== peer || stream.current !== source) return false
+      replacement.enabled = microphone.enabled
+      source.removeTrack(microphone)
+      source.addTrack(replacement)
+      microphone.stop()
+      capture = undefined
+      return true
+    } catch {
+      return false
+    } finally {
+      capture?.getTracks().forEach(track => track.stop())
+    }
+  }
+
   const confirmProtection=()=>approveCode.current?.()
   return { call, local, remote, connection, busy, start, answer, end, markBusy, historyVersion, screen, sharingBusy, shareScreen, stopSharing,
-    protection,confirmProtection }
+    protection,confirmProtection,setNoiseReduction }
 }

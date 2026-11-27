@@ -1,6 +1,9 @@
 // Run against the disposable local app and Supabase, using Chromium fake media.
+// For relay-only verification, set SECTALK_TEST_LOCAL_RELAY=1 after starting
+// loopback Coturn on UDP port 3479 with the test-only secret below.
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 
 const app = new URL(process.env.SECTALK_STORAGE_TEST_APP)
@@ -17,6 +20,7 @@ const admin = createClient(database.origin, process.env.SECTALK_STORAGE_TEST_SER
 const suffix = randomUUID().slice(0, 8)
 const password = randomUUID() + '!Qa9'
 const pageErrors = []
+const localRelay = process.env.SECTALK_TEST_LOCAL_RELAY === '1'
 
 function data(result) {
   if (result.error) throw new Error(result.error.message)
@@ -46,17 +50,43 @@ async function open(person) {
   })
   const page = await context.newPage()
   page.on('pageerror', error => pageErrors.push(error.message))
-  await page.addInitScript(() => {
+  await page.addInitScript(useRelay => {
+    window.fixtureTones = []
+    const start = AudioBufferSourceNode.prototype.start
+    const stop = AudioBufferSourceNode.prototype.stop
+    AudioBufferSourceNode.prototype.start = function (...args) {
+      if (this.loop && [3, 5].includes(this.buffer?.duration)) {
+        window.fixtureTones.push({ duration: this.buffer.duration, stopped: false, source: this })
+      }
+      return start.apply(this, args)
+    }
+    AudioBufferSourceNode.prototype.stop = function (...args) {
+      const tone = window.fixtureTones.find(item => item.source === this)
+      if (tone) tone.stopped = true
+      return stop.apply(this, args)
+    }
     const Peer = window.RTCPeerConnection
     window.fixturePeers = []
     window.RTCPeerConnection = class extends Peer {
       constructor(config) {
         // Verify actual local media transport without contacting a public ICE server.
-        super({ ...config, iceServers: [], iceTransportPolicy: 'all' })
+        super(useRelay ? config : { ...config, iceServers: [], iceTransportPolicy: 'all' })
         window.fixturePeers.push(this)
       }
     }
-  })
+  }, localRelay)
+  if (localRelay) {
+    await page.route('**/api/ice?*', async route => {
+      const response = await route.fetch()
+      assert.equal(response.status(), 200)
+      const username = Math.floor(Date.now() / 1000 + 300) + ':' + randomUUID()
+      const credential = createHmac('sha1', 'sectalk-local-only-relay-fixture').update(username).digest('base64')
+      await route.fulfill({response, json: {
+        iceServers: [{urls: 'turn:127.0.0.1:3479?transport=udp', username, credential}],
+        iceTransportPolicy: 'relay', ttlSeconds: 300,
+      }})
+    })
+  }
   await page.goto(new URL('/#account', app).href)
   await page.getByLabel('Email address', { exact: true }).fill(person.email)
   await page.getByLabel('Password', { exact: true }).fill(password)
@@ -85,13 +115,59 @@ async function send(page, text) {
 }
 
 async function verifyMedia(page, kinds) {
-  await page.waitForFunction(async media => {
+  await page.waitForFunction(async ({media, relay}) => {
     const peer = window.fixturePeers.findLast(item => item.connectionState === 'connected')
     if (!peer) return false
-    const stats = [...(await peer.getStats()).values()]
+    const report = await peer.getStats()
+    const stats = [...report.values()]
+    if (relay) {
+      const transport = stats.find(row => row.type === 'transport' && row.selectedCandidatePairId)
+      const pair = transport && report.get(transport.selectedCandidatePairId)
+      if (!pair || report.get(pair.localCandidateId)?.candidateType !== 'relay' ||
+        report.get(pair.remoteCandidateId)?.candidateType !== 'relay') return false
+    }
     return media.every(kind => stats.some(row => row.type === 'inbound-rtp' && row.kind === kind && row.bytesReceived > 0) &&
       stats.some(row => row.type === 'outbound-rtp' && row.kind === kind && row.bytesSent > 0))
-  }, kinds)
+  }, {media: kinds, relay: localRelay})
+}
+
+async function checkCallFit(panel) {
+  const bounds = await panel.evaluate(element => ({
+    left: element.getBoundingClientRect().left,
+    right: element.getBoundingClientRect().right,
+    top: element.getBoundingClientRect().top,
+    bottom: element.getBoundingClientRect().bottom,
+    viewportWidth: innerWidth,
+    viewportHeight: innerHeight,
+    height: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }))
+  assert.ok(bounds.left >= 0 && bounds.right <= bounds.viewportWidth && bounds.top >= 0 && bounds.bottom <= bounds.viewportHeight)
+  assert.ok(bounds.scrollHeight <= bounds.height + 1, 'The call controls are visible within the panel')
+}
+
+async function checkNoise(page, panel) {
+  const menu = panel.locator('summary[aria-label="Call menu"]')
+  await menu.click()
+  const noise = panel.getByRole('button', { name: 'Noise reduction', exact: true })
+  await noise.waitFor()
+  const getSettings = () => page.evaluate(() => {
+    const track = window.fixturePeers.flatMap(peer => peer.getSenders()).findLast(sender =>
+      sender.track?.kind === 'audio' && sender.track.readyState === 'live')?.track
+    return { id: track?.id, enabled: track?.getSettings().noiseSuppression }
+  })
+  const microphone = await getSettings()
+  assert.ok(microphone.id)
+  assert.equal(microphone.enabled, true)
+  assert.equal(await noise.getAttribute('aria-pressed'), 'true')
+  for (const expected of [false, true]) {
+    await noise.click()
+    await panel.locator(`button[aria-label="Noise reduction"][aria-pressed="${expected}"]`).waitFor()
+    const updated = await getSettings()
+    assert.ok(updated.id)
+    assert.equal(updated.enabled, expected)
+  }
+  await menu.click()
 }
 
 async function call(from, to, outsider, mode) {
@@ -99,10 +175,21 @@ async function call(from, to, outsider, mode) {
   const incoming = to.getByRole('region', { name: mode + ' call', exact: true })
   const outgoing = from.getByRole('region', { name: mode + ' call', exact: true })
   await incoming.getByText(mode + ' · Incoming call', { exact: true }).waitFor()
+  await checkCallFit(incoming)
+  await Promise.all([from.waitForFunction(() => window.fixtureTones.some(tone => tone.duration === 5 && !tone.stopped)),
+    to.waitForFunction(() => window.fixtureTones.some(tone => tone.duration === 3 && !tone.stopped))])
   assert.equal(await outsider.getByRole('button', { name: 'Answer', exact: true }).count(), 0)
+  const screenshots = process.env.SECTALK_CALL_TEST_SCREENSHOTS
+  if (screenshots && mode === 'Video') await to.screenshot({path: join(screenshots, 'incoming-mobile.png')})
   await incoming.getByRole('button', { name: 'Answer', exact: true }).click()
+  await Promise.all([from.waitForFunction(() => window.fixtureTones.every(tone => tone.stopped)),
+    to.waitForFunction(() => window.fixtureTones.every(tone => tone.stopped))])
   const kinds = mode === 'Video' ? ['audio', 'video'] : ['audio']
   await Promise.all([verifyMedia(from, kinds), verifyMedia(to, kinds)])
+  await Promise.all([outgoing, incoming].map(panel => panel.getByText(mode + ' · Connected', { exact: true }).waitFor()))
+  await Promise.all([checkCallFit(outgoing), checkCallFit(incoming)])
+  if (screenshots && mode === 'Video') await from.screenshot({path: join(screenshots, 'video-mobile.png')})
+  await checkNoise(from, outgoing)
   await outgoing.getByRole('button', { name: 'Mute microphone', exact: true }).click()
   await outgoing.getByRole('button', { name: 'Unmute', exact: true }).click()
   if (mode === 'Video') {
@@ -120,7 +207,21 @@ try {
   const secondChat = data(await second.client.rpc('st_request', { p_handle: third.handle }))
   data(await third.client.rpc('st_respond', { p_chat: secondChat, p_accept: true }))
   const [avery, blair, casey] = await Promise.all([open(first), open(second), open(third)])
-  await Promise.all([openChat(avery, second), openChat(blair, first), openChat(casey, second)])
+  await openChat(avery, second)
+  let networkingRequests = 0
+  const iceRoute = route => {
+    networkingRequests++
+    return networkingRequests === 1 ? route.fulfill({status: 503, json: {error: 'Synthetic outage'}}) : route.fallback()
+  }
+  await avery.route('**/api/ice?*', iceRoute)
+  await call(avery, blair, casey, 'Audio')
+  assert.equal(networkingRequests, 2)
+  await avery.unroute('**/api/ice?*', iceRoute)
+  console.log(localRelay
+    ? 'Audio ringback and ringtone stopped on answer. Relay media connected after a transient setup outage.'
+    : 'Audio ringback and ringtone stopped on answer. Media connected after a transient setup outage.')
+
+  await Promise.all([openChat(blair, first), openChat(casey, second)])
   const firstMessage = 'Private first thread ' + suffix
   await send(avery, firstMessage)
   await blair.getByText(firstMessage, { exact: true }).waitFor()
@@ -131,15 +232,16 @@ try {
   await avery.getByText(answer, { exact: true }).waitFor()
   console.log('Three real password logins and bidirectional direct messaging passed. The third user could not read the first thread.')
 
-  await call(avery, blair, casey, 'Audio')
-  console.log('Two browser audio call passed with media in both directions, mute, and hang-up.')
   await openChat(blair, third)
   const secondMessage = 'Private second thread ' + suffix
   await send(casey, secondMessage)
   await blair.getByText(secondMessage, { exact: true }).waitFor()
   assert.equal(await avery.getByText(secondMessage, { exact: true }).count(), 0)
+  await Promise.all([casey.setViewportSize({width: 360, height: 780}), blair.setViewportSize({width: 390, height: 844})])
   await call(casey, blair, avery, 'Video')
-  console.log('Two browser video call passed with audio and video in both directions, camera toggle, and hang-up.')
+  await Promise.all([casey.setViewportSize({width: 1536, height: 940}), blair.setViewportSize({width: 1536, height: 940})])
+  console.log('Mobile-width video call passed with two-way media, camera toggle, and hang-up. Audio and video calls verified noise reduction on the sending microphone.')
+  if (localRelay) console.log('Both browsers selected relay-to-relay candidate pairs during audio and video calls.')
 
   await blair.locator('.message').filter({ hasText: secondMessage })
     .getByRole('button', { name: 'Report message', exact: true }).click()

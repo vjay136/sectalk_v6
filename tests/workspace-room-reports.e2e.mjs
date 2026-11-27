@@ -201,7 +201,7 @@ try {
   assert.equal(await platformQueue.getByRole('option', {name: 'Resolve', exact: true}).count(), 0)
   await review(platformQueue, 'acknowledge')
   await review(platformQueue, 'resolved')
-  await mine.getByRole('button', {name: 'Refresh room reports', exact: true}).click()
+  await member.getByRole('button', {name: 'Refresh', exact: true}).click()
   await mine.getByText('Shared with authorized workspace admins', {exact: true}).waitFor()
   await ticketHistory.getByText('Resolved', {exact: true}).first().waitFor()
   for(const action of ['Sent to workspace review','Returned to Platform Safety','Resolved'])

@@ -76,6 +76,10 @@
 .state > h2, .handleForm > h2 { font-size: 1.12rem; }
 .state > svg { color: var(--muted); }
 .resultStatus { padding: 0 4px 8px; font-size: .82rem; }
+.online, .pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.online { color: #82eac6; font-size: .82rem; }
+.onlineDot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #53e0b0; }
+.pagination { justify-content: flex-end; margin-block-start: 12px; }
 
 .results { list-style: none; padding: 0; margin: 0; }
 .person {
@@ -105,7 +109,8 @@
     padding-inline: 4px;
     font-size: .82rem;
   }
-  .stage { width: clamp(130px, 41vw, 170px); }
+  .filters { gap: 6px; }
+  .stage { flex: 1 1 100px; max-width: 170px; }
   .stage > select { text-overflow: ellipsis; }
   .clear { margin-inline-start: auto; }
   .person { grid-template-columns: auto minmax(0, 1fr); }

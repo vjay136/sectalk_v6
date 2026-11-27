@@ -1,14 +1,16 @@
 'use client'
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { AtSign, ChevronDown, Inbox, Search, ShieldCheck, SlidersHorizontal, Tags, UserPlus, Users, X } from 'lucide-react'
-import { db, formatError } from '../lib/data'
+import { AtSign, ChevronDown, Inbox, MessageCircle, Search, ShieldCheck, SlidersHorizontal, Tags, UserPlus, Users, X } from 'lucide-react'
+import { db, formatError, onReconnect } from '../lib/data'
 import { lifeStages, topicGroups, topicLabels } from '../lib/discovery-catalog'
 import { SectionTabs } from './section-tabs'
 import styles from './friends.module.css'
 
 type Stage = keyof typeof lifeStages
-type Result = { handle:string;name:string;stage:Stage;categories:string[] }
+type Result = { handle:string;name:string;stage:Stage;categories:string[];online:boolean;chat_id:string|null }
+const pageSize = 24
+const refreshInterval = 15000
 const stageOptions=Object.entries(lifeStages).map(([value,label])=><option key={value} value={value}>{label}</option>)
 const browseStages:Record<Stage,string>={
   student:'Adult student',college:'College student',professional:'Professional',freelancer:'Freelancer',
@@ -53,6 +55,7 @@ export function DiscoverySettings({ user, complete }: {user:string;complete?:()=
   const [stage,setStage]=useState<Stage>('other')
   const [topics,setTopics]=useState<string[]>([])
   const [publish,setPublish]=useState(false)
+  const [publishOnline,setPublishOnline]=useState(false)
   const [adult,setAdult]=useState(false)
   const [busy,setBusy]=useState(false)
   const [loaded,setLoaded]=useState(false)
@@ -60,10 +63,10 @@ export function DiscoverySettings({ user, complete }: {user:string;complete?:()=
   const [error,setError]=useState('')
   useEffect(()=>{
     let live=true
-    void db!.from('st_v5_discovery').select('stage,categories,discoverable').eq('user_id',user).maybeSingle().then(({data,error})=>{
+    void db!.from('st_v5_discovery').select('stage,categories,discoverable,online_discoverable').eq('user_id',user).maybeSingle().then(({data,error})=>{
       if(!live)return
       if(error){setError('Could not load your discovery settings.');return}
-      if(data){setStage(data.stage as Stage);setTopics(data.categories.filter((id:string)=>topicLabels[id]));setPublish(data.discoverable);setAdult(data.discoverable)}
+      if(data){setStage(data.stage as Stage);setTopics(data.categories.filter((id:string)=>topicLabels[id]));setPublish(data.discoverable);setAdult(data.discoverable);setPublishOnline(data.online_discoverable)}
       setLoaded(true)
     })
     return ()=>{live=false}
@@ -73,7 +76,7 @@ export function DiscoverySettings({ user, complete }: {user:string;complete?:()=
     event.preventDefault()
     if(busy||!loaded)return
     setBusy(true);setError('');setMessage('')
-    const result=await db!.rpc('st_v5_save_discovery',{p_stage:stage,p_categories:topics,p_discoverable:publish,p_adult:adult})
+    const result=await db!.rpc('st_v6_save_discovery',{p_stage:stage,p_categories:topics,p_discoverable:publish,p_adult:adult,p_show_online:publishOnline})
     setBusy(false)
     if(result.error){setError(formatError(result.error,'Could not save your settings.'));return}
     setMessage('Discovery settings saved.')
@@ -91,9 +94,14 @@ export function DiscoverySettings({ user, complete }: {user:string;complete?:()=
       if(topics.length>=8){setError('Remove a category before adding another.');return}
       setError('');setTopics(previous=>[...previous,id])
     }}/>
-    <label className="task-check"><input type="checkbox" checked={publish} onChange={event=>setPublish(event.target.checked)}/> Appear in Find Friends</label>
+    <label className="task-check"><input type="checkbox" checked={publish} onChange={event=>{
+      setPublish(event.target.checked)
+      if(!event.target.checked)setPublishOnline(false)
+    }}/> Appear in Find Friends</label>
     {publish&&<><p>Other adults who opt in can see your name, handle, stage, and selected categories. They can send a contact request.</p>
-      <label className="task-check"><input type="checkbox" checked={adult} required onChange={event=>setAdult(event.target.checked)}/> I am 18 or older</label></>}
+      <label className="task-check"><input type="checkbox" checked={adult} required onChange={event=>setAdult(event.target.checked)}/> I am 18 or older</label>
+      <label className="task-check"><input type="checkbox" checked={publishOnline} onChange={event=>setPublishOnline(event.target.checked)}/> Show me in Online now</label>
+      <p>People browsing discovery can see when you’re online while availability sharing is on.</p></>}
     {error&&<p className="error" role="alert">{error}</p>}
     {message&&<p role="status">{message}</p>}
     <div className="action-row"><button className="primary" disabled={busy||!loaded}>{busy?'Saving…':complete?'Save and continue':'Save settings'}</button>
@@ -103,8 +111,8 @@ export function DiscoverySettings({ user, complete }: {user:string;complete?:()=
   </form>
 }
 
-export function Friends({user,pending,working,send,openRequests}: {
-  user:string;pending:number;working:boolean;send:(handle:string)=>void;openRequests:()=>void
+export function Friends({user,pending,working,send,openRequests,openChat}: {
+  user:string;pending:number;working:boolean;send:(handle:string)=>void;openRequests:()=>void;openChat:(id:string)=>void
 }) {
   const [tab,setTab]=useState<'find'|'handle'|'settings'>('find')
   const [visibility,setVisibility]=useState<{user:string;enabled:boolean}|null>(null)
@@ -112,6 +120,8 @@ export function Friends({user,pending,working,send,openRequests}: {
   const [stage,setStage]=useState('')
   const [category,setCategory]=useState('')
   const [categoryQuery,setCategoryQuery]=useState('')
+  const [onlineOnly,setOnlineOnly]=useState(false)
+  const [pagination,setPagination]=useState({criteria:'',page:0})
   const [byCategory,setByCategory]=useState(false)
   const [attempt,setAttempt]=useState(0)
   const [loadError,setLoadError]=useState('')
@@ -120,8 +130,10 @@ export function Friends({user,pending,working,send,openRequests}: {
   const categoryToggle=useRef<HTMLButtonElement>(null)
   const term=query.trim()
   const eligible=visibility?.user===user&&visibility.enabled
-  const filtered=Boolean((term&&term!=='@')||stage||category)
-  const key=JSON.stringify([user,term,stage,category,attempt])
+  const filtered=Boolean((term&&term!=='@')||stage||category||onlineOnly)
+  const criteria=JSON.stringify([user,term,stage,category,onlineOnly])
+  const page=pagination.criteria===criteria?pagination.page:0
+  const key=JSON.stringify([criteria,page,attempt])
   const result=searched?.key===key?searched:null
   const suggestions=term.length>=2&&!term.startsWith('@')&&!category?matchingCategories(term,4):[]
   const categories=categoryQuery.trim()?matchingCategories(categoryQuery,12):starterTopics.map(id=>({id,name:topicLabels[id]}))
@@ -142,19 +154,30 @@ export function Friends({user,pending,working,send,openRequests}: {
   useEffect(()=>{
     if(tab!=='find'||!eligible||!filtered)return
     const request=new AbortController()
-    const timer=window.setTimeout(async()=>{
-      const {data,error}=await db!.rpc('st_v5_find_friends',{
-        p_query:term,p_stage:stage||null,p_category:category||null,
-      }).abortSignal(request.signal)
-      if(request.signal.aborted)return
-      setSearched({key,people:(data as Result[]|null)??[],
-        error:error?formatError(error,'Search is unavailable.'):'',rateLimited:error?.code==='PT429'})
-    },450)
-    return ()=>{window.clearTimeout(timer);request.abort()}
-  },[eligible,filtered,key,term,stage,category,tab])
+    let running=false
+    async function refresh() {
+      if(running||request.signal.aborted||document.visibilityState!=='visible')return
+      running=true
+      try {
+        const {data,error}=await db!.rpc('st_v6_find_friends',{
+          p_query:term,p_stage:stage||null,p_category:category||null,p_online_only:onlineOnly,p_page:page,
+        }).abortSignal(request.signal)
+        if(request.signal.aborted)return
+        setSearched({key,people:(data as Result[]|null)??[],
+          error:error?formatError(error,'Search is unavailable.'):'',rateLimited:error?.code==='PT429'})
+      } catch {
+        if(!request.signal.aborted)setSearched({key,people:[],error:'Search is unavailable.',rateLimited:false})
+      } finally {running=false}
+    }
+    const initial=window.setTimeout(()=>void refresh(),450)
+    const update=window.setInterval(()=>void refresh(),refreshInterval)
+    const removeReconnect=onReconnect(()=>void refresh())
+    return ()=>{removeReconnect();window.clearTimeout(initial);window.clearInterval(update);request.abort()}
+  },[eligible,filtered,key,term,stage,category,onlineOnly,page,tab])
 
   function clearSearch() {
-    setQuery('');setStage('');setCategory('');setCategoryQuery('')
+    setQuery('');setStage('');setCategory('');setCategoryQuery('');setOnlineOnly(false)
+    setPagination({criteria:'',page:0})
     searchInput.current?.focus()
   }
 
@@ -214,6 +237,9 @@ export function Friends({user,pending,working,send,openRequests}: {
             </label>
             <button ref={categoryToggle} type="button" className="secondary" aria-expanded={byCategory} aria-controls="friends-category"
               onClick={()=>setByCategory(open=>!open)}><SlidersHorizontal size={16} aria-hidden="true"/> Categories <ChevronDown size={14} aria-hidden="true"/></button>
+            <button type="button" className={styles.chip} aria-pressed={onlineOnly} onClick={()=>setOnlineOnly(value=>!value)}>
+              <span className={styles.onlineDot} aria-hidden="true"/> Online now
+            </button>
             {category&&<button type="button" className={`${styles.chip} ${styles.selectedChip}`} aria-label={'Remove category '+topicLabels[category]}
               onClick={()=>{setCategory('');categoryToggle.current?.focus()}}>{topicLabels[category]} <X size={14} aria-hidden="true"/></button>}
             {filtered&&<button type="button" className={`text-button ${styles.clear}`} onClick={clearSearch}>Clear all</button>}
@@ -240,20 +266,33 @@ export function Friends({user,pending,working,send,openRequests}: {
             {!result.rateLimited&&<button type="button" className="secondary" onClick={()=>setAttempt(n=>n+1)}>Try again</button>}
           </div>:result.people.length===0?<div className={`panel ${styles.state}`}>
             <Search size={23} aria-hidden="true"/>
-            <h2>No new people found</h2><p>Try different words or remove a filter. Only people who turn on discovery are listed.</p>
+            <h2>{onlineOnly?'No online matches':'No new people found'}</h2>
+            <p>{onlineOnly?'Only people who choose to share their online status in discovery appear here.':'Try different words or remove a filter. Only people who turn on discovery are listed.'}</p>
+            {page>0&&<button type="button" className="secondary" onClick={()=>setPagination({criteria,page:page-1})}>Previous</button>}
             <button type="button" className="secondary" onClick={clearSearch}>Clear search</button>
           </div>:<>
-            <p className={styles.resultStatus} role="status">{result.people.length===24?'Showing the first 24 matches':`${result.people.length} ${result.people.length===1?'match':'matches'}`}</p>
-            <ul className={`panel ${styles.results}`}>{result.people.map(person=><li className={styles.person} key={person.handle}>
+            <p className={styles.resultStatus} role="status">{page>0||result.people.length>pageSize
+              ? `Showing ${page*pageSize+1}–${page*pageSize+Math.min(result.people.length,pageSize)}`
+              : `${result.people.length} ${result.people.length===1?'match':'matches'}`}</p>
+            <ul className={`panel ${styles.results}`}>{result.people.slice(0,pageSize).map(person=><li className={styles.person} key={person.handle}>
               <span className="avatar green" aria-hidden="true">{initials(person.name)}</span>
               <div className={styles.identity}>
                 <h2>{person.name}</h2><p><bdi>@{person.handle}</bdi> · {lifeStages[person.stage]}</p>
+                {person.online&&<span className={styles.online}><span className={styles.onlineDot} aria-hidden="true"/> Online</span>}
                 {person.categories.some(id=>topicLabels[id])&&<div className={styles.personTopics}>{person.categories.filter(id=>topicLabels[id]).map(id=>
                   <span className="pill" key={id}>{topicLabels[id]}</span>)}</div>}
               </div>
-              <button type="button" className="secondary" disabled={working} aria-label={'Send request to @'+person.handle}
-                onClick={()=>send(person.handle)}><UserPlus size={16} aria-hidden="true"/> Send request</button>
+              {person.chat_id?<button type="button" className="secondary" aria-label={'Message @'+person.handle}
+                onClick={()=>openChat(person.chat_id!)}><MessageCircle size={16} aria-hidden="true"/> Message</button>:
+                <button type="button" className="secondary" disabled={working} aria-label={'Send request to @'+person.handle}
+                  onClick={()=>send(person.handle)}><UserPlus size={16} aria-hidden="true"/> Send request</button>}
             </li>)}</ul>
+            {(page>0||result.people.length>pageSize)&&<div className={styles.pagination} aria-label="People results pages">
+              <button type="button" className="secondary" disabled={page===0}
+                onClick={()=>setPagination({criteria,page:page-1})}>Previous</button>
+              <button type="button" className="secondary" disabled={result.people.length<=pageSize||page>=999}
+                onClick={()=>setPagination({criteria,page:page+1})}>Next</button>
+            </div>}
           </>}
         </section>
       </>}

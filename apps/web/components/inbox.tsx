@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { db, formatError, formatTime, liveChannel, onReconnect, peerId, type Call, type Chat, type Message, type Profile } from '../lib/data'
 import { useCalling } from '../lib/calling'
-import { useCallSounds } from '../lib/call-sounds'
+import { useCallSounds, type CallAudio } from '../lib/call-sounds'
 import { MessageSafetyWarning } from './message-safety-warning'
 import { ProtectedMessageText } from './protected-message-text'
 import { MessageFormatting, RichMessage } from './rich-message'
@@ -62,7 +62,9 @@ type InboxStatus = { chat_id: string; muted: boolean; unread: boolean; latest_id
 type Presence = { user_id:string; state:'online'|'away'|'busy'|'offline'|'invisible'; expires_at:string }
 type PresenceSettings = { required: boolean; sharing: boolean }
 
-export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string; workspaceSession:string|null; openWorkspaces:boolean }) {
+export function Inbox({ user, workspaceSession, openWorkspaces, callAudio }: {
+  user: string; workspaceSession: string | null; openWorkspaces: boolean; callAudio: CallAudio
+}) {
   const accountAppearance = useAccountAppearance(user)
   const { t } = useLocale()
   const {reload:reloadWorkspaces,select:selectWorkspace}=useWorkspaceContext()
@@ -72,6 +74,8 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   const [blocks, setBlocks] = useState<string[]>([])
   const [staff, setStaff] = useState('none')
   const [selected, setSelected] = useState<string | null>(null)
+  const [conversationTools, setConversationTools] = useState(false)
+  const conversationToolsTrigger = useRef<HTMLButtonElement>(null)
   const [requestedMeeting,setRequestedMeeting] = useState<string|null>(()=>typeof window==='undefined'?null:meetingFromQuery(window.location.search))
   const [requestedRoom,setRequestedRoom] = useState<{workspace:string;id:string}|null>(null)
   const [tab, setTab] = useState<'inbox' | 'group-chats' | 'calls' | 'safety' | 'profile' | 'workspaces' | 'billing' | 'meetings' | 'vault' | 'search' | 'notifications' | 'rooms' | 'tasks' | 'calendar' | 'friends' | 'saved'>(() =>
@@ -160,8 +164,8 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
     ])
     if (version !== readVersion.current) return
     if (people.data) setProfiles(Object.fromEntries(people.data.map(person => [person.id, person])))
-    setPresence(Object.fromEntries(((state.data??[]) as Presence[]).map(row=>[row.user_id,row])))
-    setPresenceSettings(settings.data as PresenceSettings | null)
+    if (state.data) setPresence(Object.fromEntries((state.data as Presence[]).map(row=>[row.user_id,row])))
+    if (!settings.error) setPresenceSettings(settings.data as PresenceSettings | null)
   }, [user])
 
   useEffect(() => {
@@ -318,12 +322,21 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   },[])
   useEffect(() => {
     if (!profile) return
-    const ping=async()=>{if(document.visibilityState==='visible') await db!.rpc('st_v3_ping')}
-    ping()
+    let running=false
+    let active=true
+    const ping=async()=>{
+      if(running||document.visibilityState!=='visible'||!navigator.onLine)return
+      running=true
+      try {
+        const result=await db!.rpc('st_v3_ping')
+        if(active&&!result.error)await refresh()
+      } finally {running=false}
+    }
+    void ping()
     const timer=window.setInterval(ping,45000)
     const disconnect=onReconnect(ping)
-    return ()=>{disconnect();window.clearInterval(timer)}
-  },[profile?.id])
+    return ()=>{active=false;disconnect();window.clearInterval(timer)}
+  },[profile?.id,refresh])
 
   const chat = chats.find(item => item.id === selected)
   const peer = chat ? profiles[peerId(chat, user)] : undefined
@@ -358,7 +371,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
   const incoming=call.call?.status==='ringing' && call.call.callee===user ? call.call : null
   const quietIncoming=useQuietIncoming(incoming,hints)
   const callTone=call.call?.status==='ringing' && !quietIncoming ? (incoming?'ringtone':'ringback') : null
-  const callSounds=useCallSounds(callTone,call.call?.id,call.call?.expires_at)
+  const callSounds=useCallSounds(callAudio,callTone,call.call?.id,call.call?.expires_at)
   useEffect(()=>{
     if(!acceptedChat) return
     let active=true
@@ -420,6 +433,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
 
   function select(id: string | null) {
     setSelected(id)
+    setConversationTools(false)
     setBlockCheck(false)
     setChatTasks(false)
     setSourceTask(null)
@@ -483,7 +497,7 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
       }
     }}>
       <Brand />
-      <div className="messenger-primary" onClick={() => setNavigationOpen(false)}>
+      <div className="messenger-primary" onClick={() => {setNavigationOpen(false); setConversationTools(false)}}>
         <button className={tab === 'inbox' || tab === 'saved' ? 'active' : ''} aria-current={tab === 'inbox' || tab === 'saved' ? 'page' : undefined} onClick={() => setTab('inbox')}><MessageCircle size={20} /><span>{t('inbox')}</span></button>
         <button className={tab==='friends'?'active':''} aria-current={tab==='friends'?'page':undefined} onClick={()=>setTab('friends')}><UserPlus size={19}/><span>{t('friends')}</span></button>
         <button className={tab === 'calls' ? 'active' : ''} aria-current={tab === 'calls' ? 'page' : undefined} onClick={() => setTab('calls')}><Phone size={19} /><span>{t('calls')}</span></button>
@@ -493,13 +507,19 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
         aria-controls="messenger-sections" onClick={() => setNavigationOpen(value => !value)}>
         <MoreHorizontal size={21}/><span>More</span>
       </button>
+      {navigationOpen && <div className="messenger-sheet-scrim" aria-hidden="true" onClick={() => {
+        setNavigationOpen(false)
+        navigationTrigger.current?.focus()
+      }} />}
       <div id="messenger-sections" className="messenger-sections" data-open={navigationOpen}
         onClick={event=>{
           if (event.target instanceof Element && event.target.closest('button')) {
             setNavigationOpen(false)
+            setConversationTools(false)
             if (navigationTrigger.current?.getClientRects().length) navigationTrigger.current.focus()
           }
         }}>
+        <p className="messenger-sheet-title">More tools</p>
         <div className="messenger-nav-group" role="group" aria-label="Communication tools">
         <button className={tab === 'group-chats' ? 'active' : ''} aria-current={tab === 'group-chats' ? 'page' : undefined} onClick={() => setTab('group-chats')}><Users size={19}/><span>Group chats</span></button>
         <button className={tab==='search'?'active':''} aria-current={tab==='search'?'page':undefined} onClick={()=>showSearch()}><Search size={19}/><span>{t('search')}</span></button>
@@ -523,7 +543,10 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
     </nav>
     <aside className="inbox-list">
       <header><div className="inbox-mobile-brand"><Brand /></div><div className="inbox-heading"><h1>{t('inbox')}</h1><button className="primary" onClick={()=>setTab('friends')}><UserPlus size={17}/> {t('findFriends')}</button></div>
-        <div className="input-icon search"><Search size={17} /><input aria-label="Search contacts" placeholder="Search conversations" value={search} onChange={e => setSearch(e.target.value)} /></div>
+        <button type="button" className="inbox-global-search" onClick={()=>showSearch()}>
+          <Search size={18} aria-hidden="true" /><span>Search across SecTalk</span>
+        </button>
+        <div className="input-icon search"><Search size={17} /><input aria-label="Search contacts" placeholder="Filter conversations" value={search} onChange={e => setSearch(e.target.value)} /></div>
       </header>
       <div className="tabs" aria-label="Conversation filters">
         <button aria-pressed={mode === 'chats'} className={mode === 'chats' ? 'active' : ''} onClick={() => setMode('chats')}>Chats</button>
@@ -595,7 +618,8 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
         <p>Accepted contacts can see your last activity for up to seven days when both availability and last seen are shared.</p>
         <QuietHoursSettings chat={null} hints={hints}/></div>}
       </section> :
-      tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}/>:
+      tab==='friends'?<Friends user={user} pending={requests.length} working={working} send={sendRequest} openRequests={openRequests}
+        openChat={id=>{setMode('chats');select(id)}}/>:
       tab==='saved'?<SavedMessages openChat={select}/>:
       tab === 'safety' ? <Safety staff={staff} refresh={refresh} hints={hints} /> :
       tab==='workspaces'||tab==='rooms'||tab==='calendar' ? <Workspaces key={tab} user={user} view={tab} requestedRoom={tab==='rooms'?requestedRoom:null} /> :
@@ -617,31 +641,42 @@ export function Inbox({ user, workspaceSession, openWorkspaces }: { user: string
           .map(chat => ({ id: peerId(chat,user), name: profiles[peerId(chat,user)]?.name || 'Contact' }))} /> :
       tab === 'calls' ? <Calls user={user} chats={chats} profiles={profiles} blocks={blocks} state={call} contactPhoto={contactPhoto} openChat={select} openInbox={() => setTab('inbox')} /> :
       chat ? <section className="thread">
-        <header className="thread-header"><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={acceptedChat?contactPhoto(peerId(chat,user)):undefined}/>
-          <div><h2>{peer?.name || 'Contact'}</h2><p aria-label="Contact availability">{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : chat.status==='accepted' ? ['Offline',lastSeenLabel].filter(Boolean).join(' · ') : 'Contact request'}</p>
+        <header className="thread-header conversation-header" onKeyDown={event => {
+          if (event.key === 'Escape' && conversationTools && !event.defaultPrevented) {
+            setConversationTools(false)
+            conversationToolsTrigger.current?.focus()
+          }
+        }}><button className="icon mobile-back" aria-label="Back to inbox" onClick={() => select(null)}><ArrowLeft size={20} /></button><Avatar name={peer?.name || 'Contact'} photo={acceptedChat?contactPhoto(peerId(chat,user)):undefined}/>
+          <div className="conversation-identity"><h2>{peer?.name || 'Contact'}</h2><p aria-label="Contact availability">{blocked ? 'Blocked' : peerState ? peerState[0].toUpperCase()+peerState.slice(1) : chat.status==='accepted' ? ['Offline',lastSeenLabel].filter(Boolean).join(' · ') : 'Contact request'}</p>
             {statusMessage&&<p className="thread-profile-status" title={statusMessage}>{statusMessage}</p>}</div>
           <div className="thread-actions">
             {chat.status === 'accepted' && !blocked && <>
-              <button className="icon" aria-pressed={chatTasks} aria-label="Chat tasks" title="Chat tasks" onClick={()=>{
-                setChatTasks(!chatTasks);setSourceTask(null)
-              }}><ListChecks size={18}/></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start audio call" title="Start audio call" onClick={() => void call.start(chat.id, false)}><Phone size={18} /></button>
               <button className="icon" disabled={call.busy || !!call.call} aria-label="Start video call" title="Start video call" onClick={() => void call.start(chat.id, true)}><Video size={20} /></button>
+            </>}
+            <button ref={conversationToolsTrigger} type="button" className="icon conversation-tools-trigger" aria-label="Conversation tools" aria-expanded={conversationTools} aria-controls="conversation-tools"
+              onClick={() => setConversationTools(value => !value)}><MoreHorizontal size={20}/></button>
+            <div id="conversation-tools" className="conversation-tools" data-open={conversationTools}>
+            {chat.status === 'accepted' && !blocked && <>
+              <button className="icon" aria-pressed={chatTasks} aria-label="Chat tasks" title="Chat tasks" onClick={()=>{
+                setChatTasks(!chatTasks);setSourceTask(null);setConversationTools(false)
+              }}><ListChecks size={18}/></button>
               <ContactKeyVerification key={peerId(chat,user)} owner={user} peer={peerId(chat,user)} name={peer?.name || 'your contact'} hints={hints}/>
               <button type="button" className="icon" aria-label="Secure direct messages" aria-pressed={secureChat===chat.id}
-                title="Secure direct messages" onClick={()=>setSecureChat(value=>value===chat.id?null:chat.id)}><LockKeyhole size={18}/></button>
+                title="Secure direct messages" onClick={()=>{setSecureChat(value=>value===chat.id?null:chat.id);setConversationTools(false)}}><LockKeyhole size={18}/></button>
               <details className="call-menu">
                 <summary className="icon" aria-label="Protected call options" title="Protected calls"><ShieldCheck size={18}/></summary>
                 <div className="message-menu-panel" style={{top:'100%',right:0,bottom:'auto'}}>
                   <button type="button" className="text-button" disabled={call.busy || !!call.call}
-                    onClick={()=>void call.start(chat.id,false,true)}>Start protected audio call</button>
+                    onClick={()=>{setConversationTools(false);void call.start(chat.id,false,true)}}>Start protected audio call</button>
                   <button type="button" className="text-button" disabled={call.busy || !!call.call}
-                    onClick={()=>void call.start(chat.id,true,true)}>Start protected video call</button>
+                    onClick={()=>{setConversationTools(false);void call.start(chat.id,true,true)}}>Start protected video call</button>
                 </div>
               </details>
             </>}
-            <button className="icon" title="Report contact" aria-label="Report contact" onClick={() => setReport({ chat: chat.id, message: null })}><Flag size={18} /></button>
-            <button className="icon" title={blocked ? 'Unblock contact' : 'Block contact'} aria-label={blocked ? 'Unblock contact' : 'Block contact'} onClick={() => setBlockCheck(true)}><Ban size={18} /></button>
+            <button className="icon" title="Report contact" aria-label="Report contact" onClick={() => {setConversationTools(false);setReport({ chat: chat.id, message: null })}}><Flag size={18} /></button>
+            <button className="icon" title={blocked ? 'Unblock contact' : 'Block contact'} aria-label={blocked ? 'Unblock contact' : 'Block contact'} onClick={() => {setConversationTools(false);setBlockCheck(true)}}><Ban size={18} /></button>
+            </div>
           </div>
         </header>
         {blockCheck && <div className="inline-warning"><span>{blocked ? 'Allow this contact to reach you again?' : 'Block new messages and calls from this contact?'}</span><button className="danger" disabled={working} onClick={() => void run('st_set_block', { p_chat: chat.id, p_block: !blocked }, () => { setBlockCheck(false); setNotice(blocked ? 'Contact unblocked.' : 'Contact blocked.') })}>{blocked ? 'Unblock' : 'Block'}</button><button className="secondary" onClick={() => setBlockCheck(false)}>Cancel</button></div>}
@@ -722,9 +757,9 @@ function Calls({ user, chats, profiles, blocks, state, contactPhoto, openChat, o
   const missed=(row:Call)=>row.end_reason==='missed'||(row.status==='ringing'&&Date.parse(row.expires_at)<=now)
   const visibleCalls = rows?.filter(row=>filter==='all'||(filter==='missed'?row.callee===user&&missed(row):row.video===(filter==='video')))
 
-  return <section className="content-page">
-    <header className="content-title"><div className="card-icon"><Phone size={22} /></div><div><h1>Calls</h1><p>Start a call from an approved conversation or return a recent call.</p></div></header>
-    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['missed','Missed'], ['audio', 'Audio'], ['video', 'Video'], ['groups','Groups'], ['diagnostics', 'Network diagnostics']] }/>
+  return <section className="content-page calls-page">
+    <header className="content-title"><div className="card-icon"><Phone size={22} /></div><div><h1>Calls</h1><p>Recent calls with approved contacts.</p></div></header>
+    <SectionTabs label="Call history" value={filter} onChange={setFilter} options={ [['all', 'All calls'], ['missed','Missed'], ['audio', 'Audio'], ['video', 'Video'], ['groups','Groups'], ['diagnostics', <>Network<span className="visually-hidden"> diagnostics</span></>]] }/>
     {filter==='diagnostics' ? <NetworkDiagnostics inCall={Boolean(state.call)}/> : filter==='groups' ?
       <GroupCalls user={user} inDirectCall={Boolean(state.call)} contacts={chats.filter(chat=>chat.status==='accepted'&&!blocks.includes(peerId(chat,user)))
         .map(chat=>({id:peerId(chat,user),name:profiles[peerId(chat,user)]?.name || 'Contact'}))}/> : <div className="panel">
@@ -740,7 +775,7 @@ function Calls({ user, chats, profiles, blocks, state, contactPhoto, openChat, o
         const status=missed(row)?(incoming?'Missed':'No answer'):
           row.end_reason==='declined'?'Declined':row.end_reason==='cancelled'?'Cancelled':row.end_reason==='busy'?'Busy':
           row.status==='active'&&Date.parse(row.expires_at)>now?'In progress':row.status==='ringing'?'Ringing':'Ended'
-        return <div className="report-row" key={row.id}>
+        return <div className="report-row call-history-row" key={row.id}>
           <Avatar name={name} photo={reachable?contactPhoto(peer):undefined} />
           <div><strong>{name}</strong><small>{incoming ? 'Incoming' : 'Outgoing'} {row.media_protection===1?'protected ':''}{row.video ? 'video' : 'audio'} · {new Date(row.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</small><span className="call-state">{status}</span></div>
           {reachable && <span className="call-history-controls">
@@ -826,6 +861,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   const [reactions, setReactions] = useState<Reaction[]>([])
   const [pin, setPin] = useState<Message | null>(null)
   const [showSearch, setShowSearch] = useState(false)
+  const [showThreadPreferences, setShowThreadPreferences] = useState(false)
   const [quietSettings, setQuietSettings] = useState(false)
   const [results, setResults] = useState<DirectMessage[] | null>(null)
   const [editing, setEditing] = useState<Message | null>(null)
@@ -1269,6 +1305,9 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
   return <>
     <div className="thread-toolbar">
       <button type="button" className="secondary" aria-expanded={showSearch} onClick={() => { setShowSearch(!showSearch); setResults(null) }}><Search size={15}/> Search messages</button>
+      <button type="button" className="secondary thread-preferences-toggle" aria-expanded={showThreadPreferences} aria-controls="thread-preferences"
+        onClick={() => setShowThreadPreferences(value => !value)}>Chat settings</button>
+      <div id="thread-preferences" className="thread-preferences" data-open={showThreadPreferences}>
       <button type="button" className="secondary" aria-pressed={Boolean(activity?.muted)} disabled={blocked||!activity}
         onClick={() => void update('st_v6_set_quiet_mute', { p_chat: chat.id, p_muted: !activity?.muted })}>
         {activity?.muted ? <BellOff size={15}/> : <Bell size={15}/>} {activity?.muted ? 'Muted' : 'Mute'}
@@ -1290,6 +1329,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
         }}>
         Share my read receipts
       </button>
+      </div>
     </div>
     {quietSettings && !blocked && <Dialog title="Chat quiet hours" close={()=>{setQuietSettings(false);void loadActivity()}}>
       <QuietHoursSettings chat={chat.id} hints={hints}/>
@@ -1479,6 +1519,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
       <ScheduledMessages chat={chat.id} draft={draft.trim()} schedule={schedule} canSchedule={!blocked&&Boolean(draft.trim())&&!replying&&!attachment&&!expireAfter}/>
     </Dialog>}
     <DraftStatus draft={syncedDraft}/>
+    <div className="thread-writing-tools">
     {!blocked && fileCapacity && <p id="attachment-capacity" className="attachment-capacity muted">
       {formatChatFileBytes(fileCapacity.max_file_bytes)} per attachment · {formatChatFileBytes(Math.max(0,
         fileCapacity.max_storage_bytes - fileCapacity.stored_bytes - fileCapacity.reserved_bytes))} storage available
@@ -1491,6 +1532,7 @@ function Thread({ chat, self, selfName, peerName, hints, blocked, onReport, info
     <VoiceNoteRecorder key={chat.id} chat={chat.id} blocked={blocked} timer={expireAfter}
       disabled={busy||Boolean(attachment)||Boolean(replying)} onSent={()=>void load()}/>
     {!blocked&&<MessageFormatting account={self} mode='managed'/>}
+    </div>
     <form className="composer" onSubmit={send}>
       <input ref={filePicker} hidden type="file" accept={extensions} onChange={event=>{
         const file=event.target.files?.[0]
